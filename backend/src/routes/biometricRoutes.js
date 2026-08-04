@@ -12,12 +12,14 @@ const router = Router()
 router.use(authenticate)
 const challenges = ['blink', 'smile', 'turn']
 const FACE_MATCH_THRESHOLD = .65
-const IDENTITY_TEMPLATE_VERSION = 2
+const MINIMUM_IDENTITY_TEMPLATE_VERSION = 2
 
 router.post('/challenge', asyncHandler(async (req, res) => {
   if (!req.user.employee) throw new HttpError(409, 'No employee profile is linked to this account')
-  const employee = await Employee.findById(req.user.employee._id).select('+biometricTemplate biometricTemplateVersion')
-  if (!employee?.biometricTemplate?.length || employee.biometricTemplate.length < 128 || employee.biometricTemplateVersion < IDENTITY_TEMPLATE_VERSION) {
+  const employee = await Employee.findById(req.user.employee._id).select('+biometricTemplate +biometricSamples biometricTemplateVersion')
+  const templates = employee?.biometricSamples?.map(sample => sample.template).filter(template => template?.length >= 128) || []
+  if (!templates.length && employee?.biometricTemplate?.length >= 128) templates.push(employee.biometricTemplate)
+  if (!templates.length || employee.biometricTemplateVersion < MINIMUM_IDENTITY_TEMPLATE_VERSION) {
     throw new HttpError(409, 'Secure face re-enrollment is required. Ask an administrator to capture this employee’s face again.')
   }
   const mode = z.enum(['check-in','check-out']).default('check-in').parse(req.body.mode)
@@ -49,13 +51,15 @@ router.post('/verify', asyncHandler(async (req, res) => {
   try { challengePayload = jwt.verify(input.challengeToken, env.jwtSecret) }
   catch { throw new HttpError(401, 'Biometric challenge expired. Please try again') }
   if (challengePayload.purpose !== 'biometric_challenge' || challengePayload.sub !== req.user.id || challengePayload.challenge !== input.challenge) throw new HttpError(401, 'Invalid biometric challenge')
-  const employee = await Employee.findById(req.user.employee._id).select('+biometricTemplate')
+  const employee = await Employee.findById(req.user.employee._id).select('+biometricTemplate +biometricSamples')
   if (!employee) throw new HttpError(404, 'Employee profile not found')
-  if (!employee.biometricTemplate?.length || employee.biometricTemplate.length < 128 || employee.biometricTemplateVersion < IDENTITY_TEMPLATE_VERSION) throw new HttpError(409, 'Secure face re-enrollment is required before attendance can be recorded')
-  const faceMatchScore = compareTemplates(employee.biometricTemplate, input.faceTemplate)
+  const templates = employee.biometricSamples?.map(sample => sample.template).filter(template => template?.length >= 128) || []
+  if (!templates.length && employee.biometricTemplate?.length >= 128) templates.push(employee.biometricTemplate)
+  if (!templates.length || employee.biometricTemplateVersion < MINIMUM_IDENTITY_TEMPLATE_VERSION) throw new HttpError(409, 'Secure face re-enrollment is required before attendance can be recorded')
+  const faceMatchScore = Math.max(...templates.map(template => compareTemplates(template, input.faceTemplate)))
   if (faceMatchScore < FACE_MATCH_THRESHOLD) throw new HttpError(403, 'Face does not match the enrolled employee. Attendance was not recorded.', { faceMatchScore:Number(faceMatchScore.toFixed(3)), requiredScore:FACE_MATCH_THRESHOLD })
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
-  const verificationToken = jwt.sign({ purpose:'biometric_verification', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:IDENTITY_TEMPLATE_VERSION, photoHash }, env.jwtSecret, { subject:req.user.id, expiresIn:'90s', jwtid:randomUUID() })
+  const verificationToken = jwt.sign({ purpose:'biometric_verification', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash }, env.jwtSecret, { subject:req.user.id, expiresIn:'90s', jwtid:randomUUID() })
   res.json({ success:true, data:{ verificationToken, faceMatchScore, livenessScore:input.livenessScore } })
 }))
 

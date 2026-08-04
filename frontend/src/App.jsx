@@ -691,7 +691,11 @@ function HolidaysCard() {
     </section>
   );
 }
-function CelebrationCard() {
+function CelebrationCard({ birthdays = [] }) {
+  const birthday = birthdays[0];
+  const name = birthday ? `${birthday.firstName} ${birthday.lastName}` : "";
+  const birthdayDate = birthday ? new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "long" }).format(new Date(birthday.date)) : "";
+  const timing = birthday?.daysUntil === 0 ? "today" : birthday?.daysUntil === 1 ? "tomorrow" : `on ${birthdayDate}`;
   return (
     <section className="card side-card celebration">
       <div className="celebration-icon">
@@ -699,12 +703,10 @@ function CelebrationCard() {
       </div>
       <div>
         <p className="eyebrow">Celebrations</p>
-        <h2>Amit’s birthday is today</h2>
-        <span>Send your teammate some good wishes.</span>
+        <h2>{birthday ? `${name}'s birthday is ${timing}` : "No birthdays in the next 30 days"}</h2>
+        <span>{birthday ? birthday.daysUntil === 0 ? "Send your teammate some good wishes." : `${birthday.daysUntil} days to go.` : "Birthdays will appear after HR adds employee dates of birth."}</span>
+        {birthdays.length > 1 && <small>+{birthdays.length-1} more upcoming birthday{birthdays.length>2?'s':''}</small>}
       </div>
-      <button>
-        <Sparkles size={15} /> Wish Amit
-      </button>
     </section>
   );
 }
@@ -770,7 +772,7 @@ function HomePage({ user, dashboard }) {
         </div>
         <aside className="right-column">
           <HolidaysCard />
-          <CelebrationCard />
+          <CelebrationCard birthdays={dashboard?.birthdays} />
         </aside>
       </div>
       <RecruitmentHomeWidgets user={user} />

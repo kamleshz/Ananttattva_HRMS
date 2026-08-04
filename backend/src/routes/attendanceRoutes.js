@@ -31,8 +31,8 @@ function verifiedPunch(req, mode) {
   try { verification = jwt.verify(input.biometricToken, env.jwtSecret) }
   catch { throw new HttpError(401, 'Biometric verification expired. Please verify again') }
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
-  if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion !== 2 || verification.faceMatchScore < .65) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
-  input.biometricVerification = { verified:true, method:'active_liveness_face_embedding_v2', challenge:verification.challenge, livenessScore:verification.livenessScore, faceMatchScore:verification.faceMatchScore, verifiedAt:new Date() }
+  if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || verification.faceMatchScore < .65) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
+  input.biometricVerification = { verified:true, method:verification.identityTemplateVersion >= 3 ? 'active_liveness_multi_angle_face_embedding_v3' : 'active_liveness_face_embedding_v2', challenge:verification.challenge, livenessScore:verification.livenessScore, faceMatchScore:verification.faceMatchScore, verifiedAt:new Date() }
   return input
 }
 router.post('/check-in', asyncHandler(async (req, res) => res.status(201).json({ success: true, data: await checkIn(req.user.employee, verifiedPunch(req,'check-in'), meta(req)) })))

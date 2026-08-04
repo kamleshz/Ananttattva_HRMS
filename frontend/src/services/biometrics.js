@@ -100,6 +100,32 @@ export function evaluateNeutralCapture(result) {
   return { ready:true, message:'Neutral face detected. Hold still…' }
 }
 
+export function evaluateEnrollmentPose(result, target = 'front') {
+  const faceCount = result?.faceLandmarks?.length || 0
+  if (faceCount !== 1) return { ready:false, message:faceCount > 1 ? 'Only one employee should be visible.' : 'Center your face inside the frame.' }
+  const shapes = blendshapeMap(result)
+  const blink = ((shapes.eyeBlinkLeft || 0) + (shapes.eyeBlinkRight || 0)) / 2
+  const landmarks = result.faceLandmarks[0]
+  const left = landmarks[234], right = landmarks[454], nose = landmarks[1]
+  const faceWidth = Math.abs(right.x-left.x)
+  const faceCenter = (left.x+right.x)/2
+  const turnRatio = (nose.x-left.x) / Math.max(.001,faceWidth)
+  const movement = turnRatio-.5
+  const detectedPose = movement < 0 ? 'left' : 'right'
+  if (Math.abs(faceCenter-.5) > .16) return { ready:false, message:'Move your face to the center of the oval.' }
+  if (faceWidth < .2) return { ready:false, message:'Move a little closer to the camera.' }
+  if (faceWidth > .62) return { ready:false, message:'Move a little farther from the camera.' }
+  if (blink > .25) return { ready:false, message:'Keep both eyes naturally open.' }
+  if (target === 'front') {
+    if (Math.abs(movement) > .06) return { ready:false, message:'Look straight at the camera.' }
+    return { ready:true, pose:'front', message:'Straight pose detected. Hold still.' }
+  }
+  if (Math.abs(movement) < .09) return { ready:false, message:target === 'side' ? 'Turn your head slightly to either side.' : 'Turn your head to the opposite side.' }
+  if (Math.abs(movement) > .25) return { ready:false, message:'Reduce the turn slightly so both eyes remain visible.' }
+  if (target !== 'side' && detectedPose !== target) return { ready:false, message:'Turn your head to the opposite side.' }
+  return { ready:true, pose:detectedPose, message:'Side pose detected. Hold still.' }
+}
+
 export function evaluateChallenge(result, challenge) {
   const faceCount = result?.faceLandmarks?.length || 0
   if (faceCount !== 1) return { faceCount, neutral:false, passed:false, score:0 }

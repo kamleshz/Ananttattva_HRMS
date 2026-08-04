@@ -8,6 +8,19 @@ import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
 
 const router = Router()
+const biometricSampleSchema = z.object({
+  pose: z.enum(['front','left','right']),
+  photo: z.string().startsWith('data:image/').max(4_500_000),
+  template: z.array(z.number().finite()).min(128).max(2048),
+})
+const biometricEnrollmentSchema = z.object({
+  profilePhoto:z.string().startsWith('data:image/').max(4_500_000),
+  biometricTemplate:z.array(z.number().finite()).min(128).max(2048),
+  biometricSamples:z.array(biometricSampleSchema).length(3).refine(
+    samples => new Set(samples.map(sample => sample.pose)).size === 3,
+    'Front, left and right biometric samples are required',
+  ),
+})
 router.use(authenticate)
 router.get('/', authorize('super_admin','hr_admin','manager'), asyncHandler(async (req, res) => {
   const page = Math.max(1, Number(req.query.page || 1)); const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)))
@@ -25,17 +38,27 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!employee) throw new HttpError(404, 'Employee not found')
   res.json({ success: true, data: employee })
 }))
+router.get('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
+  const employee = await Employee.findById(req.params.id).select('+biometricSamples')
+  if (!employee) throw new HttpError(404, 'Employee not found')
+  res.json({ success:true, data:{
+    employeeId:employee.id,
+    biometricEnrolledAt:employee.biometricEnrolledAt,
+    biometricTemplateVersion:employee.biometricTemplateVersion,
+    photos:(employee.biometricSamples || []).map(({ pose, photo }) => ({ pose, photo })),
+  } })
+}))
 router.put('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
-  const input = z.object({ profilePhoto:z.string().startsWith('data:image/').max(4_500_000), biometricTemplate:z.array(z.number().finite()).min(128).max(2048) }).parse(req.body)
-  const employee = await Employee.findByIdAndUpdate(req.params.id, { profilePhoto:input.profilePhoto, biometricTemplate:input.biometricTemplate, biometricTemplateVersion:2, biometricEnrolledAt:new Date() }, { new:true, runValidators:true })
+  const input = biometricEnrollmentSchema.parse(req.body)
+  const employee = await Employee.findByIdAndUpdate(req.params.id, { ...input, biometricTemplateVersion:3, biometricEnrolledAt:new Date() }, { new:true, runValidators:true })
   if (!employee) throw new HttpError(404, 'Employee not found')
   res.json({ success:true, data:{ id:employee.id, employeeCode:employee.employeeCode, biometricEnrolledAt:employee.biometricEnrolledAt, biometricTemplateVersion:employee.biometricTemplateVersion } })
 }))
 router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
-  const input = z.object({ employeeCode:z.string().min(3), firstName:z.string().min(1), lastName:z.string().min(1), officialEmail:z.email(), department:z.string().optional(), designation:z.string().optional(), temporaryPassword:z.string().min(8), role:z.enum(['super_admin','hr_admin','manager','finance_admin','it_admin','employee']).default('employee'), profilePhoto:z.string().startsWith('data:image/').max(4_500_000), biometricTemplate:z.array(z.number().finite()).min(128).max(2048) }).parse(req.body)
+  const input = z.object({ employeeCode:z.string().min(3), firstName:z.string().min(1), lastName:z.string().min(1), dateOfBirth:z.coerce.date().max(new Date(), 'Date of birth cannot be in the future'), officialEmail:z.email(), department:z.string().optional(), designation:z.string().optional(), temporaryPassword:z.string().min(8), role:z.enum(['super_admin','hr_admin','manager','finance_admin','it_admin','employee']).default('employee'), ...biometricEnrollmentSchema.shape }).parse(req.body)
   if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only an Admin can create another Admin account')
   const passwordHash = await bcrypt.hash(input.temporaryPassword, 12)
   const user = await User.create({ firstName:input.firstName, lastName:input.lastName, email:input.officialEmail, passwordHash, role:input.role, mustChangePassword:true })
-  try { const employee = await Employee.create({ ...input, biometricTemplateVersion:2, biometricEnrolledAt:new Date(), user:user._id }); user.employee=employee._id; await user.save(); res.status(201).json({success:true,data:employee}) } catch(error) { await User.findByIdAndDelete(user._id); throw error }
+  try { const employee = await Employee.create({ ...input, biometricTemplateVersion:3, biometricEnrolledAt:new Date(), user:user._id }); user.employee=employee._id; await user.save(); res.status(201).json({success:true,data:employee}) } catch(error) { await User.findByIdAndDelete(user._id); throw error }
 }))
 export default router

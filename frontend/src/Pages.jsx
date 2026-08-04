@@ -977,6 +977,7 @@ export function EmployeeOnboardingPage({ user }) {
     employeeCode: `EMP${String(Date.now()).slice(-5)}`,
     firstName: "",
     lastName: "",
+    dateOfBirth: "",
     officialEmail: "",
     department: "",
     designation: "",
@@ -984,6 +985,7 @@ export function EmployeeOnboardingPage({ user }) {
     role: "employee",
     profilePhoto: "",
     biometricTemplate: [],
+    biometricSamples: [],
   }));
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -991,7 +993,7 @@ export function EmployeeOnboardingPage({ user }) {
     setForm((current) => ({ ...current, [field]: value }));
   async function submit(event) {
     event.preventDefault();
-    if (!form.profilePhoto || form.biometricTemplate.length < 128) {
+    if (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3) {
       setError(
         "Biometric face enrollment is required before creating the employee.",
       );
@@ -1111,6 +1113,16 @@ export function EmployeeOnboardingPage({ user }) {
                   onChange={(e) => update("lastName", e.target.value)}
                 />
               </label>
+              <label>
+                Date of birth *
+                <input
+                  type="date"
+                  required
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={form.dateOfBirth}
+                  onChange={(e) => update("dateOfBirth", e.target.value)}
+                />
+              </label>
             </div>
           </section>
           <section className="form-section">
@@ -1214,16 +1226,18 @@ export function EmployeeOnboardingPage({ user }) {
 export function EmployeeBiometricPage({ employeeId }) {
   const navigate = useNavigate();
   const [employee, setEmployee] = useState(null);
-  const [enrollment, setEnrollment] = useState({ profilePhoto: "", biometricTemplate: [] });
+  const [enrollment, setEnrollment] = useState({ profilePhoto: "", biometricTemplate: [], biometricSamples: [] });
+  const [existingPhotos, setExistingPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     employeeApi.get(employeeId).then(setEmployee).catch((requestError) => setError(requestError.message));
+    employeeApi.getBiometrics(employeeId).then((data) => setExistingPhotos(data.photos || [])).catch((requestError) => setError(requestError.message));
   }, [employeeId]);
 
   async function save() {
-    if (!enrollment.profilePhoto || enrollment.biometricTemplate.length < 128) return;
+    if (!enrollment.profilePhoto || enrollment.biometricTemplate.length < 128 || enrollment.biometricSamples.length !== 3) return;
     setBusy(true);
     setError("");
     try {
@@ -1240,10 +1254,11 @@ export function EmployeeBiometricPage({ employeeId }) {
     <button className="back-link" onClick={() => navigate("/people")}><ArrowLeft size={15}/> Back to employees</button>
     <PageHeader eyebrow="People · Security" title="Re-enroll employee face" description={employee ? `Capture a new secure identity template for ${employee.firstName} ${employee.lastName} (${employee.employeeCode}).` : "Loading employee…"}/>
     <section className="content-card biometric-step-card">
+      {existingPhotos.length>0&&<div className="existing-biometric-photos"><div><strong>Current enrollment photos</strong><span>Visible only to authorized HR and Admin users.</span></div><div className="enrollment-photo-grid">{existingPhotos.map((sample,index)=><figure key={sample.pose}><img src={sample.photo} alt={`Current biometric angle ${index+1}`}/><figcaption>{sample.pose==='front'?'Straight':`Side angle ${index}`}</figcaption></figure>)}</div></div>}
       <BiometricEnrollment value={enrollment} onChange={setEnrollment}/>
       <div className="biometric-privacy-note"><ShieldCheck size={17}/><p><strong>Identity replacement</strong><span>The previous biometric template will be replaced. Complete this step only while the named employee is physically present.</span></p></div>
       {error && <p className="attendance-error">{error}</p>}
-      {enrollment.biometricTemplate.length >= 128 && <button type="button" className="primary-button" disabled={busy} onClick={save}>{busy ? "Saving secure identity…" : "Save new face identity"}</button>}
+      {enrollment.biometricSamples.length === 3 && <button type="button" className="primary-button" disabled={busy} onClick={save}>{busy ? "Saving secure identity…" : "Save new three-angle identity"}</button>}
     </section>
   </>;
 }

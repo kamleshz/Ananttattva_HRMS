@@ -7,10 +7,24 @@ import { startOfLocalDay } from '../utils/date.js'
 
 const router = Router()
 router.use(authenticate)
+
+function upcomingBirthday(employee, today) {
+  const dateOfBirth = new Date(employee.dateOfBirth)
+  let nextDate = new Date(today.getFullYear(), dateOfBirth.getUTCMonth(), dateOfBirth.getUTCDate())
+  if (nextDate < today) nextDate = new Date(today.getFullYear()+1, dateOfBirth.getUTCMonth(), dateOfBirth.getUTCDate())
+  const daysUntil = Math.round((nextDate-today)/(24*60*60*1000))
+  return { employeeId:employee.id, firstName:employee.firstName, lastName:employee.lastName, profilePhoto:employee.profilePhoto, date:nextDate, daysUntil }
+}
+
 router.get('/employee', asyncHandler(async (req, res) => {
   const employee = req.user.employee
-  const attendance = employee ? await Attendance.findOne({employee:employee._id,date:startOfLocalDay()}) : null
-  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, today:attendance, tasks:[], holidays:[], away:[] } })
+  const today = startOfLocalDay()
+  const [attendance,birthdayEmployees] = await Promise.all([
+    employee ? Attendance.findOne({employee:employee._id,date:today}) : null,
+    Employee.find({employeeStatus:'active',dateOfBirth:{$ne:null}}).select('firstName lastName profilePhoto dateOfBirth'),
+  ])
+  const birthdays = birthdayEmployees.map(item=>upcomingBirthday(item,today)).filter(item=>item.daysUntil<=30).sort((a,b)=>a.daysUntil-b.daysUntil).slice(0,5)
+  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, today:attendance, birthdays, tasks:[], holidays:[], away:[] } })
 }))
 router.get('/admin', authorize('super_admin','hr_admin'), asyncHandler(async (_req, res) => {
   const date = startOfLocalDay()

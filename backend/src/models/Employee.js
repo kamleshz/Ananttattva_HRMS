@@ -1,5 +1,11 @@
 import mongoose from 'mongoose'
 
+const biometricSampleSchema = new mongoose.Schema({
+  pose: { type: String, enum: ['front', 'left', 'right'], required: true },
+  photo: { type: String, required: true },
+  template: { type: [Number], required: true },
+}, { _id: false })
+
 const employeeSchema = new mongoose.Schema({
   employeeCode: { type: String, required: true, unique: true, trim: true, index: true },
   firstName: { type: String, required: true, trim: true },
@@ -8,8 +14,10 @@ const employeeSchema = new mongoose.Schema({
   officialEmail: { type: String, required: true, lowercase: true, trim: true, index: true },
   personalEmail: { type: String, lowercase: true, trim: true },
   mobile: { type: String, trim: true },
+  dateOfBirth: { type: Date, default: null, index: true },
   profilePhoto: { type: String, default: null },
   biometricTemplate: { type: [Number], select: false, default: undefined },
+  biometricSamples: { type: [biometricSampleSchema], select: false, default: undefined },
   biometricTemplateVersion: { type: Number, default: 1 },
   biometricEnrolledAt: { type: Date, default: null },
   department: { type: String, default: 'General', index: true },
