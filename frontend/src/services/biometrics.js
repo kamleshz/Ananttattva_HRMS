@@ -83,6 +83,23 @@ function blendshapeMap(result) {
   return Object.fromEntries((result?.faceBlendshapes?.[0]?.categories || []).map(item => [item.categoryName, item.score]))
 }
 
+export function evaluateNeutralCapture(result) {
+  const faceCount = result?.faceLandmarks?.length || 0
+  if (faceCount !== 1) return { ready:false, message:faceCount > 1 ? 'Only one employee should be visible.' : 'Center your face inside the frame.' }
+  const shapes = blendshapeMap(result)
+  const blink = ((shapes.eyeBlinkLeft || 0) + (shapes.eyeBlinkRight || 0)) / 2
+  const smile = ((shapes.mouthSmileLeft || 0) + (shapes.mouthSmileRight || 0)) / 2
+  const landmarks = result.faceLandmarks[0]
+  const left = landmarks[234], right = landmarks[454], nose = landmarks[1]
+  const turnRatio = (nose.x-left.x) / Math.max(.001,right.x-left.x)
+  const faceCenter = (left.x+right.x)/2
+  if (Math.abs(faceCenter-.5) > .14) return { ready:false, message:'Move your face to the center of the oval.' }
+  if (Math.abs(turnRatio-.5) > .055) return { ready:false, message:'Look straight at the camera.' }
+  if (blink > .2) return { ready:false, message:'Keep both eyes naturally open.' }
+  if (smile > .2) return { ready:false, message:'Relax your expression for the identity photo.' }
+  return { ready:true, message:'Neutral face detected. Hold still…' }
+}
+
 export function evaluateChallenge(result, challenge) {
   const faceCount = result?.faceLandmarks?.length || 0
   if (faceCount !== 1) return { faceCount, neutral:false, passed:false, score:0 }

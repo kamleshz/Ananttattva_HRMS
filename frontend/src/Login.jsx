@@ -63,14 +63,14 @@ export default function Login({ onAuthenticated }) {
           <div className="login-type-badge"><ShieldCheck size={15}/>{loginLabel} login</div>
           <div className="form-heading">
             <h2>Sign in to {PRODUCT_NAME}</h2>
-            <p>Use {loginLabel} Login for {form.loginType === 'admin' ? 'Admin and Super Admin accounts' : 'non-admin team accounts'}. We will send a secure one-time code for this session.</p>
+            <p>Use {loginLabel} Login for {form.loginType === 'admin' ? 'administrative accounts' : 'non-admin team accounts'}. We will send a secure one-time code for this session.</p>
           </div>
           <form onSubmit={submit}>
             <fieldset className="login-type-field">
               <legend>Login type</legend>
               <div className="login-type-options">
                 <button type="button" className={form.loginType === 'admin' ? 'active' : ''} onClick={() => selectLoginType('admin')}>
-                  <strong>Admin Login</strong><span>Admin and Super Admin only</span>
+                  <strong>Admin Login</strong><span>All administrative accounts</span>
                 </button>
                 <button type="button" className={form.loginType === 'user' ? 'active' : ''} onClick={() => selectLoginType('user')}>
                   <strong>User Login</strong><span>All non-admin team users</span>
