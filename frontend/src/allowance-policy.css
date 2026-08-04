@@ -1,0 +1,43 @@
+.allowance-summary { grid-template-columns: repeat(4, 1fr); }
+.acceptable-value { color: #24764e !important; }
+.non-acceptable-value { color: #b23d55 !important; }
+.muted-value { color: #929aa7 !important; }
+.allowance-limit-note { padding: 10px 12px; border: 1px solid #ecd9ae; border-radius: 8px; background: #fffaf0; color: #7e642a; font-size: 9px; line-height: 1.5; }
+.allowance-split-preview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.allowance-split-preview > div { display: flex; flex-direction: column; gap: 5px; }
+.allowance-split-preview > div + div { padding-left: 10px; border-left: 1px solid #dce8e4; }
+.allowance-split-preview strong { font-size: 13px; }
+.allowance-table { min-width: 1360px; }
+.special-approval-button { display: inline-flex; align-items: center; gap: 5px; padding: 7px 9px; border: 1px solid #d7b66b; border-radius: 7px; background: #fffaf0; color: #80601f; font-size: 8px; font-weight: 700; white-space: nowrap; }
+.special-approval-actions { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; min-width: 210px; }
+.special-approval-reason { flex-basis: 100%; color: #657084; font-size: 7.5px; line-height: 1.4; }
+.special-approval-actions button { padding: 5px 7px; border: 1px solid #dfe4e7; border-radius: 6px; background: #fff; color: #526074; font-size: 7.5px; font-weight: 650; }
+.special-approval-actions button.approve { border-color: #b9ddce; background: #edf8f3; color: #24764e; }
+.special-approval-actions button.reject { border-color: #ebcbd2; background: #fff3f5; color: #a53c52; }
+.special-approval-amount { display: flex; align-items: center; justify-content: space-between; padding: 14px; border: 1px solid #ecd9ae; border-radius: 9px; background: #fffaf0; }
+.special-approval-amount span { color: #786638; font-size: 9px; }
+.special-approval-amount strong { color: #a33e53; font-size: 17px; }
+@media (max-width: 950px) { .allowance-summary { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .allowance-summary, .allowance-split-preview { grid-template-columns: 1fr; } .allowance-split-preview > div + div { padding: 8px 0 0; border-left: 0; border-top: 1px solid #dce8e4; } }
+.attendance-page-actions { display: flex; align-items: center; gap: 9px; }
+.attendance-export-button { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+@media (max-width: 620px) { .attendance-page-actions { align-items: stretch; flex-direction: column; } }
+.attendance-row-actions { display: flex; align-items: center; gap: 6px; min-width: 150px; }
+.attendance-employee-cell { min-width: 155px; }
+.attendance-employee-cell strong, .attendance-employee-cell small { display: block; }
+.attendance-employee-cell small { margin-top: 4px; color: #8b94a2; font-size: 7.5px; }
+.correction-button { padding: 6px 8px; border: 1px solid #e4c676; border-radius: 6px; background: #fffaf0; color: #80601f; font-size: 8px; font-weight: 700; white-space: nowrap; }
+.attendance-corrections-card { margin-top: 18px; }
+.attendance-correction-list { display: flex; flex-direction: column; }
+.attendance-correction-list article { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 14px; padding: 14px 2px; border-top: 1px solid #edf0f1; }
+.attendance-correction-list article > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.attendance-correction-list strong { font-size: 10px; }
+.attendance-correction-list span { color: #7c8695; font-size: 8px; }
+.attendance-correction-list p { margin: 4px 0 0; color: #586477; font-size: 9px; }
+.correction-review-actions { display: flex; gap: 6px; }
+.attendance-correction-drawer .drawer-heading button { border: 0; background: transparent; color: #778091; }
+.auto-checkout-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid #ecd9ae; border-radius: 8px; background: #fffaf0; color: #80601f; }
+.auto-checkout-note > div { display: flex; flex-direction: column; gap: 4px; }
+.auto-checkout-note strong { font-size: 9.5px; }
+.auto-checkout-note span { color: #7a6a43; font-size: 8px; line-height: 1.5; }
+@media (max-width: 620px) { .attendance-correction-list article { grid-template-columns: 1fr auto; } .correction-review-actions { grid-column: 1 / -1; } }

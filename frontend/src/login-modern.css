@@ -1,0 +1,108 @@
+/* Centered authentication experience */
+.login-page {
+  display: block;
+  min-height: 100vh;
+  background: #f5f9f8;
+  overflow: auto;
+}
+
+.login-page .login-panel {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 36px 20px 58px;
+  background: radial-gradient(circle at 50% 42%, rgba(212, 239, 232, .44), transparent 34%), #f5f9f8;
+}
+
+.login-page .login-panel::before { display: none; }
+
+.login-page .login-form-wrap {
+  width: min(526px, 100%);
+  padding: 36px 34px 34px;
+  border: 0;
+  border-radius: 25px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(35, 65, 59, .1);
+  backdrop-filter: none;
+}
+
+.login-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 23px;
+  padding: 8px 13px;
+  border: 1px solid #9ed6cb;
+  border-radius: 999px;
+  background: #f4fffc;
+  color: #21756e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.login-page .form-heading { margin-bottom: 30px; }
+.login-page .login-form-wrap h2 { font-size: 36px; line-height: 1.15; letter-spacing: -1.25px; color: #050b20; }
+.login-page .form-heading > p { max-width: 440px; margin-top: 14px; color: #5f6c84; font-size: 14px; line-height: 1.75; }
+.login-page .login-form-wrap form { gap: 21px; }
+.login-page .login-form-wrap form > label { gap: 9px; font-size: 12px; }
+
+.login-type-field { min-width: 0; margin: 0; padding: 0; border: 0; }
+.login-type-field legend { margin-bottom: 9px; color: #344054; font-size: 12px; font-weight: 700; }
+.login-type-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 6px;
+  border: 1px solid #dce6e5;
+  border-radius: 13px;
+  background: #f7f9fb;
+  box-shadow: 0 2px 5px rgba(30, 58, 52, .04);
+}
+
+.login-type-options button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 13px 16px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: #627087;
+  text-align: left;
+}
+
+.login-type-options button strong { font-size: 12px; color: #526078; }
+.login-type-options button span { font-size: 10px; white-space: nowrap; }
+.login-type-options button.active { border-color: #8ce2ca; background: #fff; box-shadow: 0 5px 13px rgba(28, 123, 108, .13); }
+.login-type-options button.active strong { color: #19756e; }
+.login-page .input-wrap { height: 52px; border-color: #d9e3e6; background: #fbfcfd; }
+.login-page .input-wrap svg { color: #009b78; }
+.login-page .input-wrap input { font-size: 13px; }
+
+.login-form-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: -9px; }
+.login-form-meta .login-security-note { align-items: center; font-size: 9.5px; font-weight: 600; color: #687891; }
+.login-form-meta > button { flex: none; border: 0; background: transparent; color: #24776f; font-size: 11px; font-weight: 700; }
+.login-page .login-submit { height: 52px; justify-content: center; gap: 10px; border-radius: 13px; background: linear-gradient(100deg, #078b65 0%, #078b65 48%, #0878ad 100%); font-size: 14px; box-shadow: 0 11px 23px rgba(9, 126, 103, .23); }
+.login-page .login-submit:hover:not(:disabled) { background: linear-gradient(100deg, #057b59 0%, #057b59 48%, #076d9c 100%); }
+.login-page .login-legal { bottom: 20px; font-size: 9px; }
+.login-page .otp-step .login-type-badge { margin-bottom: 16px; }
+.login-page .otp-step .form-heading { margin-bottom: 27px; }
+
+@media (max-width: 600px) {
+  .login-page .login-panel { padding: 20px 14px 48px; align-items: flex-start; }
+  .login-page .login-form-wrap { margin-top: 15px; padding: 28px 22px; border-radius: 20px; }
+  .login-page .login-form-wrap h2 { font-size: 28px; }
+  .login-type-options { grid-template-columns: 1fr; }
+  .login-type-options button span { white-space: normal; }
+  .login-form-meta { align-items: flex-start; flex-direction: column; }
+  .login-page .login-legal { display: none; }
+}
+
+.brand > span:nth-child(2) {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.2;
+}

@@ -1,0 +1,30 @@
+{
+  "name": "peoplepulse-hr-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "configure:shift": "node src/scripts/updateOfficeShift.js",
+    "test:recruitment": "node src/scripts/testRecruitmentFlow.js",
+    "test:policies": "node src/scripts/testPolicies.js",
+    "recalculate:allowances": "node src/scripts/recalculateAllowanceAllocations.js",
+    "check": "node --check src/server.js && node --check src/app.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.18.0",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "pdfkit": "^0.19.1",
+    "write-excel-file": "^4.1.1",
+    "zod": "^4.1.5"
+  }
+}
