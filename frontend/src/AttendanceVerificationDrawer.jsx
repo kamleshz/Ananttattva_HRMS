@@ -18,7 +18,7 @@ function collectBestLocation(onSuccess,onError){
 export default function AttendanceVerificationDrawer({ mode, attendanceMode='office', close, recorded }) {
   const videoRef=useRef(null),canvasRef=useRef(null)
   const [stream,setStream]=useState(null),[model,setModel]=useState(null),[identityModel,setIdentityModel]=useState(null),[challenge,setChallenge]=useState(null)
-  const [photo,setPhoto]=useState(''),[faceTemplate,setFaceTemplate]=useState(null),[livenessScore,setLivenessScore]=useState(0)
+  const [photo,setPhoto]=useState(''),[identityPhotos,setIdentityPhotos]=useState([]),[faceTemplate,setFaceTemplate]=useState(null),[livenessScore,setLivenessScore]=useState(0)
   const [challengeComplete,setChallengeComplete]=useState(false)
   const [coordinates,setCoordinates]=useState(null),[locationError,setLocationError]=useState(navigator.geolocation?'':'Location is not supported by this browser.')
   const [officeConfigured,setOfficeConfigured]=useState(null)
@@ -49,7 +49,7 @@ export default function AttendanceVerificationDrawer({ mode, attendanceMode='off
   useEffect(()=>{if(videoRef.current&&stream){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{})}return()=>stream?.getTracks().forEach(track=>track.stop())},[stream])
   useEffect(()=>{
     if(!model||!stream||!challenge||photo)return
-    let frame,active=true,lastProcessed=0,neutralFrames=0,passedFrames=0,awaitingNeutralCapture=false,stableNeutralFrames=0
+    let frame,active=true,lastProcessed=0,neutralFrames=0,passedFrames=0,awaitingNeutralCapture=false,stableNeutralFrames=0,neutralPhotos=[]
     const process=(time)=>{
       if(!active)return
       if(time-lastProcessed>90&&videoRef.current?.readyState>=2){
@@ -64,6 +64,9 @@ export default function AttendanceVerificationDrawer({ mode, attendanceMode='off
               if(stableNeutralFrames>=6){
                 const canvas=canvasRef.current,video=videoRef.current
                 canvas.width=640;canvas.height=480;canvas.getContext('2d').drawImage(video,0,0,640,480)
+                neutralPhotos.push(canvas.toDataURL('image/jpeg',.86))
+                if(neutralPhotos.length<3){setLivenessStatus(`Capturing stable identity frames (${neutralPhotos.length}/3)…`);frame=requestAnimationFrame(process);return}
+                setFaceTemplate(null);setIdentityPhotos([...neutralPhotos])
                 setPhoto(canvas.toDataURL('image/jpeg',.86));setLivenessStatus('Neutral identity photo captured. Preparing secure match…');stream.getTracks().forEach(track=>track.stop());return
               }
             }else{stableNeutralFrames=0;setLivenessStatus(`Liveness passed. ${neutralCapture.message}`)}
@@ -88,11 +91,14 @@ export default function AttendanceVerificationDrawer({ mode, attendanceMode='off
   },[model,stream,challenge,photo])
 
   useEffect(()=>{
-    if(!photo||!identityModel||faceTemplate)return
+    if(!photo||identityPhotos.length!==3||!identityModel||faceTemplate)return
     let active=true
-    createIdentityTemplate(photo,identityModel).then(template=>{if(active){setFaceTemplate(template);setLivenessStatus('Live face captured and ready for identity matching')}}).catch(identityError=>{if(active){setError(identityError.message);setLivenessStatus('Identity capture failed. Please repeat verification.')}})
+    Promise.all(identityPhotos.map(item=>createIdentityTemplate(item,identityModel))).then(templates=>{
+      const averaged=templates[0].map((_,index)=>Number((templates.reduce((sum,template)=>sum+template[index],0)/templates.length).toFixed(6)))
+      if(active){setFaceTemplate(averaged);setLivenessStatus('Three-frame live face captured and ready for identity matching')}
+    }).catch(identityError=>{if(active){setError(identityError.message);setLivenessStatus('Identity capture failed. Please repeat verification.')}})
     return()=>{active=false}
-  },[photo,identityModel,faceTemplate])
+  },[photo,identityPhotos,identityModel,faceTemplate])
 
   async function submit(){if(!photo||!coordinates||!faceTemplate||!challenge)return;setBusy(true);setError('');try{const verification=await biometricApi.verify({challengeToken:challenge.challengeToken,challenge:challenge.challenge,photo,faceTemplate,livenessScore,faceCount:1});const payload={photo,attendanceMode,location:coordinates,biometricToken:verification.verificationToken};await (mode==='check-out'?attendanceApi.checkOut(payload):attendanceApi.checkIn(payload));await recorded();close()}catch(requestError){setError(requestError.message)}finally{setBusy(false)}}
   async function retake(){stream?.getTracks().forEach(track=>track.stop());setPhoto('');setFaceTemplate(null);setChallenge(null);setChallengeComplete(false);setLivenessScore(0);setError('');setCameraError('');setLivenessStatus('Preparing a new challenge…');try{await Promise.all([openCamera(),requestChallenge()])}catch{setCameraError('Unable to restart biometric verification.')}}

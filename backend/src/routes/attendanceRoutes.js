@@ -39,7 +39,7 @@ async function verifiedPunch(req, mode) {
   try { verification = jwt.verify(input.biometricToken, env.jwtSecret) }
   catch { throw new HttpError(401, 'Biometric verification expired. Please verify again') }
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
-  if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || verification.faceMatchScore < .65) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
+  if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || verification.faceMatchScore < .56) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
   const dayStart=startOfLocalDay(),dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);dayEnd.setMilliseconds(-1)
   const existing=mode==='check-out'?await Attendance.findOne({employee:req.user.employee?._id,date:dayStart}).select('attendanceMode'):null
   if(existing&&existing.attendanceMode!==input.attendanceMode)throw new HttpError(409,`Check out using the same attendance mode used at check in (${existing.attendanceMode.replaceAll('_',' ')})`)

@@ -11,7 +11,8 @@ import { HttpError } from '../utils/httpError.js'
 const router = Router()
 router.use(authenticate)
 const challenges = ['blink', 'smile', 'turn']
-const FACE_MATCH_THRESHOLD = .65
+const FRONT_FACE_MATCH_THRESHOLD = .56
+const SIDE_FACE_FALLBACK_THRESHOLD = .64
 const MINIMUM_IDENTITY_TEMPLATE_VERSION = 2
 
 router.post('/challenge', asyncHandler(async (req, res) => {
@@ -53,11 +54,14 @@ router.post('/verify', asyncHandler(async (req, res) => {
   if (challengePayload.purpose !== 'biometric_challenge' || challengePayload.sub !== req.user.id || challengePayload.challenge !== input.challenge) throw new HttpError(401, 'Invalid biometric challenge')
   const employee = await Employee.findById(req.user.employee._id).select('+biometricTemplate +biometricSamples')
   if (!employee) throw new HttpError(404, 'Employee profile not found')
-  const templates = employee.biometricSamples?.map(sample => sample.template).filter(template => template?.length >= 128) || []
-  if (!templates.length && employee.biometricTemplate?.length >= 128) templates.push(employee.biometricTemplate)
-  if (!templates.length || employee.biometricTemplateVersion < MINIMUM_IDENTITY_TEMPLATE_VERSION) throw new HttpError(409, 'Secure face re-enrollment is required before attendance can be recorded')
-  const faceMatchScore = Math.max(...templates.map(template => compareTemplates(template, input.faceTemplate)))
-  if (faceMatchScore < FACE_MATCH_THRESHOLD) throw new HttpError(403, 'Face does not match the enrolled employee. Attendance was not recorded.', { faceMatchScore:Number(faceMatchScore.toFixed(3)), requiredScore:FACE_MATCH_THRESHOLD })
+  const samples = employee.biometricSamples?.filter(sample => sample.template?.length >= 128) || []
+  if (!samples.length && employee.biometricTemplate?.length >= 128) samples.push({pose:'front',template:employee.biometricTemplate})
+  if (!samples.length || employee.biometricTemplateVersion < MINIMUM_IDENTITY_TEMPLATE_VERSION) throw new HttpError(409, 'Secure face re-enrollment is required before attendance can be recorded')
+  const scores=samples.map(sample=>({pose:sample.pose,score:compareTemplates(sample.template,input.faceTemplate)}))
+  const frontScore=scores.find(item=>item.pose==='front')?.score||0
+  const bestScore=Math.max(...scores.map(item=>item.score))
+  const faceMatchScore=Math.max(frontScore,bestScore)
+  if (frontScore < FRONT_FACE_MATCH_THRESHOLD && bestScore < SIDE_FACE_FALLBACK_THRESHOLD) throw new HttpError(403, 'Face confidence was too low. Your saved enrollment is unchanged. Use Repeat verification in even lighting, without a mask or strong glare. Contact HR only if three careful attempts fail.', { faceMatchScore:Number(faceMatchScore.toFixed(3)), requiredFrontScore:FRONT_FACE_MATCH_THRESHOLD })
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
   const verificationToken = jwt.sign({ purpose:'biometric_verification', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash }, env.jwtSecret, { subject:req.user.id, expiresIn:'90s', jwtid:randomUUID() })
   res.json({ success:true, data:{ verificationToken, faceMatchScore, livenessScore:input.livenessScore } })
