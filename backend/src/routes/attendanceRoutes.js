@@ -44,7 +44,8 @@ async function verifiedPunch(req, mode) {
   const ranked=offices.map(office=>({...office,distanceMeters:distanceMeters(input.location,office)})).sort((a,b)=>a.distanceMeters-b.distanceMeters)
   const office=ranked[0]
   if(input.location.accuracyMeters>office.maximumAccuracyMeters)throw new HttpError(422,`GPS accuracy is ${Math.round(input.location.accuracyMeters)} metres. Move to an open area and retry when accuracy is within ${office.maximumAccuracyMeters} metres`)
-  if(office.distanceMeters>office.allowedRadiusMeters)throw new HttpError(403,`You are ${office.distanceMeters} metres from ${office.name}. Attendance is allowed within ${office.allowedRadiusMeters} metres`)
+  const minimumPossibleDistance=Math.max(0,office.distanceMeters-Math.round(input.location.accuracyMeters))
+  if(minimumPossibleDistance>office.allowedRadiusMeters)throw new HttpError(403,`Your GPS position is ${office.distanceMeters} metres from ${office.name} with ±${Math.round(input.location.accuracyMeters)} metres accuracy. Attendance is allowed within ${office.allowedRadiusMeters} metres`)
   input.location={...input.location,address:office.address||input.location.address,officeLocation:office._id,officeName:office.name,distanceMeters:office.distanceMeters}
   input.locationVerified=true
   input.biometricVerification = { verified:true, method:verification.identityTemplateVersion >= 3 ? 'active_liveness_multi_angle_face_embedding_v3' : 'active_liveness_face_embedding_v2', challenge:verification.challenge, livenessScore:verification.livenessScore, faceMatchScore:verification.faceMatchScore, verifiedAt:new Date() }

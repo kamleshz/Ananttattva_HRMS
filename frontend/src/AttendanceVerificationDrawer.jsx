@@ -3,6 +3,18 @@ import { CheckCircle2, ChevronRight, Clock3, ScanFace, ShieldCheck, UserRound, X
 import { attendanceApi, biometricApi, organizationApi } from './services/api.js'
 import { challengeCopy, createIdentityTemplate, detectFace, evaluateChallenge, evaluateNeutralCapture, loadFaceIdentityModel, loadFaceLandmarker } from './services/biometrics.js'
 
+function collectBestLocation(onSuccess,onError){
+  let watchId=null,timer=null,best=null,finished=false
+  const finish=()=>{if(finished)return;finished=true;if(watchId!==null)navigator.geolocation.clearWatch(watchId);if(timer)clearTimeout(timer);if(best)onSuccess(best);else onError({code:2})}
+  watchId=navigator.geolocation.watchPosition(({coords})=>{
+    const candidate={latitude:coords.latitude,longitude:coords.longitude,accuracyMeters:coords.accuracy}
+    if(!best||candidate.accuracyMeters<best.accuracyMeters)best=candidate
+    if(candidate.accuracyMeters<=20)finish()
+  },error=>{if(!best){finished=true;if(timer)clearTimeout(timer);onError(error)}},{timeout:12000,enableHighAccuracy:true,maximumAge:0})
+  timer=setTimeout(finish,8000)
+  return()=>{finished=true;if(watchId!==null)navigator.geolocation.clearWatch(watchId);if(timer)clearTimeout(timer)}
+}
+
 export default function AttendanceVerificationDrawer({ mode, close, recorded }) {
   const videoRef=useRef(null),canvasRef=useRef(null)
   const [stream,setStream]=useState(null),[model,setModel]=useState(null),[identityModel,setIdentityModel]=useState(null),[challenge,setChallenge]=useState(null)
@@ -17,18 +29,18 @@ export default function AttendanceVerificationDrawer({ mode, close, recorded }) 
   async function requestChallenge(){setChallenge(await biometricApi.challenge(mode))}
 
   useEffect(()=>{
-    let active=true
+    let active=true,stopLocation=()=>{}
     organizationApi.officeLocations().then(locations=>{
       if(!active)return
       if(!locations.length){setOfficeConfigured(false);setLocationError('Office attendance boundary is not configured. Ask a Super Admin to add it under Settings → Office Locations.');setCameraError('Face verification will be available after the office boundary is configured.');return}
       setOfficeConfigured(true)
-      if(navigator.geolocation)navigator.geolocation.getCurrentPosition(({coords})=>setCoordinates({latitude:coords.latitude,longitude:coords.longitude,accuracyMeters:coords.accuracy}),positionError=>setLocationError(positionError.code===1?'Location permission was denied. Please allow it and try again.':'Unable to determine your current location.'),{timeout:12000,enableHighAccuracy:true,maximumAge:0})
+      if(navigator.geolocation)stopLocation=collectBestLocation(location=>{if(active)setCoordinates(location)},positionError=>{if(active)setLocationError(positionError.code===1?'Location permission was denied. Enable precise location and try again.':'Unable to determine an accurate current location. Move near a window and retry.')})
       if(navigator.mediaDevices?.getUserMedia)navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}).then(setStream).catch(()=>setCameraError('Camera permission is required to record attendance.'))
       biometricApi.challenge(mode).then(setChallenge).catch(requestError=>setError(requestError.message))
       loadFaceLandmarker().then(setModel).catch(()=>setCameraError('Secure face detection could not be loaded.'))
       loadFaceIdentityModel().then(setIdentityModel).catch(()=>setCameraError('Secure identity recognition could not be loaded.'))
     }).catch(requestError=>{if(active){setOfficeConfigured(false);setLocationError(requestError.message)}})
-    return()=>{active=false}
+    return()=>{active=false;stopLocation()}
   },[mode])
   useEffect(()=>{if(videoRef.current&&stream){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{})}return()=>stream?.getTracks().forEach(track=>track.stop())},[stream])
   useEffect(()=>{
