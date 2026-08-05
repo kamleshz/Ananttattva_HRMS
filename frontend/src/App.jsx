@@ -40,6 +40,7 @@ import {
   AttendancePage,
   AllowancesPage,
   EmployeeOnboardingPage,
+  EmployeeEditPage,
   EmployeeBiometricPage,
   HolidaysPage,
   LeavePage,
@@ -104,6 +105,8 @@ function Avatar({ children, tone = "teal" }) {
 }
 
 function Sidebar({ open, close, user, employee, path, navigate }) {
+  const [recruitmentOpen,setRecruitmentOpen]=useState(path.startsWith('/recruitment'));
+  useEffect(()=>{if(path.startsWith('/recruitment'))setRecruitmentOpen(true)},[path]);
   const primaryNavigation = user.role === "employee"
     ? navigation.filter(([, , route]) => employeeAllowedPaths.has(route))
     : navigation;
@@ -156,19 +159,14 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>
-              {recruitmentNavigation[user.role].map(([label, route]) => (
-                <button
-                  key={route}
-                  onClick={() => {
-                    navigate(route);
-                    close();
-                  }}
-                  className={`nav-item recruitment-nav-item ${path.startsWith(route) ? "active" : ""}`}
-                >
-                  <BriefcaseBusiness size={17} />
+              <button type="button" onClick={()=>setRecruitmentOpen(value=>!value)} className={`nav-item recruitment-parent ${path.startsWith('/recruitment')?'active':''}`} aria-expanded={recruitmentOpen}>
+                <BriefcaseBusiness size={18}/><span>Candidate Recruitment</span><ChevronDown className={recruitmentOpen?'':'rotated'} size={16}/>
+              </button>
+              {recruitmentOpen&&<div className="subnav recruitment-subnav">{recruitmentNavigation[user.role].map(([label, route]) => (
+                <button key={route} onClick={()=>{navigate(route);close()}} className={`nav-item recruitment-nav-item ${path.startsWith(route)?"active":""}`}>
                   <span>{label}</span>
                 </button>
-              ))}
+              ))}</div>}
             </>
           )}
           {user.role === "super_admin" && (
@@ -811,6 +809,12 @@ function RealHolidaysCard({ holidays = [] }) {
   return <section className="card side-card"><div className="card-heading"><div><p className="eyebrow">Calendar</p><h2>Upcoming holidays</h2></div><CalendarDays size={18}/></div>{holidays.map((holiday,index)=>{const date=new Date(holiday.date);const daysUntil=Math.max(0,Math.ceil((date-new Date())/86400000));return <div className="holiday" key={holiday._id||holiday.name}><div className={`date-tile ${index?"amber":""}`}><b>{date.getDate()}</b><span>{date.toLocaleDateString("en-IN",{month:"short"})}</span></div><div><strong>{holiday.name}</strong><span>{date.toLocaleDateString("en-IN",{weekday:"long"})} · {daysUntil===0?"Today":`In ${daysUntil} days`}</span></div></div>})}{!holidays.length&&<p className="compact-empty">No upcoming holidays configured.</p>}<button className="full-link" onClick={()=>navigate("/holidays")}>View holiday calendar <ChevronRight size={15}/></button></section>;
 }
 
+function WorkforceDemographicsCard({ demographics }) {
+  if(!demographics)return null;
+  const total=demographics.male+demographics.female+demographics.nonBinary+demographics.preferNotToSay+demographics.notSpecified;
+  return <section className="card side-card workforce-demographics-card"><div className="card-heading"><div><p className="eyebrow">Workforce</p><h2>Employee demographics</h2></div><UsersRound size={18}/></div><div className="demographic-grid"><div><span>Male employees</span><strong>{demographics.male}</strong></div><div><span>Female employees</span><strong>{demographics.female}</strong></div><div><span>Other / private</span><strong>{demographics.nonBinary+demographics.preferNotToSay}</strong></div><div><span>Not specified</span><strong>{demographics.notSpecified}</strong></div></div><small className="demographic-total">{total} active employees · Counts use employee records only</small></section>;
+}
+
 function HomePage({ user, dashboard }) {
   const navigate = useNavigate();
   const quickAction=user.role==='super_admin'?{label:'Review offer approvals',route:'/recruitment/approvals'}:user.role==='hr_admin'?{label:'Add candidate',route:'/recruitment/candidates'}:{label:dashboard?.today?.checkIn?.time?'View attendance':'Check in',route:'/attendance'};
@@ -851,6 +855,7 @@ function HomePage({ user, dashboard }) {
           <RealWeekCard days={dashboard?.week} summary={dashboard?.weekSummary}/>
         </div>
         <aside className="right-column">
+          <WorkforceDemographicsCard demographics={dashboard?.demographics}/>
           <RealHolidaysCard holidays={dashboard?.holidays}/>
           <CelebrationCard birthdays={dashboard?.birthdays} />
         </aside>
@@ -922,8 +927,11 @@ export default function App() {
     "/allowances": <AllowancesPage user={user} />,
   };
   const biometricEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/biometrics$/);
+  const editEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/edit$/);
   const activePage =
-    biometricEmployeeMatch ? (
+    editEmployeeMatch ? (
+      <EmployeeEditPage employeeId={editEmployeeMatch[1]} />
+    ) : biometricEmployeeMatch ? (
       <EmployeeBiometricPage employeeId={biometricEmployeeMatch[1]} />
     ) : location.pathname.startsWith("/recruitment") ||
     location.pathname.startsWith("/settings/") ? (

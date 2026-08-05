@@ -9,6 +9,12 @@ import { Holiday } from '../models/Holiday.js'
 const router = Router()
 router.use(authenticate)
 
+async function workforceDemographics(){
+  const rows=await Employee.aggregate([{$match:{employeeStatus:'active'}},{$group:{_id:{$ifNull:['$gender','not_specified']},count:{$sum:1}}}])
+  const counts=Object.fromEntries(rows.map(row=>[row._id,row.count]))
+  return {male:counts.male||0,female:counts.female||0,nonBinary:counts.non_binary||0,preferNotToSay:counts.prefer_not_to_say||0,notSpecified:counts.not_specified||0}
+}
+
 function upcomingBirthday(employee, today) {
   const dateOfBirth = new Date(employee.dateOfBirth)
   let nextDate = new Date(today.getFullYear(), dateOfBirth.getUTCMonth(), dateOfBirth.getUTCDate())
@@ -39,11 +45,12 @@ router.get('/employee', asyncHandler(async (req, res) => {
   })
   const effectiveMinutes=weekRecords.reduce((sum,item)=>sum+(item.workingMinutes||0),0)
   const completedDays=weekRecords.filter(item=>item.checkOut?.time).length
-  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, today:attendance, birthdays, holidays, week, weekSummary:{effectiveMinutes,averageMinutes:completedDays?Math.round(effectiveMinutes/completedDays):0,onTimeDays:weekRecords.filter(item=>!item.lateMinutes).length,completedDays,monthlyLateCount:attendance?.lateOccurrenceInMonth||0}, tasks:[], away:[] } })
+  const demographics=['super_admin','hr_admin','it_admin'].includes(req.user.role)?await workforceDemographics():null
+  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, today:attendance, birthdays, holidays, week, demographics, weekSummary:{effectiveMinutes,averageMinutes:completedDays?Math.round(effectiveMinutes/completedDays):0,onTimeDays:weekRecords.filter(item=>!item.lateMinutes).length,completedDays,monthlyLateCount:attendance?.lateOccurrenceInMonth||0}, tasks:[], away:[] } })
 }))
-router.get('/admin', authorize('super_admin','hr_admin'), asyncHandler(async (_req, res) => {
+router.get('/admin', authorize('super_admin','hr_admin','it_admin'), asyncHandler(async (_req, res) => {
   const date = startOfLocalDay()
-  const [total, present, late, wfh] = await Promise.all([Employee.countDocuments({employeeStatus:'active'}),Attendance.countDocuments({date,status:'present'}),Attendance.countDocuments({date,status:'late'}),Attendance.countDocuments({date,status:'wfh'})])
-  res.json({success:true,data:{totalEmployees:total,presentToday:present,lateToday:late,wfhToday:wfh,notReported:Math.max(0,total-present-late-wfh)}})
+  const [total, present, late, wfh,demographics] = await Promise.all([Employee.countDocuments({employeeStatus:'active'}),Attendance.countDocuments({date,status:'present'}),Attendance.countDocuments({date,status:'late'}),Attendance.countDocuments({date,status:'wfh'}),workforceDemographics()])
+  res.json({success:true,data:{totalEmployees:total,presentToday:present,lateToday:late,wfhToday:wfh,notReported:Math.max(0,total-present-late-wfh),demographics}})
 }))
 export default router

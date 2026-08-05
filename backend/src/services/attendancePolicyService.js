@@ -3,6 +3,7 @@ import { Notification } from '../models/Recruitment.js'
 import { User } from '../models/User.js'
 import { env } from '../config/env.js'
 import { sendGraphEmail } from './mailService.js'
+import { atOrganizationTime, organizationMonthBounds } from '../utils/date.js'
 
 export const LATE_CUTOFF_HOUR = 10
 export const LATE_CUTOFF_MINUTE = 15
@@ -12,16 +13,11 @@ export const HALF_DAYS_BEFORE_ESCALATION = 3
 const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'})[character])
 
 export function monthBounds(date = new Date()) {
-  return {
-    start:new Date(date.getFullYear(), date.getMonth(), 1),
-    end:new Date(date.getFullYear(), date.getMonth() + 1, 1),
-  }
+  return organizationMonthBounds(date)
 }
 
 export function lateCutoff(date = new Date()) {
-  const cutoff = new Date(date)
-  cutoff.setHours(LATE_CUTOFF_HOUR, LATE_CUTOFF_MINUTE, 0, 0)
-  return cutoff
+  return atOrganizationTime(date,LATE_CUTOFF_HOUR,LATE_CUTOFF_MINUTE)
 }
 
 export function calculateLatePolicy(existingLateCount, existingPolicyHalfDays) {

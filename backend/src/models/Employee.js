@@ -15,6 +15,7 @@ const employeeSchema = new mongoose.Schema({
   personalEmail: { type: String, lowercase: true, trim: true },
   mobile: { type: String, trim: true },
   dateOfBirth: { type: Date, default: null, index: true },
+  gender: { type: String, enum: ['male','female','non_binary','prefer_not_to_say','not_specified'], default: 'not_specified', index: true },
   profilePhoto: { type: String, default: null },
   biometricTemplate: { type: [Number], select: false, default: undefined },
   biometricSamples: { type: [biometricSampleSchema], select: false, default: undefined },

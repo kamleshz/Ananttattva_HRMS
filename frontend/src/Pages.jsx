@@ -76,9 +76,36 @@ function StateMessage({ children, error = false }) {
     <div className={`state-message ${error ? "error" : ""}`}>{children}</div>
   );
 }
-function StatusBadge({ status }) {
-  return <span className={`data-status ${status}`}>{capitalize(status)}</span>;
+function StatusBadge({ status, label }) {
+  return <span className={`data-status ${status}`}>{label || capitalize(status)}</span>;
 }
+const INDIA_TIME_PARTS = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Kolkata",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+function derivedLateMinutes(record) {
+  if (!record?.checkIn?.time || record.attendanceMode === "wfh") return 0;
+  const parts = Object.fromEntries(
+    INDIA_TIME_PARTS.formatToParts(new Date(record.checkIn.time))
+      .filter(({ type }) => type !== "literal")
+      .map(({ type, value }) => [type, Number(value)]),
+  );
+  const minutesAfterCutoff = (parts.hour * 60 + parts.minute) - (10 * 60 + 15);
+  return Math.max(Number(record.lateMinutes) || 0, minutesAfterCutoff, 0);
+}
+const punctualityFor = (record) => !record?.checkIn?.time
+  ? null
+  : (derivedLateMinutes(record) > 0 || record.status === "late" || record.halfDayReason === "three_late_arrivals")
+    ? "late"
+    : "on_time";
+const punctualityLabel = (record, long = false) => {
+  const status = punctualityFor(record);
+  if (status !== "late") return status === "on_time" ? "On time" : "—";
+  const minutes = derivedLateMinutes(record);
+  return `Late${minutes ? ` · ${minutes}${long ? " minutes" : "m"}` : ""}`;
+};
 
 export function MySpacePage() {
   const navigate = useNavigate();
@@ -201,8 +228,9 @@ export function AttendancePage({ user }) {
         (result, item) => ({
           ...result,
           [item.status]: (result[item.status] || 0) + 1,
+          punctualityLate: result.punctualityLate + (punctualityFor(item) === "late" ? 1 : 0),
         }),
-        {},
+        { punctualityLate: 0 },
       ),
     [records],
   );
@@ -322,7 +350,7 @@ export function AttendancePage({ user }) {
         </div>
         <div>
           <span>Late</span>
-          <strong>{summary.late || 0}</strong>
+          <strong>{summary.punctualityLate}</strong>
         </div>
         <div>
           <span>WFH</span>
@@ -361,7 +389,8 @@ export function AttendancePage({ user }) {
                   <th>Last out</th>
                   <th>Proof</th>
                   <th>Hours</th>
-                  <th>Status</th>
+                  <th>Attendance</th>
+                  <th>Punctuality</th>
                   <th />
                 </tr>
               </thead>
@@ -419,6 +448,7 @@ export function AttendancePage({ user }) {
                     <td>
                       <StatusBadge status={item.status} />
                     </td>
+                    <td>{punctualityFor(item) ? <StatusBadge status={punctualityFor(item)} label={punctualityLabel(item)} /> : <span>—</span>}</td>
                     <td>
                       <div className="attendance-row-actions">
                         <button className="table-action" onClick={() => setSelected(item)}>View</button>
@@ -531,6 +561,7 @@ function AttendanceDetailDrawer({ record, close, viewPhoto }) {
         </div>
         <div className="attendance-detail-status">
           <StatusBadge status={record.status} />
+          {punctualityFor(record) && <StatusBadge status={punctualityFor(record)} label={punctualityLabel(record, true)} />}
           <span>{record.checkOut?.source === "system_auto" ? "System Auto Checkout · Configured shift end" : record.checkOut?.source === "hr_correction" ? "HR-approved corrected checkout" : "General shift · 10:00 AM – 6:30 PM"}</span>
         </div>
         <div className="attendance-time-grid">
@@ -955,14 +986,14 @@ export function PeoplePage({ user }) {
         eyebrow="Team"
         title="People"
         description={`${employees.length} employees in your organization.`}
-        action={
+        action={['super_admin','hr_admin'].includes(user?.role) ?
           <button
             className="primary-button"
             onClick={() => navigate("/people/new")}
           >
             <Plus size={16} /> Add employee
           </button>
-        }
+        : null}
       />
       <section className="content-card">
         <div className="people-toolbar">
@@ -1011,9 +1042,7 @@ export function PeoplePage({ user }) {
                     <dd>{employee.workLocation}</dd>
                   </div>
                 </dl>
-                {['super_admin','hr_admin'].includes(user?.role) && <button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>
-                  Re-enroll face <ArrowRight size={14} />
-                </button>}
+                {['super_admin','hr_admin'].includes(user?.role) && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button></div>}
               </article>
             ))}
           </div>
@@ -1021,6 +1050,22 @@ export function PeoplePage({ user }) {
       </section>
     </>
   );
+}
+
+export function EmployeeEditPage({ employeeId }) {
+  const navigate=useNavigate();
+  const [form,setForm]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  useEffect(()=>{employeeApi.get(employeeId).then(employee=>setForm({...employee,dateOfBirth:employee.dateOfBirth?new Date(employee.dateOfBirth).toISOString().slice(0,10):"",joiningDate:employee.joiningDate?new Date(employee.joiningDate).toISOString().slice(0,10):"",gender:employee.gender||"not_specified",shift:employee.shift||{name:"General Shift",startTime:"10:00",endTime:"18:30",graceMinutes:15}})).catch(requestError=>setError(requestError.message))},[employeeId]);
+  const update=(field,value)=>setForm(current=>({...current,[field]:value}));
+  async function save(event){event.preventDefault();setBusy(true);setError("");try{await employeeApi.update(employeeId,{firstName:form.firstName,lastName:form.lastName,dateOfBirth:form.dateOfBirth||null,gender:form.gender,officialEmail:form.officialEmail,personalEmail:form.personalEmail||"",mobile:form.mobile||"",department:form.department||"General",designation:form.designation||"Employee",branch:form.branch||"Head Office",workLocation:form.workLocation||"Main Office",joiningDate:form.joiningDate,employmentType:form.employmentType,employeeStatus:form.employeeStatus,shift:{...form.shift,graceMinutes:Number(form.shift.graceMinutes)}});navigate("/people")}catch(requestError){setError(requestError.message)}finally{setBusy(false)}}
+  if(error&&!form)return <><button className="back-link" onClick={()=>navigate("/people")}><ArrowLeft size={15}/> Back to employees</button><StateMessage error>{error}</StateMessage></>;
+  if(!form)return <StateMessage>Loading employee details…</StateMessage>;
+  return <><button className="back-link" onClick={()=>navigate("/people")}><ArrowLeft size={15}/> Back to employees</button><PageHeader eyebrow="People · Employee record" title={`Edit ${form.firstName} ${form.lastName}`} description={`${form.employeeCode} · Update personal, employment and shift details.`}/><form className="onboarding-form employee-edit-form" onSubmit={save}><aside className="onboarding-steps"><div className="active"><span>01</span><div><strong>Personal details</strong><small>Identity and contact information</small></div></div><div><span>02</span><div><strong>Job details</strong><small>Employment and workplace</small></div></div><div><span>03</span><div><strong>Shift details</strong><small>Attendance schedule</small></div></div></aside><div className="onboarding-content">
+    <section className="form-section"><div className="form-section-title"><span><UserRound size={18}/></span><div><h2>Personal details</h2><p>Fields used in the employee profile and workforce dashboard.</p></div></div><div className="field-grid"><label>Employee number<input value={form.employeeCode} readOnly aria-readonly="true"/></label><label>Gender *<select required value={form.gender} onChange={e=>update("gender",e.target.value)}><option value="not_specified">Not specified</option><option value="male">Male</option><option value="female">Female</option><option value="non_binary">Non-binary</option><option value="prefer_not_to_say">Prefer not to say</option></select></label><label>First name *<input required value={form.firstName} onChange={e=>update("firstName",e.target.value)}/></label><label>Last name *<input required value={form.lastName} onChange={e=>update("lastName",e.target.value)}/></label><label>Date of birth<input type="date" max={new Date().toISOString().slice(0,10)} value={form.dateOfBirth} onChange={e=>update("dateOfBirth",e.target.value)}/></label><label>Mobile<input value={form.mobile||""} onChange={e=>update("mobile",e.target.value)}/></label><label>Official email *<input required type="email" value={form.officialEmail} onChange={e=>update("officialEmail",e.target.value)}/></label><label>Personal email<input type="email" value={form.personalEmail||""} onChange={e=>update("personalEmail",e.target.value)}/></label></div></section>
+    <section className="form-section"><div className="form-section-title"><span><BriefcaseBusiness size={18}/></span><div><h2>Job details</h2><p>Employment status and organizational information.</p></div></div><div className="field-grid"><label>Department<input value={form.department||""} onChange={e=>update("department",e.target.value)}/></label><label>Designation<input value={form.designation||""} onChange={e=>update("designation",e.target.value)}/></label><label>Branch<input value={form.branch||""} onChange={e=>update("branch",e.target.value)}/></label><label>Work location<input value={form.workLocation||""} onChange={e=>update("workLocation",e.target.value)}/></label><label>Joining date *<input required type="date" value={form.joiningDate} onChange={e=>update("joiningDate",e.target.value)}/></label><label>Employment type<select value={form.employmentType} onChange={e=>update("employmentType",e.target.value)}><option value="permanent">Permanent</option><option value="probation">Probation</option><option value="contract">Contract</option><option value="intern">Intern</option><option value="consultant">Consultant</option></select></label><label>Employee status<select value={form.employeeStatus} onChange={e=>update("employeeStatus",e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="notice_period">Notice period</option><option value="resigned">Resigned</option><option value="terminated">Terminated</option></select></label></div></section>
+    <section className="form-section"><div className="form-section-title"><span><Clock3 size={18}/></span><div><h2>Shift details</h2><p>Working schedule used for attendance calculations.</p></div></div><div className="field-grid"><label>Shift name<input required value={form.shift.name} onChange={e=>update("shift",{...form.shift,name:e.target.value})}/></label><label>Grace period (minutes)<input required type="number" min="0" max="180" value={form.shift.graceMinutes} onChange={e=>update("shift",{...form.shift,graceMinutes:e.target.value})}/></label><label>Start time<input required type="time" value={form.shift.startTime} onChange={e=>update("shift",{...form.shift,startTime:e.target.value})}/></label><label>End time<input required type="time" value={form.shift.endTime} onChange={e=>update("shift",{...form.shift,endTime:e.target.value})}/></label></div></section>
+    {error&&<StateMessage error>{error}</StateMessage>}<div className="onboarding-actions"><button type="button" className="secondary-button" onClick={()=>navigate("/people")}>Cancel</button><button className="primary-button" disabled={busy}>{busy?"Saving…":"Save employee details"}</button></div>
+  </div></form></>;
 }
 
 export function OrganizationChartPage() {
@@ -1042,6 +1087,7 @@ export function EmployeeOnboardingPage({ user }) {
     firstName: "",
     lastName: "",
     dateOfBirth: "",
+    gender: "not_specified",
     officialEmail: "",
     department: "",
     designation: "",
@@ -1186,6 +1232,16 @@ export function EmployeeOnboardingPage({ user }) {
                   value={form.dateOfBirth}
                   onChange={(e) => update("dateOfBirth", e.target.value)}
                 />
+              </label>
+              <label>
+                Gender *
+                <select required value={form.gender} onChange={(e) => update("gender", e.target.value)}>
+                  <option value="not_specified">Not specified</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="non_binary">Non-binary</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
               </label>
             </div>
           </section>
@@ -1342,6 +1398,9 @@ export function ReportsPage() {
         ["Present today", data.presentToday, Check],
         ["Late today", data.lateToday, Clock3],
         ["Not reported", data.notReported, UserRound],
+        ["Male employees", data.demographics?.male || 0, UserRound],
+        ["Female employees", data.demographics?.female || 0, UserRound],
+        ["Gender not specified", data.demographics?.notSpecified || 0, UserRound],
       ]
     : [];
   return (

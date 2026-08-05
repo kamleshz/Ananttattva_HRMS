@@ -106,6 +106,7 @@ export const employeeApi = {
   create: (data) =>
     api("/employees", { method: "POST", body: JSON.stringify(data) }),
   get: (id) => api(`/employees/${id}`),
+  update: (id, data) => api(`/employees/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   getBiometrics: (id) => api(`/employees/${id}/biometrics`),
   updateBiometrics: (id, data) =>
     api(`/employees/${id}/biometrics`, { method: "PUT", body: JSON.stringify(data) }),

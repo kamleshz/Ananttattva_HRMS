@@ -46,6 +46,25 @@ router.get('/:id', asyncHandler(async (req, res) => {
   if (!employee) throw new HttpError(404, 'Employee not found')
   res.json({ success: true, data: employee })
 }))
+const employeeUpdateSchema=z.object({
+  firstName:z.string().trim().min(1).optional(),lastName:z.string().trim().min(1).optional(),
+  dateOfBirth:z.coerce.date().max(new Date(),'Date of birth cannot be in the future').nullable().optional(),
+  gender:z.enum(['male','female','non_binary','prefer_not_to_say','not_specified']).optional(),
+  officialEmail:z.email().optional(),personalEmail:z.email().optional().or(z.literal('')),mobile:z.string().trim().max(30).optional(),
+  department:z.string().trim().max(100).optional(),designation:z.string().trim().max(100).optional(),branch:z.string().trim().max(100).optional(),workLocation:z.string().trim().max(150).optional(),
+  joiningDate:z.coerce.date().optional(),employmentType:z.enum(['permanent','probation','contract','intern','consultant']).optional(),employeeStatus:z.enum(['active','inactive','notice_period','resigned','terminated']).optional(),
+  shift:z.object({name:z.string().trim().min(1),startTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),endTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),graceMinutes:z.coerce.number().int().min(0).max(180)}).optional(),
+})
+router.put('/:id',authorize('super_admin','hr_admin'),asyncHandler(async(req,res)=>{
+  const input=employeeUpdateSchema.parse(req.body)
+  const employee=await Employee.findById(req.params.id)
+  if(!employee)throw new HttpError(404,'Employee not found')
+  if(input.officialEmail&&await User.exists({email:input.officialEmail,_id:{$ne:employee.user}}))throw new HttpError(409,'Another login account already uses this official email')
+  Object.assign(employee,input)
+  await employee.save()
+  if(employee.user&&(input.officialEmail||input.firstName||input.lastName))await User.findByIdAndUpdate(employee.user,{email:input.officialEmail||employee.officialEmail,firstName:input.firstName||employee.firstName,lastName:input.lastName||employee.lastName},{runValidators:true})
+  res.json({success:true,data:employee})
+}))
 router.get('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id).select('+biometricSamples')
   if (!employee) throw new HttpError(404, 'Employee not found')
@@ -63,7 +82,7 @@ router.put('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(
   res.json({ success:true, data:{ id:employee.id, employeeCode:employee.employeeCode, biometricEnrolledAt:employee.biometricEnrolledAt, biometricTemplateVersion:employee.biometricTemplateVersion } })
 }))
 router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
-  const input = z.object({ employeeCode:z.string().min(3), firstName:z.string().min(1), lastName:z.string().min(1), dateOfBirth:z.coerce.date().max(new Date(), 'Date of birth cannot be in the future'), officialEmail:z.email(), department:z.string().optional(), designation:z.string().optional(), temporaryPassword:z.string().min(8), role:z.enum(['super_admin','hr_admin','manager','finance_admin','it_admin','employee']).default('employee'), ...biometricEnrollmentSchema.shape }).parse(req.body)
+  const input = z.object({ employeeCode:z.string().min(3), firstName:z.string().min(1), lastName:z.string().min(1), dateOfBirth:z.coerce.date().max(new Date(), 'Date of birth cannot be in the future'), gender:z.enum(['male','female','non_binary','prefer_not_to_say','not_specified']), officialEmail:z.email(), department:z.string().optional(), designation:z.string().optional(), temporaryPassword:z.string().min(8), role:z.enum(['super_admin','hr_admin','manager','finance_admin','it_admin','employee']).default('employee'), ...biometricEnrollmentSchema.shape }).parse(req.body)
   if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only an Admin can create another Admin account')
   const passwordHash = await bcrypt.hash(input.temporaryPassword, 12)
   const user = await User.create({ firstName:input.firstName, lastName:input.lastName, email:input.officialEmail, passwordHash, role:input.role, mustChangePassword:true })

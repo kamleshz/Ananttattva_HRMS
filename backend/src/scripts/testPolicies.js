@@ -8,9 +8,10 @@ assert.deepEqual(calculateLatePolicy(0,0),{lateOccurrence:1,becomesHalfDay:false
 assert.deepEqual(calculateLatePolicy(2,0),{lateOccurrence:3,becomesHalfDay:true,halfDayOccurrence:1,shouldEscalate:false})
 assert.deepEqual(calculateLatePolicy(5,1),{lateOccurrence:6,becomesHalfDay:true,halfDayOccurrence:2,shouldEscalate:false})
 assert.deepEqual(calculateLatePolicy(8,2),{lateOccurrence:9,becomesHalfDay:true,halfDayOccurrence:3,shouldEscalate:true})
-const cutoff = lateCutoff(new Date(2026,7,4,9,0))
-assert.equal(cutoff.getHours(),10)
-assert.equal(cutoff.getMinutes(),15)
+const cutoff = lateCutoff(new Date('2026-08-04T03:30:00.000Z'))
+assert.equal(cutoff.toISOString(),'2026-08-04T04:45:00.000Z')
+assert.equal(new Date('2026-08-04T04:44:00.000Z') > lateCutoff(new Date('2026-08-04T04:44:00.000Z')),false)
+assert.equal(new Date('2026-08-04T09:44:00.000Z') > lateCutoff(new Date('2026-08-04T09:44:00.000Z')),true)
 
 assert.deepEqual(allocateMonthlyAllowance(0,800),{monthlyLimit:2000,acceptableAmount:800,nonAcceptableAmount:0})
 assert.deepEqual(allocateMonthlyAllowance(1600,800),{monthlyLimit:2000,acceptableAmount:400,nonAcceptableAmount:400})
