@@ -205,7 +205,7 @@ export function AttendancePage({ user }) {
   const canExport = ["super_admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
   const canReviewCorrections = ["super_admin", "hr_admin"].includes(user.role);
-  const canReviewArrangements = ["super_admin", "hr_admin", "manager"].includes(user.role);
+  const canReviewArrangements = ["super_admin", "hr_admin", "it_admin", "manager"].includes(user.role);
   useEffect(() => {
     (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
       .then(setRecords)
@@ -219,7 +219,7 @@ export function AttendancePage({ user }) {
       .catch((e) => setError(e.message));
   }, [canReviewCorrections]);
   useEffect(() => {
-    const scope=["super_admin","hr_admin"].includes(user.role)?"all":user.role==="manager"?"team":"mine";
+    const scope=["super_admin","hr_admin","it_admin"].includes(user.role)?"all":user.role==="manager"?"team":"mine";
     workArrangementApi.list(scope).then(setArrangements).catch((e)=>setError(e.message));
   }, [user.role]);
   const summary = useMemo(
@@ -307,6 +307,8 @@ export function AttendancePage({ user }) {
     setArrangementBusy(true);setError("");try{const updated=await workArrangementApi.review(request._id,decision,reviewNote);setArrangements(items=>items.map(item=>item._id===updated._id?{...item,...updated}:item))}catch(e){setError(e.message)}finally{setArrangementBusy(false)}
   }
   const pendingCorrectionIds = new Set(corrections.filter((item) => item.status === "pending").map((item) => String(item.attendance?._id || item.attendance)));
+  const pendingArrangements = arrangements.filter((item) => item.status === "pending");
+  const orderedArrangements = [...arrangements].sort((left,right) => Number(right.status === "pending") - Number(left.status === "pending"));
   return (
     <>
       <PageHeader
@@ -361,6 +363,10 @@ export function AttendancePage({ user }) {
           <strong>{records.length}</strong>
         </div>
       </div>
+      {canReviewArrangements && <div className={`work-approval-banner ${pendingArrangements.length ? "has-pending" : ""}`}>
+        <div><span>Work-mode approval queue</span><strong>{pendingArrangements.length ? `${pendingArrangements.length} request${pendingArrangements.length === 1 ? "" : "s"} waiting for review` : "No pending work-mode requests"}</strong><small>Review work-from-home, client-location and field-visit requests.</small></div>
+        <button className="secondary-button" onClick={()=>document.getElementById("work-mode-approvals")?.scrollIntoView({behavior:"smooth",block:"start"})}>Review requests <ArrowRight size={15}/></button>
+      </div>}
       <section className="content-card">
         <div className="section-heading">
           <div>
@@ -465,12 +471,12 @@ export function AttendancePage({ user }) {
           </div>
         )}
       </section>
-      <section className="content-card work-arrangements-card">
+      <section className="content-card work-arrangements-card" id="work-mode-approvals">
         <div className="section-heading">
           <div><p className="eyebrow">Flexible attendance</p><h2>{canReviewArrangements ? "Work-mode approvals" : "My work-mode requests"}</h2></div>
           <button className="secondary-button" onClick={()=>setArrangementOpen(true)}><Plus size={15}/> New request</button>
         </div>
-        {arrangements.length===0?<StateMessage>No work-from-home, client-location, or field-visit requests yet.</StateMessage>:<div className="attendance-correction-list work-arrangement-list">{arrangements.map(request=><article key={request._id}>
+        {orderedArrangements.length===0?<StateMessage>No work-from-home, client-location, or field-visit requests yet.</StateMessage>:<div className="attendance-correction-list work-arrangement-list">{orderedArrangements.map(request=><article key={request._id}>
           <div><strong>{request.employee?.firstName?`${request.employee.firstName} ${request.employee.lastName||""}`:"My request"} · {request.type.replaceAll("_"," ")}</strong><span>{formatDate(request.startDate)} to {formatDate(request.endDate)} · {request.startTime}–{request.endTime}</span><p>{request.reason}{request.clientName?` · ${request.clientName}`:""}</p></div>
           <StatusBadge status={request.status}/>
           {canReviewArrangements&&request.status==="pending"&&<div className="correction-review-actions"><button className="reject-button" disabled={arrangementBusy} onClick={()=>reviewArrangement(request,"reject")}>Reject</button><button className="approve-button" disabled={arrangementBusy} onClick={()=>reviewArrangement(request,"approve")}><Check size={13}/> Approve</button></div>}
@@ -509,7 +515,7 @@ export function AttendancePage({ user }) {
       {viewingPhoto && (
         <PhotoViewer photo={viewingPhoto} close={() => setViewingPhoto(null)} />
       )}
-      {arrangementOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setArrangementOpen(false)}/><aside className="form-drawer work-arrangement-drawer"><div className="drawer-heading"><div><p className="eyebrow">Flexible attendance</p><h2>Request a work mode</h2></div><button onClick={()=>setArrangementOpen(false)}><X size={20}/></button></div><form onSubmit={submitArrangement}>
+      {arrangementOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setArrangementOpen(false)}/><aside className="form-drawer work-arrangement-drawer"><div className="drawer-heading"><div><p className="eyebrow">Flexible attendance</p><h2>Request a work mode</h2></div><button aria-label="Close work mode request" onClick={()=>setArrangementOpen(false)}><X size={20}/></button></div><form onSubmit={submitArrangement}><div className="work-arrangement-form-body">
         <label>Work mode *<select value={arrangementForm.type} onChange={e=>setArrangementForm({...arrangementForm,type:e.target.value})}><option value="wfh">Work from home</option><option value="client_location">Client location</option><option value="field_visit">Field visit / travelling</option></select></label>
         <div className="form-row"><label>From date *<input required type="date" value={arrangementForm.startDate} onChange={e=>setArrangementForm({...arrangementForm,startDate:e.target.value})}/></label><label>To date *<input required type="date" min={arrangementForm.startDate} value={arrangementForm.endDate} onChange={e=>setArrangementForm({...arrangementForm,endDate:e.target.value})}/></label></div>
         <div className="form-row"><label>Allowed from *<input required type="time" value={arrangementForm.startTime} onChange={e=>setArrangementForm({...arrangementForm,startTime:e.target.value})}/></label><label>Allowed until *<input required type="time" value={arrangementForm.endTime} onChange={e=>setArrangementForm({...arrangementForm,endTime:e.target.value})}/></label></div>
@@ -517,7 +523,7 @@ export function AttendancePage({ user }) {
         <button type="button" className="secondary-button location-capture-button" disabled={arrangementBusy} onClick={captureDestination}><MapPin size={15}/> {arrangementForm.destination.latitude?`Current location saved: ${arrangementForm.destination.latitude}, ${arrangementForm.destination.longitude}`:arrangementForm.type==="wfh"?"Use my current location for WFH":"Use my current location as destination"}</button>
         <label>Approved location radius (metres)<input required type="number" min="25" max="10000" value={arrangementForm.destination.allowedRadiusMeters} onChange={e=>setArrangementForm({...arrangementForm,destination:{...arrangementForm.destination,allowedRadiusMeters:e.target.value}})}/></label>
         <label>Reason *<textarea required minLength="10" maxLength="1000" rows="5" value={arrangementForm.reason} onChange={e=>setArrangementForm({...arrangementForm,reason:e.target.value})} placeholder="Explain why this work arrangement is required"/></label>
-        <div className="arrangement-policy-note"><ShieldCheck size={17}/><span>Attendance is enabled only after approval. GPS, live face verification, and the enrolled identity match remain mandatory.</span></div>
+        <div className="arrangement-policy-note"><ShieldCheck size={17}/><span>Attendance is enabled only after approval. GPS, live face verification, and the enrolled identity match remain mandatory.</span></div></div>
         <div className="drawer-actions"><button type="button" className="secondary-button" onClick={()=>setArrangementOpen(false)}>Cancel</button><button className="primary-button" disabled={arrangementBusy}>{arrangementBusy?"Submitting…":"Send for approval"}</button></div>
       </form></aside></div>}
       {correctionRecord && (

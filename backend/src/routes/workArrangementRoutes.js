@@ -32,7 +32,7 @@ const arrangementInput=z.object({
 
 router.get('/',asyncHandler(async(req,res)=>{
   const currentEmployee=await resolveEmployee(req)
-  const elevated=['super_admin','hr_admin'].includes(req.user.role)
+  const elevated=['super_admin','hr_admin','it_admin'].includes(req.user.role)
   let filter=elevated&&req.query.scope==='all'?{}:{employee:currentEmployee?._id}
   if(req.user.role==='manager'&&req.query.scope==='team'){
     const reports=await Employee.find({manager:currentEmployee?._id}).distinct('_id')
@@ -63,14 +63,14 @@ router.post('/',asyncHandler(async(req,res)=>{
   const overlap=await WorkArrangementRequest.exists({employee:currentEmployee._id,status:{$in:['pending','approved']},startDate:{$lte:input.endDate},endDate:{$gte:input.startDate}})
   if(overlap)throw new HttpError(409,'A pending or approved work arrangement already covers these dates')
   const request=await WorkArrangementRequest.create({...input,employee:currentEmployee._id})
-  const reviewerFilters=[{role:{$in:['hr_admin','super_admin']}}]
+  const reviewerFilters=[{role:{$in:['hr_admin','super_admin','it_admin']}}]
   if(currentEmployee.manager)reviewerFilters.push({employee:currentEmployee.manager})
   const reviewers=await User.find({isActive:true,$or:reviewerFilters}).select('_id')
   if(reviewers.length)await Notification.insertMany(reviewers.map(reviewer=>({recipient:reviewer._id,type:'Work Arrangement',title:'Work arrangement approval required',message:`${req.user.firstName} ${req.user.lastName} requested ${input.type.replaceAll('_',' ')} attendance.`,employee:currentEmployee._id})))
   res.status(201).json({success:true,data:request})
 }))
 
-router.patch('/:id/:decision',authorize('super_admin','hr_admin','manager'),asyncHandler(async(req,res)=>{
+router.patch('/:id/:decision',authorize('super_admin','hr_admin','it_admin','manager'),asyncHandler(async(req,res)=>{
   const currentEmployee=await resolveEmployee(req)
   if(!['approve','reject'].includes(req.params.decision))throw new HttpError(400,'Invalid approval decision')
   const input=z.object({reviewNote:z.string().trim().max(500).default('')}).parse(req.body)
