@@ -34,6 +34,13 @@ router.get('/', authorize('super_admin','hr_admin','manager'), asyncHandler(asyn
   const [items,total] = await Promise.all([Employee.find(filter).populate('manager','firstName lastName').skip((page-1)*limit).limit(limit).sort({createdAt:-1}), Employee.countDocuments(filter)])
   res.json({ success: true, data: items, pagination: { page, limit, total, pages: Math.ceil(total/limit) } })
 }))
+router.get('/organization-chart', authorize('super_admin','hr_admin','manager','it_admin'), asyncHandler(async (_req,res)=>{
+  const existingUserIds=await User.distinct('_id',{isActive:true})
+  const employees=await Employee.find({user:{$in:existingUserIds},employeeStatus:{$ne:'terminated'}}).select('employeeCode firstName lastName profilePhoto department designation workLocation employeeStatus manager').sort({firstName:1,lastName:1}).lean()
+  const employeeIds=new Set(employees.map(employee=>String(employee._id)))
+  const items=employees.map(employee=>({...employee,manager:employee.manager&&employeeIds.has(String(employee.manager))?employee.manager:null}))
+  res.json({success:true,data:items})
+}))
 router.get('/:id', asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id).populate('manager','firstName lastName employeeCode')
   if (!employee) throw new HttpError(404, 'Employee not found')

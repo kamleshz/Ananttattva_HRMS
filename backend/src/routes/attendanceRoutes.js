@@ -14,30 +14,71 @@ import writeXlsxFile from 'write-excel-file/node'
 import { AttendanceCorrectionRequest } from '../models/AttendanceCorrectionRequest.js'
 import { Notification } from '../models/Recruitment.js'
 import { User } from '../models/User.js'
+import { OfficeLocation, OrganizationProfile } from '../models/Organization.js'
 
 const router = Router()
 router.use(authenticate)
 const punchSchema = z.object({
   photo: z.string().startsWith('data:image/', 'A captured attendance photo is required').max(4_500_000),
   attendanceMode: z.enum(['office', 'wfh', 'client_location', 'field_visit']).default('office'),
-  locationVerified: z.literal(true, { error: 'Verified location is required' }),
-  location: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180), address: z.string().max(300).optional() }),
+  location: z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180), accuracyMeters:z.number().positive().max(5000), address: z.string().max(300).optional() }),
   biometricToken: z.string().min(20),
 })
 const meta = (req) => ({ ipAddress: req.ip, device: req.get('user-agent') })
-function verifiedPunch(req, mode) {
+function distanceMeters(from,to){
+  const radians=value=>value*Math.PI/180
+  const earthRadius=6371000
+  const latitudeDelta=radians(to.latitude-from.latitude),longitudeDelta=radians(to.longitude-from.longitude)
+  const value=Math.sin(latitudeDelta/2)**2+Math.cos(radians(from.latitude))*Math.cos(radians(to.latitude))*Math.sin(longitudeDelta/2)**2
+  return Math.round(earthRadius*2*Math.atan2(Math.sqrt(value),Math.sqrt(1-value)))
+}
+async function verifiedPunch(req, mode) {
   const input = punchSchema.parse(req.body)
   let verification
   try { verification = jwt.verify(input.biometricToken, env.jwtSecret) }
   catch { throw new HttpError(401, 'Biometric verification expired. Please verify again') }
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
   if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || verification.faceMatchScore < .65) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
+  const offices=await OfficeLocation.find({isActive:true}).lean()
+  if(!offices.length)throw new HttpError(409,'Attendance location is not configured. Please contact an administrator')
+  const ranked=offices.map(office=>({...office,distanceMeters:distanceMeters(input.location,office)})).sort((a,b)=>a.distanceMeters-b.distanceMeters)
+  const office=ranked[0]
+  if(input.location.accuracyMeters>office.maximumAccuracyMeters)throw new HttpError(422,`GPS accuracy is ${Math.round(input.location.accuracyMeters)} metres. Move to an open area and retry when accuracy is within ${office.maximumAccuracyMeters} metres`)
+  if(office.distanceMeters>office.allowedRadiusMeters)throw new HttpError(403,`You are ${office.distanceMeters} metres from ${office.name}. Attendance is allowed within ${office.allowedRadiusMeters} metres`)
+  input.location={...input.location,address:office.address||input.location.address,officeLocation:office._id,officeName:office.name,distanceMeters:office.distanceMeters}
+  input.locationVerified=true
   input.biometricVerification = { verified:true, method:verification.identityTemplateVersion >= 3 ? 'active_liveness_multi_angle_face_embedding_v3' : 'active_liveness_face_embedding_v2', challenge:verification.challenge, livenessScore:verification.livenessScore, faceMatchScore:verification.faceMatchScore, verifiedAt:new Date() }
   return input
 }
-router.post('/check-in', asyncHandler(async (req, res) => res.status(201).json({ success: true, data: await checkIn(req.user.employee, verifiedPunch(req,'check-in'), meta(req)) })))
-router.post('/check-out', asyncHandler(async (req, res) => res.json({ success: true, data: await checkOut(req.user.employee, verifiedPunch(req,'check-out'), meta(req)) })))
-router.get('/today', asyncHandler(async (req, res) => res.json({ success: true, data: req.user.employee ? await Attendance.findOne({ employee: req.user.employee._id, date: startOfLocalDay() }) : null })))
+router.post('/check-in', asyncHandler(async (req, res) => res.status(201).json({ success: true, data: await checkIn(req.user.employee, await verifiedPunch(req,'check-in'), meta(req)) })))
+router.post('/check-out', asyncHandler(async (req, res) => res.json({ success: true, data: await checkOut(req.user.employee, await verifiedPunch(req,'check-out'), meta(req)) })))
+router.get('/today', asyncHandler(async (req, res) => {
+  const employee=req.user.employee
+  const [record,organization]=await Promise.all([
+    employee?Attendance.findOne({employee:employee._id,date:startOfLocalDay()}).lean():null,
+    OrganizationProfile.findOne({singletonKey:'organization'}).select('timeZone').lean(),
+  ])
+  const shift=employee?.shift||{name:'General Shift',startTime:'10:00',endTime:'18:30'}
+  const state=!record?.checkIn?.time?'NOT_CHECKED_IN':record?.checkOut?.time?'CHECKED_OUT':'CHECKED_IN'
+  const attendanceDate=startOfLocalDay()
+  const localDate=`${attendanceDate.getFullYear()}-${String(attendanceDate.getMonth()+1).padStart(2,'0')}-${String(attendanceDate.getDate()).padStart(2,'0')}`
+  res.json({success:true,data:{
+    state,
+    organizationTimezone:organization?.timeZone||'Asia/Kolkata',
+    date:localDate,
+    shift,
+    checkIn:record?.checkIn||null,
+    checkOut:record?.checkOut||null,
+    status:record?.status||null,
+    late:{isLate:Boolean(record?.lateMinutes),lateMinutes:record?.lateMinutes||0,monthlyLateCount:record?.lateOccurrenceInMonth||0,halfDayPenaltyApplied:Boolean(record?.halfDayReason)},
+    checkoutType:record?.checkoutType||(record?.checkOut?.source==='system_auto'?'AUTO_CHECKOUT':record?.checkOut?.time?'MANUAL_CHECKOUT':null),
+    workingMinutes:record?.workingMinutes||0,
+    effectiveMinutes:record?.workingMinutes||0,
+    overtimeMinutes:record?.overtimeMinutes||0,
+    autoCheckout:record?.autoCheckout||null,
+    attendanceId:record?._id||null,
+  }})
+}))
 router.get('/all', authorize('super_admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res)=>{
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
   const start=new Date(input.year,input.month-1,1)
@@ -115,6 +156,7 @@ router.patch('/corrections/:id/:decision', authorize('super_admin','hr_admin'), 
     attendance.checkOut.address='Checkout time approved through attendance correction'
     attendance.workingMinutes=Math.max(0,Math.floor((request.requestedCheckoutTime-attendance.checkIn.time)/60000))
     attendance.status=attendance.autoCheckout?.previousStatus||'present'
+    attendance.checkoutType='HR_CORRECTION'
     attendance.correctionAudit.push({previousCheckoutTime,correctedCheckoutTime:request.requestedCheckoutTime,reason:request.reason,approvedBy:req.user._id,approvedAt:new Date()})
     await attendance.save()
   }

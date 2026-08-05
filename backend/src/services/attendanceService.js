@@ -25,6 +25,7 @@ export async function checkIn(employee, payload, requestMeta) {
 }
 
 export async function checkOut(employee, payload, requestMeta) {
+  if (!employee) throw new HttpError(409, 'No employee profile is linked to this account')
   const record = await Attendance.findOne({ employee: employee._id, date: startOfLocalDay() })
   if (!record) throw new HttpError(404, 'Check in before checking out')
   if (record.checkOut?.time) throw new HttpError(409, 'Attendance is already completed for today')
@@ -32,6 +33,7 @@ export async function checkOut(employee, payload, requestMeta) {
   record.checkOut = { ...payload.location, photo: payload.photo, time: now, ...requestMeta }
   record.workingMinutes = Math.max(0, Math.floor((now - record.checkIn.time) / 60000))
   record.biometricVerification = payload.biometricVerification
+  record.checkoutType = 'MANUAL_CHECKOUT'
   await record.save()
   return record
 }

@@ -11,8 +11,9 @@ export async function login(email, password, loginType = 'user') {
   const user = await User.findOne({ email: email.toLowerCase() }).select('+passwordHash').populate('employee')
   if (!user || !(await bcrypt.compare(password, user.passwordHash))) throw new HttpError(401, 'Invalid email or password')
   if (!user.isActive) throw new HttpError(403, 'Your account is inactive')
-  const isAdmin = ['super_admin', 'hr_admin', 'finance_admin', 'it_admin'].includes(user.role)
-  if ((loginType === 'admin') !== isAdmin) throw new HttpError(403, `This account cannot use ${loginType === 'admin' ? 'Admin' : 'User'} Login`)
+  const isAdmin = ['super_admin', 'it_admin'].includes(user.role)
+  if (loginType === 'admin' && !isAdmin) throw new HttpError(403, 'This account does not have administrative access')
+  if (loginType === 'user' && isAdmin) throw new HttpError(403, 'Use Admin Login for this administrative account')
   const recentChallenge = await LoginOtp.findOne({ user: user._id, purpose:'login', createdAt: { $gt: new Date(Date.now() - 60_000) }, usedAt: null })
   if (recentChallenge) throw new HttpError(429, 'Please wait one minute before requesting another code')
 

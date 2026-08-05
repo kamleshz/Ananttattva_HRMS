@@ -21,6 +21,7 @@ export async function processMissingCheckouts(now=new Date()){
     const checkoutTime=scheduledShiftCheckout(record.date,record.checkIn.time,record.employee.shift?.endTime)
     const previousStatus=record.status
     record.checkOut={time:checkoutTime,address:'System auto checkout at configured shift end',device:'AT Connect scheduler',source:'system_auto'}
+    record.checkoutType='AUTO_CHECKOUT'
     record.workingMinutes=Math.max(0,Math.floor((checkoutTime-record.checkIn.time)/60000))
     record.status='missing_checkout'
     record.autoCheckout={appliedAt:now,scheduledCheckoutTime:checkoutTime,previousStatus}

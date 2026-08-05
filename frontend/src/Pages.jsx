@@ -13,6 +13,7 @@ import {
   IndianRupee,
   Mail,
   MapPin,
+  Network,
   Plane,
   Plus,
   ReceiptText,
@@ -969,6 +970,18 @@ export function PeoplePage({ user }) {
       </section>
     </>
   );
+}
+
+export function OrganizationChartPage() {
+  const [employees,setEmployees]=useState([]),[search,setSearch]=useState(''),[department,setDepartment]=useState(''),[error,setError]=useState('');
+  useEffect(()=>{employeeApi.organizationChart().then(setEmployees).catch(requestError=>setError(requestError.message))},[])
+  const departments=[...new Set(employees.map(item=>item.department).filter(Boolean))].sort();
+  const filtered=employees.filter(item=>!department||item.department===department).filter(item=>`${item.firstName||''} ${item.lastName||''} ${item.employeeCode||''}`.toLowerCase().includes(search.toLowerCase()));
+  const visibleIds=new Set(filtered.map(item=>String(item._id)));
+  const children=new Map();
+  filtered.forEach(item=>{const manager=item.manager&&visibleIds.has(String(item.manager))?String(item.manager):'root';children.set(manager,[...(children.get(manager)||[]),item])});
+  const branch=(manager='root',level=0)=><div className={`org-level org-level-${Math.min(level,4)}`}>{(children.get(manager)||[]).map(employee=><article className="org-employee" key={employee._id}><div className="org-person">{employee.profilePhoto?<img src={employee.profilePhoto} alt=""/>:<span>{`${employee.firstName?.[0]||''}${employee.lastName?.[0]||''}`}</span>}<div><strong>{`${employee.firstName||''} ${employee.lastName||''}`.trim()||'Employee information unavailable'}</strong><small>{employee.designation||'Designation not assigned'} · {employee.department||'Department not assigned'}</small><p>{employee.employeeCode||'No employee ID'} · {employee.workLocation||'Location not assigned'}</p></div><i>{capitalize(employee.employeeStatus)}</i></div>{children.has(String(employee._id))&&branch(String(employee._id),level+1)}</article>)}</div>;
+  return <><PageHeader eyebrow="Team" title="Organization Chart" description="Explore reporting relationships across Ananttattva Private Limited."/><section className="card org-chart-card"><div className="org-chart-toolbar"><label><Search size={16}/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search employee or ID"/></label><select value={department} onChange={event=>setDepartment(event.target.value)}><option value="">All departments</option>{departments.map(item=><option key={item}>{item}</option>)}</select></div>{error?<StateMessage error>{error}</StateMessage>:filtered.length?branch():<div className="empty-state"><Network size={28}/><strong>No organization relationships found</strong><span>Assign reporting managers from employee profiles to build the chart.</span></div>}</section></>;
 }
 
 export function EmployeeOnboardingPage({ user }) {

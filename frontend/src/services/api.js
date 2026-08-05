@@ -76,6 +76,7 @@ export const authApi = {
 };
 export const dashboardApi = { employee: () => api("/dashboard/employee") };
 export const attendanceApi = {
+  today: () => api('/attendance/today'),
   history: (month, year) => api(`/attendance/me?month=${month}&year=${year}`),
   allHistory: (month, year) => api(`/attendance/all?month=${month}&year=${year}`),
   exportExcel: (month, year) => downloadApi(`/attendance/export?month=${month}&year=${year}`),
@@ -91,6 +92,7 @@ export const attendanceApi = {
     }),
 };
 export const employeeApi = {
+  organizationChart: () => api('/employees/organization-chart'),
   list: (search = "") =>
     api(
       `/employees?limit=50${search ? `&search=${encodeURIComponent(search)}` : ""}`,
@@ -241,6 +243,8 @@ export const recruitmentApi = {
     api(`/recruitment/candidates/${id}/start-onboarding`, { method: "POST" }),
 };
 export const organizationApi = {
+  publicProfile: () => api('/organization/public-profile'),
+  publicContacts: () => api('/organization/public-contacts'),
   get: () => api("/organization"),
   update: (data) =>
     api("/organization", { method: "PUT", body: JSON.stringify(data) }),
@@ -255,6 +259,9 @@ export const organizationApi = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  officeLocations: (manage = false) => api(`/organization/office-locations${manage ? '/manage' : ''}`),
+  createOfficeLocation: (data) => api('/organization/office-locations', { method:'POST', body:JSON.stringify(data) }),
+  updateOfficeLocation: (id, data) => api(`/organization/office-locations/${id}`, { method:'PUT', body:JSON.stringify(data) }),
 };
 export const publicOfferApi = {
   get: (token) => api(`/public/offers/${token}`),

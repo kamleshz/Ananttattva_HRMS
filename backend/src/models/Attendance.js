@@ -5,6 +5,10 @@ const punchSchema = new mongoose.Schema({
   photo: String,
   latitude: Number,
   longitude: Number,
+  accuracyMeters: Number,
+  distanceMeters: Number,
+  officeLocation: { type: mongoose.Schema.Types.ObjectId, ref: 'OfficeLocation' },
+  officeName: String,
   address: String,
   ipAddress: String,
   device: String,
@@ -27,6 +31,7 @@ const attendanceSchema = new mongoose.Schema({
   policyEscalatedAt: { type: Date, default: null },
   earlyCheckoutMinutes: { type: Number, default: 0 },
   overtimeMinutes: { type: Number, default: 0 },
+  checkoutType: { type:String, enum:['MANUAL_CHECKOUT','AUTO_CHECKOUT','HR_CORRECTION'], default:null },
   autoCheckout: {
     appliedAt: Date,
     scheduledCheckoutTime: Date,

@@ -2242,15 +2242,28 @@ export function RecruitmentHomeWidgets({ user }) {
   );
 }
 
+function OfficeLocationsSettings() {
+  const empty={name:'',address:'',latitude:'',longitude:'',allowedRadiusMeters:150,maximumAccuracyMeters:100,isPrimary:false,isActive:true};
+  const [locations,setLocations]=useState([]),[form,setForm]=useState(empty),[message,setMessage]=useState('');
+  const load=()=>organizationApi.officeLocations(true).then(setLocations).catch(error=>setMessage(error.message));
+  useEffect(()=>{load()},[]);
+  async function submit(event){event.preventDefault();setMessage('');try{await organizationApi.createOfficeLocation({...form,latitude:Number(form.latitude),longitude:Number(form.longitude),allowedRadiusMeters:Number(form.allowedRadiusMeters),maximumAccuracyMeters:Number(form.maximumAccuracyMeters)});setForm(empty);setMessage('Office location saved.');load()}catch(error){setMessage(error.message)}}
+  return <><PageHeader title="Office Locations" description="Configure the office boundaries used for secure attendance verification."/>{message&&<p className="recruitment-notice">{message}</p>}<div className="organization-settings-grid"><form className="recruitment-card organization-form" onSubmit={submit}><h2>Add office boundary</h2><div className="form-grid"><Field label="Office name"><input required value={form.name} onChange={event=>setForm({...form,name:event.target.value})}/></Field><Field label="Office address"><input value={form.address} onChange={event=>setForm({...form,address:event.target.value})}/></Field><Field label="Latitude"><input required type="number" step="any" value={form.latitude} onChange={event=>setForm({...form,latitude:event.target.value})}/></Field><Field label="Longitude"><input required type="number" step="any" value={form.longitude} onChange={event=>setForm({...form,longitude:event.target.value})}/></Field><Field label="Allowed radius (metres)"><input required type="number" min="10" max="10000" value={form.allowedRadiusMeters} onChange={event=>setForm({...form,allowedRadiusMeters:event.target.value})}/></Field><Field label="Maximum GPS error (metres)"><input required type="number" min="5" max="1000" value={form.maximumAccuracyMeters} onChange={event=>setForm({...form,maximumAccuracyMeters:event.target.value})}/></Field></div><div className="contact-visibility-options"><label><input type="checkbox" checked={form.isPrimary} onChange={event=>setForm({...form,isPrimary:event.target.checked})}/>Primary office</label><label><input type="checkbox" checked={form.isActive} onChange={event=>setForm({...form,isActive:event.target.checked})}/>Active</label></div><button className="primary-button">Save office location</button></form><section className="recruitment-card"><h2>Configured boundaries</h2>{locations.map(location=><div className="settings-contact" key={location._id}><span><MapPin size={16}/></span><div><strong>{location.name}</strong><small>{location.address||'Address not configured'}</small><p>{location.latitude}, {location.longitude} · Radius {location.allowedRadiusMeters}m · Accuracy ≤ {location.maximumAccuracyMeters}m</p></div><Status>{location.isActive?'Active':'Inactive'}</Status></div>)}{!locations.length&&<Empty title="No office locations configured" text="Attendance remains blocked until an authorized office boundary is added."/>}</section></div></>;
+}
+
 export function OrganizationSettings() {
   const [data, setData] = useState(null),
     [contacts, setContacts] = useState([]),
+    [employees,setEmployees]=useState([]),
+    [contactOpen,setContactOpen]=useState(false),
+    [contactForm,setContactForm]=useState({category:'Human Resources',employee:'',displayName:'',designation:'',officialPhone:'',officialEmail:'',availability:'',visibilityRoles:[],displayOnHome:true,displayOnLoginPage:false,contactPriority:'primary',displayOrder:0,isActive:true}),
     [message, setMessage] = useState("");
   useEffect(() => {
-    Promise.all([organizationApi.get(), organizationApi.contacts()]).then(
-      ([org, list]) => {
+    Promise.all([organizationApi.get(), organizationApi.contacts(),employeeApi.list()]).then(
+      ([org, list,employeeList]) => {
         setData(org.profile);
         setContacts(list);
+        setEmployees(employeeList);
       },
     );
   }, []);
@@ -2265,23 +2278,11 @@ export function OrganizationSettings() {
       setMessage(x.message);
     }
   }
-  async function addContact() {
-    const displayName = window.prompt("Contact person name");
-    if (!displayName) return;
-    const category =
-      window.prompt("Category (HR, Accounts, IT Support, Director)", "HR") ||
-      "Other";
-    const officialEmail = window.prompt("Official email", "") || "";
-    const item = await organizationApi.createContact({
-      displayName,
-      category,
-      officialEmail,
-      visibilityRoles: [],
-      displayOnHome: true,
-      isActive: true,
-      displayOrder: contacts.length + 1,
-    });
-    setContacts([...contacts, item]);
+  function selectContactEmployee(employeeId){const employee=employees.find(item=>item._id===employeeId);setContactForm(current=>({...current,employee:employeeId,displayName:employee?`${employee.firstName||''} ${employee.lastName||''}`.trim():current.displayName,designation:employee?.designation||current.designation,officialEmail:employee?.officialEmail||current.officialEmail,officialPhone:employee?.mobile||current.officialPhone}))}
+  function toggleContactRole(role){setContactForm(current=>({...current,visibilityRoles:current.visibilityRoles.includes(role)?current.visibilityRoles.filter(item=>item!==role):[...current.visibilityRoles,role]}))}
+  async function addContact(event) {
+    event.preventDefault();setMessage('');
+    try{const item=await organizationApi.createContact({...contactForm,displayOrder:contacts.length+1});setContacts([...contacts,item]);setContactOpen(false);setContactForm({category:'Human Resources',employee:'',displayName:'',designation:'',officialPhone:'',officialEmail:'',availability:'',visibilityRoles:[],displayOnHome:true,displayOnLoginPage:false,contactPriority:'primary',displayOrder:0,isActive:true});setMessage('Point of contact added.')}catch(error){setMessage(error.message)}
   }
   return (
     <>
@@ -2289,11 +2290,12 @@ export function OrganizationSettings() {
         title="Organization Profile"
         description="Manage company information, website, branding and points of contact."
       >
-        <button className="primary-button" onClick={addContact}>
+        <button className="primary-button" onClick={() => setContactOpen(true)}>
           <Plus size={15} /> Add contact
         </button>
       </PageHeader>
       {message && <p className="recruitment-notice">{message}</p>}
+      {contactOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setContactOpen(false)}/><aside className="form-drawer"><div className="drawer-heading"><div><p className="eyebrow">Organization settings</p><h2>Add point of contact</h2><p>Only official contact details selected for organizational display are shown.</p></div><button type="button" onClick={()=>setContactOpen(false)}><X size={20}/></button></div><form onSubmit={addContact}><div className="form-grid"><Field label="Category"><select value={contactForm.category} onChange={event=>setContactForm({...contactForm,category:event.target.value})}><option>Human Resources</option><option>Accounts</option><option>Information Technology</option><option>Director</option></select></Field><Field label="Contact priority"><select value={contactForm.contactPriority} onChange={event=>setContactForm({...contactForm,contactPriority:event.target.value})}><option value="primary">Primary contact</option><option value="backup">Backup contact</option></select></Field><Field label="Select employee" className="span-two"><select value={contactForm.employee} onChange={event=>selectContactEmployee(event.target.value)}><option value="">Enter details manually</option>{employees.map(employee=><option value={employee._id} key={employee._id}>{employee.firstName} {employee.lastName} · {employee.employeeCode}</option>)}</select></Field><Field label="Display name"><input required value={contactForm.displayName} onChange={event=>setContactForm({...contactForm,displayName:event.target.value})}/></Field><Field label="Designation"><input value={contactForm.designation} onChange={event=>setContactForm({...contactForm,designation:event.target.value})}/></Field><Field label="Official email"><input type="email" value={contactForm.officialEmail} onChange={event=>setContactForm({...contactForm,officialEmail:event.target.value})}/></Field><Field label="Official phone"><input value={contactForm.officialPhone} onChange={event=>setContactForm({...contactForm,officialPhone:event.target.value})}/></Field><Field label="Availability" className="span-two"><input value={contactForm.availability} onChange={event=>setContactForm({...contactForm,availability:event.target.value})} placeholder="e.g. Monday to Friday, 9:30 AM – 6:30 PM"/></Field></div><div className="contact-visibility-options"><label><input type="checkbox" checked={contactForm.displayOnHome} onChange={event=>setContactForm({...contactForm,displayOnHome:event.target.checked})}/>Display on Home</label><label><input type="checkbox" checked={contactForm.displayOnLoginPage} onChange={event=>setContactForm({...contactForm,displayOnLoginPage:event.target.checked})}/>Display on Login Page</label></div><p className="contact-role-label">Visible roles (leave all clear for everyone)</p><div className="contact-visibility-options">{[['employee','Employee'],['hr_admin','HR'],['it_admin','Admin'],['super_admin','Super Admin']].map(([role,label])=><label key={role}><input type="checkbox" checked={contactForm.visibilityRoles.includes(role)} onChange={()=>toggleContactRole(role)}/>{label}</label>)}</div><div className="drawer-actions"><button type="button" className="secondary-button" onClick={()=>setContactOpen(false)}>Cancel</button><button className="primary-button">Save contact</button></div></form></aside></div>}
       <div className="organization-settings-grid">
         <form className="recruitment-card organization-form" onSubmit={save}>
           <h2>Company information</h2>
@@ -2644,6 +2646,8 @@ export default function RecruitmentPage({ user }) {
     );
   else if (path === "/recruitment/reports") content = <ReportsView />;
   else if (path === "/recruitment/settings") content = <RecruitmentSettings />;
+  else if (path === "/settings/office-locations" || path === "/settings/attendance")
+    content = <OfficeLocationsSettings />;
   else if (path === "/settings/organization" || path === "/settings/contacts")
     content = <OrganizationSettings />;
   else content = <RecruitmentDashboard onAdd={() => setAdd(true)} />;

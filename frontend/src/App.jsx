@@ -16,6 +16,7 @@ import {
   IndianRupee,
   LayoutGrid,
   LogOut,
+  MapPin,
   Menu,
   MoreHorizontal,
   Plane,
@@ -45,6 +46,7 @@ import {
   PeoplePage,
   ReportsPage,
   RequestsPage,
+  OrganizationChartPage,
 } from "./Pages.jsx";
 import AttendanceVerificationDrawer from "./AttendanceVerificationDrawer.jsx";
 import RecruitmentPage, {
@@ -64,6 +66,7 @@ const navigation = [
 ];
 const teamNavigation = [
   ["People", UsersRound, "/people"],
+  ["Organization Chart", UsersRound, "/organization-chart"],
   ["Reports", FileText, "/reports"],
   ["Holidays", CalendarDays, "/holidays"],
 ];
@@ -76,10 +79,10 @@ const recruitmentNavigation = {
     ["Interview Calendar", "/recruitment/calendar"],
     ["Selected Candidates", "/recruitment/selected"],
     ["Offer Letters", "/recruitment/offers"],
-    ["Approval Requests", "/recruitment/approvals"],
   ],
   super_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
+    ["Interview Details", "/recruitment/interviews"],
     ["Candidates", "/recruitment/candidates"],
     ["Selected Candidates", "/recruitment/selected"],
     ["Offer Letters", "/recruitment/offers"],
@@ -180,6 +183,9 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
                 <Settings size={17} />
                 <span>Organization Profile</span>
               </button>
+              <button onClick={()=>{navigate('/settings/contacts');close()}} className={`nav-item ${path==='/settings/contacts'?'active':''}`}><UsersRound size={17}/><span>Points of Contact</span></button>
+              <button onClick={()=>{navigate('/settings/office-locations');close()}} className={`nav-item ${path==='/settings/office-locations'?'active':''}`}><MapPin size={17}/><span>Office Locations</span></button>
+              <button onClick={()=>{navigate('/settings/attendance');close()}} className={`nav-item ${path==='/settings/attendance'?'active':''}`}><Clock3 size={17}/><span>Attendance Settings</span></button>
             </>
           )}
         </nav>
@@ -732,8 +738,73 @@ function MobileNav({ user }) {
   );
 }
 
+const durationClock = (totalSeconds = 0) => {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  return `${String(Math.floor(safe / 3600)).padStart(2, "0")}:${String(Math.floor((safe % 3600) / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+};
+
+function ModernAttendanceCard() {
+  const navigate=useNavigate();
+  const [attendance, setAttendance] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [now, setNow] = useState(new Date());
+  const refresh = async () => {
+    setError("");
+    try { setAttendance(await attendanceApi.today()); }
+    catch (requestError) { setError(requestError.message); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => {
+    attendanceApi.today().then(setAttendance).catch(requestError=>setError(requestError.message)).finally(()=>setLoading(false));
+  }, []);
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+  if (loading) return <section className="card attendance-card attendance-skeleton" aria-label="Loading today's attendance"><div className="skeleton-line wide"/><div className="skeleton-block"/><div className="skeleton-line"/></section>;
+  const state = attendance?.state || "NOT_CHECKED_IN";
+  const checkedIn = state === "CHECKED_IN";
+  const completed = state === "CHECKED_OUT";
+  const checkInTime = attendance?.checkIn?.time ? new Date(attendance.checkIn.time) : null;
+  const checkOutTime = attendance?.checkOut?.time ? new Date(attendance.checkOut.time) : null;
+  const durationSeconds = checkInTime ? Math.max(0, Math.floor(((checkOutTime || now) - checkInTime) / 1000)) : 0;
+  const shift = attendance?.shift || { name:"General Shift", startTime:"10:00", endTime:"18:30" };
+  const [startHour,startMinute] = shift.startTime.split(":").map(Number);
+  const [endHour,endMinute] = shift.endTime.split(":").map(Number);
+  const shiftSeconds = Math.max(60, ((endHour * 60 + endMinute) - (startHour * 60 + startMinute)) * 60);
+  const progress = Math.min(100, Math.round(durationSeconds / shiftSeconds * 100));
+  const office = attendance?.checkIn?.officeName || "Configured office";
+  return <>
+    <section className={`card attendance-card attendance-state-${state.toLowerCase()}`}>
+      <div className="card-heading"><div><p className="eyebrow">Today&apos;s attendance</p><h2>{shift.name}</h2></div><span className={`status ${state === "NOT_CHECKED_IN" ? "neutral" : "present"}`}><i/>{completed ? "Day completed" : checkedIn ? "Checked in" : "Not checked in"}</span></div>
+      <div className="shift-row"><div className="shift-icon"><CalendarDays size={19}/></div><div><span>Shift timing</span><strong>{shift.startTime} – {shift.endTime}</strong><small>{office}</small></div></div>
+      {error ? <div className="attendance-error" role="alert">{error}</div> : state === "NOT_CHECKED_IN" ? <div className="clock-block"><p className="clock-label">Current time</p><div className="live-time">{now.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div><p className="clock-note">You haven&apos;t checked in yet.</p></div> : <div className="attendance-live-layout"><div className="duration-ring" style={{"--progress":`${progress * 3.6}deg`}}><div><strong>{durationClock(durationSeconds)}</strong><span>{completed ? "Total working" : "Working duration"}</span></div></div><dl className="attendance-facts"><div><dt>Check-In</dt><dd>{checkInTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "Unavailable"}</dd></div><div><dt>Check-Out</dt><dd>{checkOutTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "In progress"}</dd></div><div><dt>Office</dt><dd>{office}</dd></div><div><dt>Location</dt><dd>{attendance?.checkIn?.distanceMeters != null ? `Verified · ${attendance.checkIn.distanceMeters}m` : "Verified"}</dd></div><div><dt>Face</dt><dd>Verified</dd></div><div><dt>Shift progress</dt><dd>{progress}%</dd></div></dl></div>}
+      {attendance?.checkoutType === "AUTO_CHECKOUT" && <div className="auto-checkout-banner"><strong>Your previous attendance session was automatically closed.</strong><span>Request an attendance correction if the recorded effective hours are inaccurate.</span></div>}
+      {attendance?.late?.isLate && <div className="late-policy-banner"><strong>{attendance.late.halfDayPenaltyApplied ? "Half-Day Penalty Applied" : "Late Arrival"}</strong><span>{attendance.late.lateMinutes} minutes late · Monthly count: {attendance.late.monthlyLateCount}</span></div>}
+      {!completed && !error && <button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out" : "Check In"}<ChevronRight size={17}/></button>}
+      {completed && <button className="full-link" onClick={() => navigate("/attendance")}>View attendance details <ChevronRight size={15}/></button>}
+      <div className="requirements"><span><CheckCircle2 size={14}/>Location required</span><span><CheckCircle2 size={14}/>Face verification required</span></div>
+    </section>
+    {drawerOpen && <AttendanceVerificationDrawer mode={checkedIn ? "check-out" : "check-in"} close={() => setDrawerOpen(false)} recorded={refresh}/>}
+  </>;
+}
+
+function RealWeekCard({ days = [], summary = {} }) {
+  const navigate=useNavigate();
+  const hours=minutes=>`${Math.floor((minutes||0)/60)}h ${String((minutes||0)%60).padStart(2,"0")}m`;
+  return <section className="card week-card"><div className="card-heading"><div><p className="eyebrow">This week</p><h2>My week</h2></div><button className="link-button" onClick={()=>navigate("/attendance")}>View attendance <ChevronRight size={15}/></button></div><div className="week-days">{days.map((item,index)=>{const date=new Date(item.date);const state=item.lateMinutes?"late":item.status==="today"?"today":item.status==="upcoming"?"upcoming":item.status==="not_recorded"?"neutral":"done";return <div key={index} className={`week-day ${state}`}><span>{date.toLocaleDateString("en-IN",{weekday:"short"}).toUpperCase()}</span><b>{date.getDate()}</b><i>{item.workingMinutes?hours(item.workingMinutes):state==="today"?"Today":state==="upcoming"?"Upcoming":state==="late"?"Late":"—"}</i></div>})}</div><div className="week-summary"><div><span>Effective hours</span><strong>{hours(summary.effectiveMinutes)}</strong></div><div><span>Avg. hours</span><strong>{hours(summary.averageMinutes)}</strong></div><div><span>On time</span><strong>{summary.onTimeDays||0} of {summary.completedDays||0} days</strong></div><div><span>Late count</span><strong>{summary.monthlyLateCount||0} this month</strong></div></div></section>;
+}
+
+function RealHolidaysCard({ holidays = [] }) {
+  const navigate=useNavigate();
+  return <section className="card side-card"><div className="card-heading"><div><p className="eyebrow">Calendar</p><h2>Upcoming holidays</h2></div><CalendarDays size={18}/></div>{holidays.map((holiday,index)=>{const date=new Date(holiday.date);const daysUntil=Math.max(0,Math.ceil((date-new Date())/86400000));return <div className="holiday" key={holiday._id||holiday.name}><div className={`date-tile ${index?"amber":""}`}><b>{date.getDate()}</b><span>{date.toLocaleDateString("en-IN",{month:"short"})}</span></div><div><strong>{holiday.name}</strong><span>{date.toLocaleDateString("en-IN",{weekday:"long"})} · {daysUntil===0?"Today":`In ${daysUntil} days`}</span></div></div>})}{!holidays.length&&<p className="compact-empty">No upcoming holidays configured.</p>}<button className="full-link" onClick={()=>navigate("/holidays")}>View holiday calendar <ChevronRight size={15}/></button></section>;
+}
+
 function HomePage({ user, dashboard }) {
   const navigate = useNavigate();
+  const quickAction=user.role==='super_admin'?{label:'Review offer approvals',route:'/recruitment/approvals'}:user.role==='hr_admin'?{label:'Add candidate',route:'/recruitment/candidates'}:{label:dashboard?.today?.checkIn?.time?'View attendance':'Check in',route:'/attendance'};
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
     return hour < 12
@@ -761,17 +832,17 @@ function HomePage({ user, dashboard }) {
             {date} <i /> Here’s what’s happening today.
           </p>
         </div>
-        <button className="quick-action" onClick={() => navigate("/leave")}>
-          <span>+</span> Quick action <ChevronDown size={15} />
+        <button className="quick-action" onClick={() => navigate(quickAction.route)}>
+          <span>+</span> {quickAction.label} <ChevronRight size={15} />
         </button>
       </div>
       <div className="dashboard-grid">
         <div className="main-column">
-          <AttendanceCard initial={dashboard?.today} />
-          <WeekCard />
+          <ModernAttendanceCard />
+          <RealWeekCard days={dashboard?.week} summary={dashboard?.weekSummary}/>
         </div>
         <aside className="right-column">
-          <HolidaysCard />
+          <RealHolidaysCard holidays={dashboard?.holidays}/>
           <CelebrationCard birthdays={dashboard?.birthdays} />
         </aside>
       </div>
@@ -835,6 +906,7 @@ export default function App() {
     "/leave": <LeavePage />,
     "/requests": <RequestsPage user={user} />,
     "/people": <PeoplePage user={user} />,
+    "/organization-chart": <OrganizationChartPage />,
     "/people/new": <EmployeeOnboardingPage user={user} />,
     "/reports": <ReportsPage />,
     "/holidays": <HolidaysPage user={user} />,
