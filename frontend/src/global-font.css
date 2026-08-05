@@ -1,0 +1,11 @@
+:root {
+  font-family: Nunito, sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+*, *::before, *::after {
+  font-family: Nunito, sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+}

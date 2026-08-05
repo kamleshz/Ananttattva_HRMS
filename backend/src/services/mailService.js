@@ -3,7 +3,7 @@ import { HttpError } from '../utils/httpError.js'
 
 function assertMailConfiguration() {
   if (!env.msClientId || !env.msTenantId || !env.msClientSecret || !env.otpSenderEmail) {
-    throw new HttpError(503, 'OTP email is not configured. Contact your administrator.')
+    throw new HttpError(503, 'Email delivery is not configured. Contact your administrator.')
   }
 }
 
@@ -96,6 +96,54 @@ export async function sendLoginOtp({ recipient, firstName, code, expiresMinutes 
     }),
   })
   if (!response.ok) throw new HttpError(502, 'The sign-in code could not be emailed. Please try again.')
+}
+
+function modernMail({ preview, eyebrow, title, intro, content, actionLabel, actionUrl, footer }) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(preview)}</title></head>
+  <body style="margin:0;padding:0;background:#f2f7f5;font-family:Arial,Helvetica,sans-serif;color:#17213a">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preview)}</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:38px 14px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#fff;border:1px solid #dfe9e6;border-radius:22px;overflow:hidden;box-shadow:0 18px 48px rgba(22,74,66,.09)">
+        <tr><td style="padding:28px 34px;background:linear-gradient(135deg,#0e514a,#087e70);color:#fff"><table role="presentation" width="100%"><tr><td style="font-size:20px;font-weight:750">AT Connect</td><td align="right" style="font-size:11px;color:#bfe1db">Ananttattva Private Limited</td></tr></table></td></tr>
+        <tr><td style="padding:38px 38px 16px"><div style="color:#168174;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase">${escapeHtml(eyebrow)}</div><h1 style="margin:13px 0 12px;font-size:29px;line-height:1.25;letter-spacing:-.7px;color:#152039">${escapeHtml(title)}</h1><p style="margin:0;color:#667085;font-size:14px;line-height:1.75">${intro}</p></td></tr>
+        <tr><td style="padding:12px 38px 28px">${content}${actionLabel&&actionUrl?`<div style="padding-top:24px"><a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:14px 22px;border-radius:11px;background:#087e70;color:#fff;text-decoration:none;font-size:13px;font-weight:700">${escapeHtml(actionLabel)}</a></div>`:''}</td></tr>
+        <tr><td style="padding:22px 34px;background:#f8faf9;border-top:1px solid #e6eeeb;text-align:center;color:#87958f;font-size:11px;line-height:1.65">${footer}<br>Sent by ${escapeHtml(env.mailFromName)}</td></tr>
+      </table>
+      <p style="margin:17px 0 0;color:#9aa6a2;font-size:10px">Automated message from AT Connect. Please do not share passwords or verification codes.</p>
+    </td></tr></table>
+  </body></html>`
+}
+
+export async function sendPasswordResetOtp({recipient,firstName,code,expiresMinutes}){
+  const html=modernMail({
+    preview:'Your AT Connect password reset code',eyebrow:'Account security',title:'Reset your password',
+    intro:`Hi ${escapeHtml(firstName)}, we received a request to reset your AT Connect password. Enter the secure code below to continue.`,
+    content:`<div style="margin-top:8px;padding:25px;border:1px solid #d8ebe6;border-radius:15px;background:#f2f9f7;text-align:center"><div style="margin-bottom:10px;color:#63827b;font-size:10px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase">Password reset code</div><div style="padding-left:8px;color:#086c61;font-family:'Courier New',monospace;font-size:36px;font-weight:750;letter-spacing:8px">${code}</div></div><div style="margin-top:16px;padding:13px 15px;border:1px solid #f0dfae;border-radius:11px;background:#fffaf0;color:#775f25;font-size:12px;line-height:1.6"><strong>This code expires in ${expiresMinutes} minutes.</strong> If you did not request a reset, ignore this email and your password will remain unchanged.</div>`,
+    footer:'Protecting your account is our priority.',
+  })
+  return sendGraphEmail({recipient,subject:'Reset your AT Connect password',html})
+}
+
+export async function sendWelcomeEmail({recipient,firstName,loginId,temporaryPassword}){
+  const html=modernMail({
+    preview:'Welcome to Ananttattva Private Limited and AT Connect',eyebrow:'Welcome aboard',title:`Welcome to Ananttattva, ${firstName}!`,
+    intro:'Your employee account is ready. AT Connect gives you secure access to attendance, allowances and your workplace information.',
+    content:`<div style="margin-top:8px;border:1px solid #dce9e6;border-radius:15px;overflow:hidden"><div style="padding:13px 18px;background:#f1f8f6;color:#52746d;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase">Your AT Connect credentials</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:17px 18px;border-bottom:1px solid #edf1f0;color:#7a8682;font-size:12px">Login ID</td><td align="right" style="padding:17px 18px;border-bottom:1px solid #edf1f0;color:#17213a;font-size:13px;font-weight:700">${escapeHtml(loginId)}</td></tr><tr><td style="padding:17px 18px;color:#7a8682;font-size:12px">Temporary password</td><td align="right" style="padding:17px 18px;color:#17213a;font-family:'Courier New',monospace;font-size:13px;font-weight:700">${escapeHtml(temporaryPassword)}</td></tr></table></div><div style="margin-top:16px;padding:14px 16px;border-left:4px solid #d89a31;border-radius:8px;background:#fff9ed;color:#735923;font-size:12px;line-height:1.65"><strong>Action required:</strong> Kindly change this temporary password after your first sign-in and do not share it with anyone.</div>`,
+    actionLabel:'Open AT Connect',actionUrl:env.clientUrl,
+    footer:'We are delighted to have you with Ananttattva Private Limited.',
+  })
+  return sendGraphEmail({recipient,subject:'Welcome to Ananttattva Private Limited | Your AT Connect account',html})
+}
+
+export async function sendAllowanceReminder({recipient,firstName,allowanceMonth,deadline}){
+  const html=modernMail({
+    preview:`Submit your ${allowanceMonth} allowance by ${deadline}`,eyebrow:'Monthly allowance reminder',title:`Your ${allowanceMonth} allowance window is open`,
+    intro:`Hi ${escapeHtml(firstName)}, today is the final day of ${escapeHtml(allowanceMonth)}. Please prepare and submit your travel and extra allowance claims in AT Connect.`,
+    content:`<div style="margin-top:8px;padding:20px;border:1px solid #dce9e6;border-radius:15px;background:#f5faf8"><div style="color:#71817d;font-size:11px">Submission deadline</div><div style="margin-top:6px;color:#08776b;font-size:24px;font-weight:750;letter-spacing:-.4px">${escapeHtml(deadline)}</div><div style="margin-top:13px;padding-top:13px;border-top:1px solid #dde9e6;color:#62716d;font-size:12px;line-height:1.7">Include the travel date, location, amount and supporting proof. Claims for ${escapeHtml(allowanceMonth)} submitted after this deadline will not be accepted.</div></div>`,
+    actionLabel:'Submit allowance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/allowances`,
+    footer:'Please complete your submission before the deadline.',
+  })
+  return sendGraphEmail({recipient,subject:`Allowance reminder: submit ${allowanceMonth} claims by ${deadline}`,html})
 }
 
 function escapeHtml(value) {

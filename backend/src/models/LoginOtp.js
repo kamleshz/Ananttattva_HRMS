@@ -3,6 +3,7 @@ import mongoose from 'mongoose'
 const loginOtpSchema = new mongoose.Schema({
   challengeId: { type: String, required: true, unique: true, index: true },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  purpose: { type: String, enum: ['login', 'password_reset'], default: 'login', index: true },
   codeHash: { type: String, required: true, select: false },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
   attemptsRemaining: { type: Number, default: 5 },

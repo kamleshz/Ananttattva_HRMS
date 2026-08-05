@@ -6,6 +6,7 @@ import { Employee } from '../models/Employee.js'
 import { User } from '../models/User.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
+import { sendWelcomeEmail } from '../services/mailService.js'
 
 const router = Router()
 const biometricSampleSchema = z.object({
@@ -59,6 +60,17 @@ router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, r
   if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only an Admin can create another Admin account')
   const passwordHash = await bcrypt.hash(input.temporaryPassword, 12)
   const user = await User.create({ firstName:input.firstName, lastName:input.lastName, email:input.officialEmail, passwordHash, role:input.role, mustChangePassword:true })
-  try { const employee = await Employee.create({ ...input, biometricTemplateVersion:3, biometricEnrolledAt:new Date(), user:user._id }); user.employee=employee._id; await user.save(); res.status(201).json({success:true,data:employee}) } catch(error) { await User.findByIdAndDelete(user._id); throw error }
+  let employee
+  try {
+    employee=await Employee.create({ ...input, biometricTemplateVersion:3, biometricEnrolledAt:new Date(), user:user._id })
+    user.employee=employee._id
+    await user.save()
+    await sendWelcomeEmail({recipient:user.email,firstName:user.firstName,loginId:user.email,temporaryPassword:input.temporaryPassword})
+    res.status(201).json({success:true,data:employee})
+  } catch(error) {
+    if(employee)await Employee.findByIdAndDelete(employee._id)
+    await User.findByIdAndDelete(user._id)
+    throw error
+  }
 }))
 export default router

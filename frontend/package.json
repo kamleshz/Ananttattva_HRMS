@@ -9,6 +9,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@fontsource/nunito": "^5.3.0",
     "@mediapipe/tasks-vision": "latest",
     "@vitejs/plugin-react": "latest",
     "@vladmandic/human": "^3.3.6",
