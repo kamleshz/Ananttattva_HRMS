@@ -33,6 +33,7 @@ import {
   employeeApi,
   holidayApi,
   leaveApi,
+  workArrangementApi,
 } from "./services/api.js";
 import BiometricEnrollment from "./BiometricEnrollment.jsx";
 import "./allowance-policy.css";
@@ -169,10 +170,15 @@ export function AttendancePage({ user }) {
     [loading, setLoading] = useState(true),
     [exporting, setExporting] = useState(false),
     [correctionBusy, setCorrectionBusy] = useState(false),
+    [arrangements, setArrangements] = useState([]),
+    [arrangementOpen, setArrangementOpen] = useState(false),
+    [arrangementBusy, setArrangementBusy] = useState(false),
+    [arrangementForm, setArrangementForm] = useState(() => { const date=new Date().toISOString().slice(0,10); return {type:"wfh",startDate:date,endDate:date,startTime:"09:00",endTime:"18:30",reason:"",clientName:"",destination:{name:"",address:"",latitude:"",longitude:"",allowedRadiusMeters:250}} }),
     [error, setError] = useState("");
   const canExport = ["super_admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
   const canReviewCorrections = ["super_admin", "hr_admin"].includes(user.role);
+  const canReviewArrangements = ["super_admin", "hr_admin", "manager"].includes(user.role);
   useEffect(() => {
     (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
       .then(setRecords)
@@ -185,6 +191,10 @@ export function AttendancePage({ user }) {
       .then(setCorrections)
       .catch((e) => setError(e.message));
   }, [canReviewCorrections]);
+  useEffect(() => {
+    const scope=["super_admin","hr_admin"].includes(user.role)?"all":user.role==="manager"?"team":"mine";
+    workArrangementApi.list(scope).then(setArrangements).catch((e)=>setError(e.message));
+  }, [user.role]);
   const summary = useMemo(
     () =>
       records.reduce(
@@ -250,6 +260,24 @@ export function AttendancePage({ user }) {
       setCorrectionBusy(false);
     }
   }
+  async function submitArrangement(event) {
+    event.preventDefault();setArrangementBusy(true);setError("");
+    try {
+      const payload={...arrangementForm};
+      if(payload.destination.latitude===""||payload.destination.longitude==="")throw new Error(`Use current location to capture the approved ${payload.type==="wfh"?"work-from-home location":"destination"}`)
+      payload.destination={...payload.destination,name:payload.type==="wfh"?"Approved WFH location":payload.destination.name,latitude:Number(payload.destination.latitude),longitude:Number(payload.destination.longitude),allowedRadiusMeters:Number(payload.destination.allowedRadiusMeters)};
+      const created=await workArrangementApi.create(payload);setArrangements(items=>[created,...items]);setArrangementOpen(false);
+    } catch(e){setError(e.message)} finally{setArrangementBusy(false)}
+  }
+  function captureDestination(){
+    if(!navigator.geolocation){setError("Location is not supported by this browser");return}
+    setArrangementBusy(true);setError("");
+    navigator.geolocation.getCurrentPosition(({coords})=>{setArrangementForm(form=>({...form,destination:{...form.destination,latitude:coords.latitude.toFixed(6),longitude:coords.longitude.toFixed(6)}}));setArrangementBusy(false)},()=>{setError("Unable to capture the destination. Enable precise location and retry.");setArrangementBusy(false)},{enableHighAccuracy:true,maximumAge:0,timeout:12000});
+  }
+  async function reviewArrangement(request,decision){
+    const reviewNote=decision==="reject"?window.prompt("Please enter the rejection reason"):"";if(decision==="reject"&&!reviewNote)return;
+    setArrangementBusy(true);setError("");try{const updated=await workArrangementApi.review(request._id,decision,reviewNote);setArrangements(items=>items.map(item=>item._id===updated._id?{...item,...updated}:item))}catch(e){setError(e.message)}finally{setArrangementBusy(false)}
+  }
   const pendingCorrectionIds = new Set(corrections.filter((item) => item.status === "pending").map((item) => String(item.attendance?._id || item.attendance)));
   return (
     <>
@@ -283,6 +311,7 @@ export function AttendancePage({ user }) {
           {canExport && <button className="secondary-button attendance-export-button" disabled={exporting} onClick={downloadExcel}>
             <Download size={15} /> {exporting ? "Preparing…" : "Download Excel"}
           </button>}
+          <button className="primary-button" onClick={()=>setArrangementOpen(true)}><MapPin size={15}/> Request work mode</button>
           </div>
         }
       />
@@ -406,6 +435,17 @@ export function AttendancePage({ user }) {
           </div>
         )}
       </section>
+      <section className="content-card work-arrangements-card">
+        <div className="section-heading">
+          <div><p className="eyebrow">Flexible attendance</p><h2>{canReviewArrangements ? "Work-mode approvals" : "My work-mode requests"}</h2></div>
+          <button className="secondary-button" onClick={()=>setArrangementOpen(true)}><Plus size={15}/> New request</button>
+        </div>
+        {arrangements.length===0?<StateMessage>No work-from-home, client-location, or field-visit requests yet.</StateMessage>:<div className="attendance-correction-list work-arrangement-list">{arrangements.map(request=><article key={request._id}>
+          <div><strong>{request.employee?.firstName?`${request.employee.firstName} ${request.employee.lastName||""}`:"My request"} · {request.type.replaceAll("_"," ")}</strong><span>{formatDate(request.startDate)} to {formatDate(request.endDate)} · {request.startTime}–{request.endTime}</span><p>{request.reason}{request.clientName?` · ${request.clientName}`:""}</p></div>
+          <StatusBadge status={request.status}/>
+          {canReviewArrangements&&request.status==="pending"&&<div className="correction-review-actions"><button className="reject-button" disabled={arrangementBusy} onClick={()=>reviewArrangement(request,"reject")}>Reject</button><button className="approve-button" disabled={arrangementBusy} onClick={()=>reviewArrangement(request,"approve")}><Check size={13}/> Approve</button></div>}
+        </article>)}</div>}
+      </section>
       {corrections.length > 0 && (
         <section className="content-card attendance-corrections-card">
           <div className="section-heading">
@@ -439,6 +479,17 @@ export function AttendancePage({ user }) {
       {viewingPhoto && (
         <PhotoViewer photo={viewingPhoto} close={() => setViewingPhoto(null)} />
       )}
+      {arrangementOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setArrangementOpen(false)}/><aside className="form-drawer work-arrangement-drawer"><div className="drawer-heading"><div><p className="eyebrow">Flexible attendance</p><h2>Request a work mode</h2></div><button onClick={()=>setArrangementOpen(false)}><X size={20}/></button></div><form onSubmit={submitArrangement}>
+        <label>Work mode *<select value={arrangementForm.type} onChange={e=>setArrangementForm({...arrangementForm,type:e.target.value})}><option value="wfh">Work from home</option><option value="client_location">Client location</option><option value="field_visit">Field visit / travelling</option></select></label>
+        <div className="form-row"><label>From date *<input required type="date" value={arrangementForm.startDate} onChange={e=>setArrangementForm({...arrangementForm,startDate:e.target.value})}/></label><label>To date *<input required type="date" min={arrangementForm.startDate} value={arrangementForm.endDate} onChange={e=>setArrangementForm({...arrangementForm,endDate:e.target.value})}/></label></div>
+        <div className="form-row"><label>Allowed from *<input required type="time" value={arrangementForm.startTime} onChange={e=>setArrangementForm({...arrangementForm,startTime:e.target.value})}/></label><label>Allowed until *<input required type="time" value={arrangementForm.endTime} onChange={e=>setArrangementForm({...arrangementForm,endTime:e.target.value})}/></label></div>
+        {arrangementForm.type!=="wfh"&&<><label>Client / visit name *<input required value={arrangementForm.clientName} onChange={e=>setArrangementForm({...arrangementForm,clientName:e.target.value})} placeholder="Client or destination name"/></label><label>Destination address<input value={arrangementForm.destination.address} onChange={e=>setArrangementForm({...arrangementForm,destination:{...arrangementForm.destination,address:e.target.value}})} placeholder="Visit address"/></label></>}
+        <button type="button" className="secondary-button location-capture-button" disabled={arrangementBusy} onClick={captureDestination}><MapPin size={15}/> {arrangementForm.destination.latitude?`Current location saved: ${arrangementForm.destination.latitude}, ${arrangementForm.destination.longitude}`:arrangementForm.type==="wfh"?"Use my current location for WFH":"Use my current location as destination"}</button>
+        <label>Approved location radius (metres)<input required type="number" min="25" max="10000" value={arrangementForm.destination.allowedRadiusMeters} onChange={e=>setArrangementForm({...arrangementForm,destination:{...arrangementForm.destination,allowedRadiusMeters:e.target.value}})}/></label>
+        <label>Reason *<textarea required minLength="10" maxLength="1000" rows="5" value={arrangementForm.reason} onChange={e=>setArrangementForm({...arrangementForm,reason:e.target.value})} placeholder="Explain why this work arrangement is required"/></label>
+        <div className="arrangement-policy-note"><ShieldCheck size={17}/><span>Attendance is enabled only after approval. GPS, live face verification, and the enrolled identity match remain mandatory.</span></div>
+        <div className="drawer-actions"><button type="button" className="secondary-button" onClick={()=>setArrangementOpen(false)}>Cancel</button><button className="primary-button" disabled={arrangementBusy}>{arrangementBusy?"Submitting…":"Send for approval"}</button></div>
+      </form></aside></div>}
       {correctionRecord && (
         <div className="drawer-layer">
           <button className="drawer-backdrop" onClick={() => setCorrectionRecord(null)} />

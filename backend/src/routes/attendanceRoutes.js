@@ -15,6 +15,7 @@ import { AttendanceCorrectionRequest } from '../models/AttendanceCorrectionReque
 import { Notification } from '../models/Recruitment.js'
 import { User } from '../models/User.js'
 import { OfficeLocation, OrganizationProfile } from '../models/Organization.js'
+import { WorkArrangementRequest } from '../models/WorkArrangementRequest.js'
 
 const router = Router()
 router.use(authenticate)
@@ -39,6 +40,10 @@ async function verifiedPunch(req, mode) {
   catch { throw new HttpError(401, 'Biometric verification expired. Please verify again') }
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
   if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || verification.faceMatchScore < .65) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
+  const dayStart=startOfLocalDay(),dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);dayEnd.setMilliseconds(-1)
+  const existing=mode==='check-out'?await Attendance.findOne({employee:req.user.employee?._id,date:dayStart}).select('attendanceMode'):null
+  if(existing&&existing.attendanceMode!==input.attendanceMode)throw new HttpError(409,`Check out using the same attendance mode used at check in (${existing.attendanceMode.replaceAll('_',' ')})`)
+  if(input.attendanceMode==='office'){
   const offices=await OfficeLocation.find({isActive:true}).lean()
   if(!offices.length)throw new HttpError(409,'Attendance location is not configured. Please contact an administrator')
   const ranked=offices.map(office=>({...office,distanceMeters:distanceMeters(input.location,office)})).sort((a,b)=>a.distanceMeters-b.distanceMeters)
@@ -47,6 +52,33 @@ async function verifiedPunch(req, mode) {
   const minimumPossibleDistance=Math.max(0,office.distanceMeters-Math.round(input.location.accuracyMeters))
   if(minimumPossibleDistance>office.allowedRadiusMeters)throw new HttpError(403,`Your GPS position is ${office.distanceMeters} metres from ${office.name} with ±${Math.round(input.location.accuracyMeters)} metres accuracy. Attendance is allowed within ${office.allowedRadiusMeters} metres`)
   input.location={...input.location,address:office.address||input.location.address,officeLocation:office._id,officeName:office.name,distanceMeters:office.distanceMeters}
+  }else{
+    if(!req.user.employee)throw new HttpError(409,'No employee profile is linked to this account')
+    const arrangement=await WorkArrangementRequest.findOne({employee:req.user.employee._id,type:input.attendanceMode,status:'approved',startDate:{$lte:dayEnd},endDate:{$gte:dayStart}}).lean()
+    if(!arrangement)throw new HttpError(403,`An approved ${input.attendanceMode.replaceAll('_',' ')} request is required for today`)
+    if(mode==='check-in'){
+      const current=new Date(),localMinutes=current.getHours()*60+current.getMinutes()
+      const [startHour,startMinute]=arrangement.startTime.split(':').map(Number),[endHour,endMinute]=arrangement.endTime.split(':').map(Number)
+      if(localMinutes<startHour*60+startMinute||localMinutes>endHour*60+endMinute)throw new HttpError(403,`This approval is valid from ${arrangement.startTime} to ${arrangement.endTime}`)
+    }
+    if(input.location.accuracyMeters>150)throw new HttpError(422,`GPS accuracy is ${Math.round(input.location.accuracyMeters)} metres. Enable precise location and retry when accuracy is within 150 metres`)
+    if(input.attendanceMode==='wfh'){
+      const destination=arrangement.destination
+      if(destination?.latitude!=null&&destination?.longitude!=null){
+        const travelledDistance=distanceMeters(input.location,destination),allowedRadius=destination.allowedRadiusMeters||250
+        const minimumPossibleDistance=Math.max(0,travelledDistance-Math.round(input.location.accuracyMeters))
+        if(minimumPossibleDistance>allowedRadius)throw new HttpError(403,`Your GPS position is ${travelledDistance} metres from the approved work-from-home location. Attendance is allowed within ${allowedRadius} metres`)
+        input.location={...input.location,address:destination.address||'Approved work from home',officeName:'Work from home',distanceMeters:travelledDistance}
+      }else input.location={...input.location,address:input.location.address||'Approved work from home',officeName:'Work from home'}
+    }else{
+      const destination=arrangement.destination
+      if(destination?.latitude==null||destination?.longitude==null)throw new HttpError(409,'The approved destination is missing coordinates. Ask HR to update the request')
+      const travelledDistance=distanceMeters(input.location,destination),allowedRadius=destination.allowedRadiusMeters||250
+      const minimumPossibleDistance=Math.max(0,travelledDistance-Math.round(input.location.accuracyMeters))
+      if(minimumPossibleDistance>allowedRadius)throw new HttpError(403,`Your GPS position is ${travelledDistance} metres from the approved destination. Attendance is allowed within ${allowedRadius} metres`)
+      input.location={...input.location,address:destination.address||input.location.address,officeName:arrangement.clientName||destination.name||'Approved destination',distanceMeters:travelledDistance}
+    }
+  }
   input.locationVerified=true
   input.biometricVerification = { verified:true, method:verification.identityTemplateVersion >= 3 ? 'active_liveness_multi_angle_face_embedding_v3' : 'active_liveness_face_embedding_v2', challenge:verification.challenge, livenessScore:verification.livenessScore, faceMatchScore:verification.faceMatchScore, verifiedAt:new Date() }
   return input
@@ -78,6 +110,7 @@ router.get('/today', asyncHandler(async (req, res) => {
     overtimeMinutes:record?.overtimeMinutes||0,
     autoCheckout:record?.autoCheckout||null,
     attendanceId:record?._id||null,
+    attendanceMode:record?.attendanceMode||null,
   }})
 }))
 router.get('/all', authorize('super_admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res)=>{

@@ -91,6 +91,12 @@ export const attendanceApi = {
       body: JSON.stringify(data),
     }),
 };
+export const workArrangementApi = {
+  list: (scope = "mine") => api(`/work-arrangements${scope === "mine" ? "" : `?scope=${scope}`}`),
+  today: () => api("/work-arrangements/today"),
+  create: (data) => api("/work-arrangements", { method: "POST", body: JSON.stringify(data) }),
+  review: (id, decision, reviewNote = "") => api(`/work-arrangements/${id}/${decision}`, { method: "PATCH", body: JSON.stringify({ reviewNote }) }),
+};
 export const employeeApi = {
   organizationChart: () => api('/employees/organization-chart'),
   list: (search = "") =>

@@ -33,6 +33,7 @@ import {
   dashboardApi,
   recruitmentApi,
   session,
+  workArrangementApi,
 } from "./services/api.js";
 import { useLocation, useNavigate } from "./router.jsx";
 import {
@@ -749,15 +750,22 @@ function ModernAttendanceCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [availableModes, setAvailableModes] = useState(["office"]);
+  const [selectedMode, setSelectedMode] = useState("office");
   const [now, setNow] = useState(new Date());
   const refresh = async () => {
     setError("");
-    try { setAttendance(await attendanceApi.today()); }
+    try {
+      const [today, arrangements] = await Promise.all([attendanceApi.today(), workArrangementApi.today()]);
+      setAttendance(today);
+      setAvailableModes(arrangements.modes || ["office"]);
+      if (today.attendanceMode) setSelectedMode(today.attendanceMode);
+    }
     catch (requestError) { setError(requestError.message); }
     finally { setLoading(false); }
   };
   useEffect(() => {
-    attendanceApi.today().then(setAttendance).catch(requestError=>setError(requestError.message)).finally(()=>setLoading(false));
+    Promise.all([attendanceApi.today(),workArrangementApi.today()]).then(([today,arrangements])=>{setAttendance(today);setAvailableModes(arrangements.modes||["office"]);if(today.attendanceMode)setSelectedMode(today.attendanceMode)}).catch(requestError=>setError(requestError.message)).finally(()=>setLoading(false));
   }, []);
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 1000);
@@ -775,7 +783,7 @@ function ModernAttendanceCard() {
   const [endHour,endMinute] = shift.endTime.split(":").map(Number);
   const shiftSeconds = Math.max(60, ((endHour * 60 + endMinute) - (startHour * 60 + startMinute)) * 60);
   const progress = Math.min(100, Math.round(durationSeconds / shiftSeconds * 100));
-  const office = attendance?.checkIn?.officeName || "Configured office";
+  const office = attendance?.checkIn?.officeName || (selectedMode === "office" ? "Configured office" : selectedMode.replaceAll("_", " "));
   return <>
     <section className={`card attendance-card attendance-state-${state.toLowerCase()}`}>
       <div className="card-heading"><div><p className="eyebrow">Today&apos;s attendance</p><h2>{shift.name}</h2></div><span className={`status ${state === "NOT_CHECKED_IN" ? "neutral" : "present"}`}><i/>{completed ? "Day completed" : checkedIn ? "Checked in" : "Not checked in"}</span></div>
@@ -783,11 +791,12 @@ function ModernAttendanceCard() {
       {error ? <div className="attendance-error" role="alert">{error}</div> : state === "NOT_CHECKED_IN" ? <div className="clock-block"><p className="clock-label">Current time</p><div className="live-time">{now.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div><p className="clock-note">You haven&apos;t checked in yet.</p></div> : <div className="attendance-live-layout"><div className="duration-ring" style={{"--progress":`${progress * 3.6}deg`}}><div><strong>{durationClock(durationSeconds)}</strong><span>{completed ? "Total working" : "Working duration"}</span></div></div><dl className="attendance-facts"><div><dt>Check-In</dt><dd>{checkInTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "Unavailable"}</dd></div><div><dt>Check-Out</dt><dd>{checkOutTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "In progress"}</dd></div><div><dt>Office</dt><dd>{office}</dd></div><div><dt>Location</dt><dd>{attendance?.checkIn?.distanceMeters != null ? `Verified · ${attendance.checkIn.distanceMeters}m` : "Verified"}</dd></div><div><dt>Face</dt><dd>Verified</dd></div><div><dt>Shift progress</dt><dd>{progress}%</dd></div></dl></div>}
       {attendance?.checkoutType === "AUTO_CHECKOUT" && <div className="auto-checkout-banner"><strong>Your previous attendance session was automatically closed.</strong><span>Request an attendance correction if the recorded effective hours are inaccurate.</span></div>}
       {attendance?.late?.isLate && <div className="late-policy-banner"><strong>{attendance.late.halfDayPenaltyApplied ? "Half-Day Penalty Applied" : "Late Arrival"}</strong><span>{attendance.late.lateMinutes} minutes late · Monthly count: {attendance.late.monthlyLateCount}</span></div>}
-      {!completed && !error && <button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out" : "Check In"}<ChevronRight size={17}/></button>}
+      {!checkedIn && !completed && availableModes.length > 1 && <div className="attendance-mode-picker" aria-label="Attendance mode">{availableModes.map(item=><button key={item} className={selectedMode===item?'active':''} onClick={()=>setSelectedMode(item)}>{item==='office'?'Office':item==='wfh'?'Work from home':item==='client_location'?'Client location':'Field visit'}</button>)}</div>}
+      {!completed && !error && <button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out" : `Check In · ${selectedMode==='office'?'Office':selectedMode.replaceAll('_',' ')}`}<ChevronRight size={17}/></button>}
       {completed && <button className="full-link" onClick={() => navigate("/attendance")}>View attendance details <ChevronRight size={15}/></button>}
       <div className="requirements"><span><CheckCircle2 size={14}/>Location required</span><span><CheckCircle2 size={14}/>Face verification required</span></div>
     </section>
-    {drawerOpen && <AttendanceVerificationDrawer mode={checkedIn ? "check-out" : "check-in"} close={() => setDrawerOpen(false)} recorded={refresh}/>}
+    {drawerOpen && <AttendanceVerificationDrawer mode={checkedIn ? "check-out" : "check-in"} attendanceMode={checkedIn ? attendance.attendanceMode : selectedMode} close={() => setDrawerOpen(false)} recorded={refresh}/>}
   </>;
 }
 

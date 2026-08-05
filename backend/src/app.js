@@ -15,6 +15,7 @@ import allowanceRoutes from './routes/allowanceRoutes.js'
 import recruitmentRoutes from './routes/recruitmentRoutes.js'
 import publicOfferRoutes from './routes/publicOfferRoutes.js'
 import organizationRoutes from './routes/organizationRoutes.js'
+import workArrangementRoutes from './routes/workArrangementRoutes.js'
 import { errorHandler, notFound } from './middleware/error.js'
 
 export const app = express()
@@ -53,5 +54,6 @@ app.use('/api/allowances', allowanceRoutes)
 app.use('/api/recruitment', recruitmentRoutes)
 app.use('/api/public/offers', publicOfferRoutes)
 app.use('/api/organization', organizationRoutes)
+app.use('/api/work-arrangements', workArrangementRoutes)
 app.use(notFound)
 app.use(errorHandler)

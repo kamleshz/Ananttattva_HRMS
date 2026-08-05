@@ -36,6 +36,14 @@
 .attendance-correction-list p { margin: 4px 0 0; color: #586477; font-size: 9px; }
 .correction-review-actions { display: flex; gap: 6px; }
 .attendance-correction-drawer .drawer-heading button { border: 0; background: transparent; color: #778091; }
+.attendance-mode-picker { display:grid; grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); gap:7px; margin:12px 0; padding:6px; border:1px solid #dfe8e6; border-radius:9px; background:#f6faf9; }
+.attendance-mode-picker button { min-height:34px; padding:6px 9px; border:1px solid transparent; border-radius:7px; background:transparent; color:#687487; font-size:9px; font-weight:700; text-transform:capitalize; }
+.attendance-mode-picker button.active { border-color:#8ed1c7; background:#fff; color:#08766b; box-shadow:0 3px 10px rgba(14,105,95,.08); }
+.work-arrangements-card { margin-top:18px; }
+.work-arrangement-list strong { text-transform:capitalize; }
+.location-capture-button { width:100%; min-height:42px; height:auto; padding:8px 12px; }
+.arrangement-policy-note { display:flex; gap:9px; align-items:flex-start; padding:11px; border-radius:8px; background:#edf7f4; color:#276f67; font-size:9px; line-height:1.5; }
+.arrangement-policy-note svg { flex:0 0 auto; }
 .auto-checkout-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid #ecd9ae; border-radius: 8px; background: #fffaf0; color: #80601f; }
 .auto-checkout-note > div { display: flex; flex-direction: column; gap: 4px; }
 .auto-checkout-note strong { font-size: 9.5px; }
