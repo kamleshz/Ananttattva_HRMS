@@ -16,7 +16,7 @@ const requestSchema = z.object({
 }).refine(value => value.endDate >= value.startDate, { message: 'End date must be on or after start date', path: ['endDate'] })
 
 router.get('/', asyncHandler(async (req, res) => {
-  const elevated = ['super_admin', 'hr_admin', 'manager'].includes(req.user.role)
+  const elevated = ['super_admin', 'admin', 'hr_admin', 'manager'].includes(req.user.role)
   const filter = elevated && req.query.scope === 'all' ? {} : { employee: req.user.employee?._id }
   if (req.query.status) filter.status = req.query.status
   const requests = await LeaveRequest.find(filter).populate('employee', 'firstName lastName employeeCode department').sort({ createdAt: -1 }).limit(100)

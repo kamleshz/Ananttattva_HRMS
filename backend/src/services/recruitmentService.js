@@ -15,7 +15,7 @@ const allowedTransitions = {
 export function validateCandidateTransition(from, to, role) {
   if (!candidateStages.includes(to)) throw new HttpError(422, 'Invalid recruitment stage')
   if (!(allowedTransitions[from] || []).includes(to)) throw new HttpError(409, `Cannot move candidate from ${from} to ${to}`)
-  if (from === 'Pending Super Admin Approval' && to === 'Approved' && role !== 'super_admin') throw new HttpError(403, 'Only Super Admin can approve an offer')
+  if (from === 'Pending Super Admin Approval' && to === 'Approved' && !['super_admin','admin'].includes(role)) throw new HttpError(403, 'Only Admin or Super Admin can approve an offer')
 }
 
 export async function recordActivity(req, { action, candidate, offer, message, oldValues, newValues }) {

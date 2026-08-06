@@ -24,7 +24,7 @@ const claimSchema=z.object({
   }
 })
 router.get('/', asyncHandler(async (req,res) => {
-  const elevated=['super_admin','hr_admin'].includes(req.user.role)
+  const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=elevated&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
   const claims=await AllowanceClaim.find(filter).populate('employee','firstName lastName employeeCode department').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:claims})
@@ -58,7 +58,7 @@ router.post('/', asyncHandler(async (req,res) => {
 router.get('/:id/proof', asyncHandler(async (req,res) => {
   const claim=await AllowanceClaim.findById(req.params.id).select('+proof.data')
   if(!claim)throw new HttpError(404,'Allowance claim not found')
-  const elevated=['super_admin','hr_admin'].includes(req.user.role)
+  const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(!elevated&&String(claim.employee)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot view this proof')
   res.json({success:true,data:claim.proof})
 }))
@@ -66,13 +66,13 @@ router.post('/:id/special-approval', asyncHandler(async (req,res) => {
   const input=z.object({explanation:z.string().trim().min(10,'Please provide a detailed explanation').max(1000),proof:proofSchema}).parse(req.body)
   const claim=await AllowanceClaim.findById(req.params.id)
   if(!claim)throw new HttpError(404,'Allowance claim not found')
-  const elevated=['super_admin','hr_admin'].includes(req.user.role)
+  const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(!elevated&&String(claim.employee)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot request special approval for this claim')
   if((claim.nonAcceptableAmount||0)<=0)throw new HttpError(409,'This claim has no amount requiring special approval')
   if(claim.specialApproval?.status==='pending')throw new HttpError(409,'A special approval request is already pending')
   claim.specialApproval={status:'pending',amount:currency(claim.nonAcceptableAmount),explanation:input.explanation,proof:input.proof,requestedBy:req.user._id,requestedAt:new Date(),reviewedBy:null,reviewedAt:null,reviewNote:''}
   await claim.save()
-  const recipients=await User.find({role:{$in:['hr_admin','super_admin']},isActive:true}).select('_id')
+  const recipients=await User.find({role:{$in:['hr_admin','admin','super_admin']},isActive:true}).select('_id')
   if(recipients.length)await Notification.insertMany(recipients.map(recipient=>({recipient:recipient._id,type:'Allowance Special Approval',title:'Special allowance approval requested',message:`A special approval of ₹${claim.specialApproval.amount.toLocaleString('en-IN')} requires review.`,employee:claim.employee})))
   const result=claim.toObject();if(result.specialApproval?.proof)delete result.specialApproval.proof.data
   res.status(201).json({success:true,data:result})
@@ -80,7 +80,7 @@ router.post('/:id/special-approval', asyncHandler(async (req,res) => {
 router.get('/:id/special-approval/proof', asyncHandler(async (req,res) => {
   const claim=await AllowanceClaim.findById(req.params.id).select('+specialApproval.proof.data')
   if(!claim)throw new HttpError(404,'Allowance claim not found')
-  const elevated=['super_admin','hr_admin'].includes(req.user.role)
+  const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(!elevated&&String(claim.employee)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot view this proof')
   if(!claim.specialApproval?.proof?.data)throw new HttpError(404,'Special approval proof not found')
   res.json({success:true,data:claim.specialApproval.proof})

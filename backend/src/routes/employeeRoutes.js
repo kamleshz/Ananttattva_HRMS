@@ -82,8 +82,9 @@ router.put('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(
   res.json({ success:true, data:{ id:employee.id, employeeCode:employee.employeeCode, biometricEnrolledAt:employee.biometricEnrolledAt, biometricTemplateVersion:employee.biometricTemplateVersion } })
 }))
 router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
-  const input = z.object({ employeeCode:z.string().min(3), firstName:z.string().min(1), lastName:z.string().min(1), dateOfBirth:z.coerce.date().max(new Date(), 'Date of birth cannot be in the future'), gender:z.enum(['male','female','non_binary','prefer_not_to_say','not_specified']), officialEmail:z.email(), department:z.string().optional(), designation:z.string().optional(), temporaryPassword:z.string().min(8), role:z.enum(['super_admin','hr_admin','manager','finance_admin','it_admin','employee']).default('employee'), ...biometricEnrollmentSchema.shape }).parse(req.body)
-  if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only an Admin can create another Admin account')
+  const input = z.object({ employeeCode:z.string().min(3), firstName:z.string().min(1), lastName:z.string().min(1), dateOfBirth:z.coerce.date().max(new Date(), 'Date of birth cannot be in the future'), gender:z.enum(['male','female','non_binary','prefer_not_to_say','not_specified']), officialEmail:z.email(), department:z.string().optional(), designation:z.string().optional(), temporaryPassword:z.string().min(8), role:z.enum(['super_admin','admin','hr_admin','manager','finance_admin','it_admin','employee']).default('employee'), ...biometricEnrollmentSchema.shape }).parse(req.body)
+  if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only a Super Admin can create another Super Admin account')
+  if (input.role === 'admin' && !['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only an Admin or Super Admin can create an Admin account')
   const passwordHash = await bcrypt.hash(input.temporaryPassword, 12)
   const user = await User.create({ firstName:input.firstName, lastName:input.lastName, email:input.officialEmail, passwordHash, role:input.role, mustChangePassword:true })
   let employee

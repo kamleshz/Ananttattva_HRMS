@@ -92,6 +92,16 @@ const recruitmentNavigation = {
     ["Recruitment Reports", "/recruitment/reports"],
     ["Recruitment Settings", "/recruitment/settings"],
   ],
+  admin: [
+    ["Recruitment Dashboard", "/recruitment/dashboard"],
+    ["Interview Details", "/recruitment/interviews"],
+    ["Candidates", "/recruitment/candidates"],
+    ["Selected Candidates", "/recruitment/selected"],
+    ["Offer Letters", "/recruitment/offers"],
+    ["Offer Letter Approvals", "/recruitment/approvals"],
+    ["Recruitment Reports", "/recruitment/reports"],
+    ["Recruitment Settings", "/recruitment/settings"],
+  ],
   manager: [
     ["My Interviews", "/recruitment/my-interviews"],
     ["Candidate Feedback", "/recruitment/feedback"],
@@ -169,7 +179,7 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
               ))}</div>}
             </>
           )}
-          {user.role === "super_admin" && (
+          {["super_admin", "admin"].includes(user.role) && (
             <>
               <p className="nav-label">Settings</p>
               <button
@@ -819,7 +829,7 @@ function WorkforceDemographicsCard({ demographics }) {
 
 function HomePage({ user, dashboard }) {
   const navigate = useNavigate();
-  const quickAction=user.role==='super_admin'?{label:'Review offer approvals',route:'/recruitment/approvals'}:user.role==='hr_admin'?{label:'Add candidate',route:'/recruitment/candidates'}:{label:dashboard?.today?.checkIn?.time?'View attendance':'Check in',route:'/attendance'};
+  const quickAction=['super_admin','admin'].includes(user.role)?{label:'Review offer approvals',route:'/recruitment/approvals'}:user.role==='hr_admin'?{label:'Add candidate',route:'/recruitment/candidates'}:{label:dashboard?.today?.checkIn?.time?'View attendance':'Check in',route:'/attendance'};
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
     return hour < 12

@@ -131,7 +131,7 @@ router.post('/face-match-requests', asyncHandler(async (req,res)=>{
   if(await FaceAttendanceRequest.exists({employee:req.user.employee._id,date,status:'pending'}))throw new HttpError(409,'A manual check-in request is already pending for this date')
   const location=await verifyRequestedLocation(input,req.user,attemptedAt)
   const request=await FaceAttendanceRequest.create({employee:req.user.employee._id,requestedBy:req.user._id,date,attemptedAt,attendanceMode:input.attendanceMode,photo:input.photo,location,faceMatchScore:proof.faceMatchScore,livenessScore:proof.livenessScore,reason:input.reason,...meta(req)})
-  const reviewers=await User.find({role:{$in:['hr_admin','super_admin']},isActive:true}).select('_id email firstName')
+  const reviewers=await User.find({role:{$in:['hr_admin','admin','super_admin']},isActive:true}).select('_id email firstName')
   if(reviewers.length)await Notification.insertMany(reviewers.map(reviewer=>({recipient:reviewer._id,type:'Face Check-in Approval',title:'Manual check-in approval requested',message:`${req.user.firstName} ${req.user.lastName} could not complete face matching and requested check-in approval.`,employee:req.user.employee._id})))
   const employeeName=`${req.user.firstName} ${req.user.lastName}`.trim()
   const emailResults=await Promise.allSettled(reviewers.filter(reviewer=>reviewer.email).map(reviewer=>sendFaceCheckInApprovalRequest({recipient:reviewer.email,reviewerName:reviewer.firstName||'Reviewer',employeeName,employeeCode:req.user.employee.employeeCode,attemptedAt,attendanceMode:input.attendanceMode,reason:input.reason,faceMatchScore:proof.faceMatchScore})))
@@ -139,7 +139,7 @@ router.post('/face-match-requests', asyncHandler(async (req,res)=>{
   res.status(201).json({success:true,data:request})
 }))
 router.get('/face-match-requests', asyncHandler(async (req,res)=>{
-  const reviewer=['super_admin','hr_admin'].includes(req.user.role)
+  const reviewer=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=reviewer&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
   const requests=await FaceAttendanceRequest.find(filter).populate('employee','firstName lastName employeeCode department designation').populate('reviewedBy','firstName lastName role').populate('attendance','date checkIn status attendanceMode').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
@@ -208,7 +208,7 @@ router.get('/all', authorize('super_admin','hr_admin','finance_admin','it_admin'
   res.json({success:true,data:records})
 }))
 router.get('/corrections', asyncHandler(async (req,res)=>{
-  const elevated=['super_admin','hr_admin'].includes(req.user.role)
+  const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=elevated&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
   const requests=await AttendanceCorrectionRequest.find(filter).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
@@ -256,7 +256,7 @@ router.post('/:id/correction', asyncHandler(async (req,res)=>{
   if(input.requestedCheckoutTime<attendance.checkIn.time||input.requestedCheckoutTime>=nextDay)throw new HttpError(422,'Corrected checkout must be after check-in and before midnight on the attendance date')
   if(await AttendanceCorrectionRequest.exists({attendance:attendance._id,status:'pending'}))throw new HttpError(409,'A correction request is already pending for this record')
   const request=await AttendanceCorrectionRequest.create({attendance:attendance._id,employee:req.user.employee._id,requestedCheckoutTime:input.requestedCheckoutTime,reason:input.reason})
-  const reviewers=await User.find({role:{$in:['hr_admin','super_admin']},isActive:true}).select('_id')
+  const reviewers=await User.find({role:{$in:['hr_admin','admin','super_admin']},isActive:true}).select('_id')
   if(reviewers.length)await Notification.insertMany(reviewers.map(reviewer=>({recipient:reviewer._id,type:'Attendance Correction',title:'Attendance correction requested',message:`${req.user.firstName} ${req.user.lastName} requested a corrected checkout time.`,employee:req.user.employee._id})))
   res.status(201).json({success:true,data:request})
 }))

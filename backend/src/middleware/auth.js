@@ -20,6 +20,7 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
 })
 
 export const authorize = (...roles) => (req, _res, next) => {
-  if (!roles.includes(req.user.role)) return next(new HttpError(403, 'You do not have permission for this action'))
+  const allowed=roles.includes(req.user.role)||(req.user.role==='admin'&&roles.includes('super_admin'))
+  if (!allowed) return next(new HttpError(403, 'You do not have permission for this action'))
   next()
 }

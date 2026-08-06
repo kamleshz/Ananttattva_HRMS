@@ -203,11 +203,11 @@ export function AttendancePage({ user }) {
     [arrangementBusy, setArrangementBusy] = useState(false),
     [arrangementForm, setArrangementForm] = useState(() => { const date=new Date().toISOString().slice(0,10); return {type:"wfh",startDate:date,endDate:date,startTime:"09:00",endTime:"18:30",reason:"",clientName:"",destination:{name:"",address:"",latitude:"",longitude:"",allowedRadiusMeters:250}} }),
     [error, setError] = useState("");
-  const canExport = ["super_admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
+  const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
-  const canReviewCorrections = ["super_admin", "hr_admin"].includes(user.role);
-  const canReviewFaceRequests = ["super_admin", "hr_admin"].includes(user.role);
-  const canReviewArrangements = ["super_admin", "hr_admin", "it_admin", "manager"].includes(user.role);
+  const canReviewCorrections = ["super_admin", "admin", "hr_admin"].includes(user.role);
+  const canReviewFaceRequests = ["super_admin", "admin", "hr_admin"].includes(user.role);
+  const canReviewArrangements = ["super_admin", "admin", "hr_admin", "it_admin", "manager"].includes(user.role);
   useEffect(() => {
     (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
       .then(setRecords)
@@ -227,7 +227,7 @@ export function AttendancePage({ user }) {
       .catch((e) => setError(e.message));
   }, [canReviewFaceRequests]);
   useEffect(() => {
-    const scope=["super_admin","hr_admin","it_admin"].includes(user.role)?"all":user.role==="manager"?"team":"mine";
+    const scope=["super_admin","admin","hr_admin","it_admin"].includes(user.role)?"all":user.role==="manager"?"team":"mine";
     workArrangementApi.list(scope).then(setArrangements).catch((e)=>setError(e.message));
   }, [user.role]);
   const summary = useMemo(
@@ -930,7 +930,7 @@ export function LeavePage() {
 }
 
 export function RequestsPage({ user }) {
-  const canReview = ["super_admin", "hr_admin", "manager"].includes(user.role);
+  const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
@@ -1051,7 +1051,7 @@ export function PeoplePage({ user }) {
         eyebrow="Team"
         title="People"
         description={`${employees.length} employees in your organization.`}
-        action={['super_admin','hr_admin'].includes(user?.role) ?
+        action={['super_admin','admin','hr_admin'].includes(user?.role) ?
           <button
             className="primary-button"
             onClick={() => navigate("/people/new")}
@@ -1107,7 +1107,7 @@ export function PeoplePage({ user }) {
                     <dd>{employee.workLocation}</dd>
                   </div>
                 </dl>
-                {['super_admin','hr_admin'].includes(user?.role) && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button></div>}
+                {['super_admin','admin','hr_admin'].includes(user?.role) && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button></div>}
               </article>
             ))}
           </div>
@@ -1370,9 +1370,14 @@ export function EmployeeOnboardingPage({ user }) {
                 >
                   <option value="employee">Employee</option>
                   <option value="manager">Manager</option>
-                  <option value="hr_admin">HR</option>
+                  <option value="hr_admin">HR Admin</option>
+                  {["super_admin", "admin"].includes(user.role) && (
+                    <option value="admin">Admin</option>
+                  )}
+                  <option value="finance_admin">Finance Admin</option>
+                  <option value="it_admin">IT Admin</option>
                   {user.role === "super_admin" && (
-                    <option value="super_admin">Admin</option>
+                    <option value="super_admin">Super Admin</option>
                   )}
                 </select>
               </label>
@@ -1533,7 +1538,7 @@ export function ReportsPage() {
 }
 
 export function HolidaysPage({ user }) {
-  const canManage = ["super_admin", "hr_admin"].includes(user.role);
+  const canManage = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const [holidays, setHolidays] = useState([]),
     [calendarMonth, setCalendarMonth] = useState(
       () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -1867,7 +1872,7 @@ function ProofViewer({ proof, close }) {
 }
 
 export function AllowancesPage({ user }) {
-  const canViewAll = ["super_admin", "hr_admin"].includes(user.role);
+  const canViewAll = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const [claims, setClaims] = useState([]),
     [drawer, setDrawer] = useState(false),
     [loading, setLoading] = useState(true),

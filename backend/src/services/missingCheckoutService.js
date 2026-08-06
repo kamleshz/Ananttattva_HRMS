@@ -27,7 +27,7 @@ export async function processMissingCheckouts(now=new Date()){
     record.autoCheckout={appliedAt:now,scheduledCheckoutTime:checkoutTime,previousStatus}
     await record.save()
 
-    const recipients=await User.find({isActive:true,$or:[{employee:record.employee._id},{role:{$in:['hr_admin','super_admin']}}]}).select('_id')
+    const recipients=await User.find({isActive:true,$or:[{employee:record.employee._id},{role:{$in:['hr_admin','admin','super_admin']}}]}).select('_id')
     if(recipients.length)await Notification.insertMany(recipients.map(recipient=>({recipient:recipient._id,type:'Missing Checkout',title:'Attendance auto-checked out',message:`${record.employee.firstName} ${record.employee.lastName} (${record.employee.employeeCode}) did not check out. The record was closed at the configured shift end and requires correction if inaccurate.`,employee:record.employee._id})))
     processed++
   }

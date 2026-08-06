@@ -1649,7 +1649,7 @@ function OffersView({ approvals = false, user }) {
                     </p>
                     <small>
                       Joining {niceDate(offer.joiningDate)}{" "}
-                      {user.role === "super_admin" &&
+                      {["super_admin", "admin"].includes(user.role) &&
                       offer.compensation?.annualCTC
                         ? ` · ${money(offer.compensation.annualCTC)}`
                         : ""}
@@ -2163,7 +2163,7 @@ function RecruitmentSettings() {
 export function RecruitmentHomeWidgets({ user }) {
   const [data, setData] = useState(null);
   useEffect(() => {
-    if (["super_admin", "hr_admin"].includes(user.role))
+    if (["super_admin", "admin", "hr_admin"].includes(user.role))
       recruitmentApi
         .dashboard()
         .then(setData)
@@ -2208,13 +2208,13 @@ export function RecruitmentHomeWidgets({ user }) {
         )}
       </section>
       <section
-        className={`recruitment-card home-offer-widget ${user.role === "super_admin" && pending ? "attention" : ""}`}
+        className={`recruitment-card home-offer-widget ${["super_admin", "admin"].includes(user.role) && pending ? "attention" : ""}`}
       >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Offer workflow</p>
             <h2>
-              {user.role === "super_admin"
+              {["super_admin", "admin"].includes(user.role)
                 ? "Offer Letter Approvals"
                 : "Offer Letters"}
             </h2>
@@ -2298,7 +2298,7 @@ export function OrganizationSettings() {
         </button>
       </PageHeader>
       {message && <p className="recruitment-notice">{message}</p>}
-      {contactOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setContactOpen(false)}/><aside className="form-drawer"><div className="drawer-heading"><div><p className="eyebrow">Organization settings</p><h2>Add point of contact</h2><p>Only official contact details selected for organizational display are shown.</p></div><button type="button" onClick={()=>setContactOpen(false)}><X size={20}/></button></div><form onSubmit={addContact}><div className="form-grid"><Field label="Category"><select value={contactForm.category} onChange={event=>setContactForm({...contactForm,category:event.target.value})}><option>Human Resources</option><option>Accounts</option><option>Information Technology</option><option>Director</option></select></Field><Field label="Contact priority"><select value={contactForm.contactPriority} onChange={event=>setContactForm({...contactForm,contactPriority:event.target.value})}><option value="primary">Primary contact</option><option value="backup">Backup contact</option></select></Field><Field label="Select employee" className="span-two"><select value={contactForm.employee} onChange={event=>selectContactEmployee(event.target.value)}><option value="">Enter details manually</option>{employees.map(employee=><option value={employee._id} key={employee._id}>{employee.firstName} {employee.lastName} · {employee.employeeCode}</option>)}</select></Field><Field label="Display name"><input required value={contactForm.displayName} onChange={event=>setContactForm({...contactForm,displayName:event.target.value})}/></Field><Field label="Designation"><input value={contactForm.designation} onChange={event=>setContactForm({...contactForm,designation:event.target.value})}/></Field><Field label="Official email"><input type="email" value={contactForm.officialEmail} onChange={event=>setContactForm({...contactForm,officialEmail:event.target.value})}/></Field><Field label="Official phone"><input value={contactForm.officialPhone} onChange={event=>setContactForm({...contactForm,officialPhone:event.target.value})}/></Field><Field label="Availability" className="span-two"><input value={contactForm.availability} onChange={event=>setContactForm({...contactForm,availability:event.target.value})} placeholder="e.g. Monday to Friday, 9:30 AM – 6:30 PM"/></Field></div><div className="contact-visibility-options"><label><input type="checkbox" checked={contactForm.displayOnHome} onChange={event=>setContactForm({...contactForm,displayOnHome:event.target.checked})}/>Display on Home</label><label><input type="checkbox" checked={contactForm.displayOnLoginPage} onChange={event=>setContactForm({...contactForm,displayOnLoginPage:event.target.checked})}/>Display on Login Page</label></div><p className="contact-role-label">Visible roles (leave all clear for everyone)</p><div className="contact-visibility-options">{[['employee','Employee'],['hr_admin','HR'],['it_admin','Admin'],['super_admin','Super Admin']].map(([role,label])=><label key={role}><input type="checkbox" checked={contactForm.visibilityRoles.includes(role)} onChange={()=>toggleContactRole(role)}/>{label}</label>)}</div><div className="drawer-actions"><button type="button" className="secondary-button" onClick={()=>setContactOpen(false)}>Cancel</button><button className="primary-button">Save contact</button></div></form></aside></div>}
+      {contactOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setContactOpen(false)}/><aside className="form-drawer"><div className="drawer-heading"><div><p className="eyebrow">Organization settings</p><h2>Add point of contact</h2><p>Only official contact details selected for organizational display are shown.</p></div><button type="button" onClick={()=>setContactOpen(false)}><X size={20}/></button></div><form onSubmit={addContact}><div className="form-grid"><Field label="Category"><select value={contactForm.category} onChange={event=>setContactForm({...contactForm,category:event.target.value})}><option>Human Resources</option><option>Accounts</option><option>Information Technology</option><option>Director</option></select></Field><Field label="Contact priority"><select value={contactForm.contactPriority} onChange={event=>setContactForm({...contactForm,contactPriority:event.target.value})}><option value="primary">Primary contact</option><option value="backup">Backup contact</option></select></Field><Field label="Select employee" className="span-two"><select value={contactForm.employee} onChange={event=>selectContactEmployee(event.target.value)}><option value="">Enter details manually</option>{employees.map(employee=><option value={employee._id} key={employee._id}>{employee.firstName} {employee.lastName} · {employee.employeeCode}</option>)}</select></Field><Field label="Display name"><input required value={contactForm.displayName} onChange={event=>setContactForm({...contactForm,displayName:event.target.value})}/></Field><Field label="Designation"><input value={contactForm.designation} onChange={event=>setContactForm({...contactForm,designation:event.target.value})}/></Field><Field label="Official email"><input type="email" value={contactForm.officialEmail} onChange={event=>setContactForm({...contactForm,officialEmail:event.target.value})}/></Field><Field label="Official phone"><input value={contactForm.officialPhone} onChange={event=>setContactForm({...contactForm,officialPhone:event.target.value})}/></Field><Field label="Availability" className="span-two"><input value={contactForm.availability} onChange={event=>setContactForm({...contactForm,availability:event.target.value})} placeholder="e.g. Monday to Friday, 9:30 AM – 6:30 PM"/></Field></div><div className="contact-visibility-options"><label><input type="checkbox" checked={contactForm.displayOnHome} onChange={event=>setContactForm({...contactForm,displayOnHome:event.target.checked})}/>Display on Home</label><label><input type="checkbox" checked={contactForm.displayOnLoginPage} onChange={event=>setContactForm({...contactForm,displayOnLoginPage:event.target.checked})}/>Display on Login Page</label></div><p className="contact-role-label">Visible roles (leave all clear for everyone)</p><div className="contact-visibility-options">{[['employee','Employee'],['hr_admin','HR Admin'],['it_admin','IT Admin'],['admin','Admin'],['super_admin','Super Admin']].map(([role,label])=><label key={role}><input type="checkbox" checked={contactForm.visibilityRoles.includes(role)} onChange={()=>toggleContactRole(role)}/>{label}</label>)}</div><div className="drawer-actions"><button type="button" className="secondary-button" onClick={()=>setContactOpen(false)}>Cancel</button><button className="primary-button">Save contact</button></div></form></aside></div>}
       <div className="organization-settings-grid">
         <form className="recruitment-card organization-form" onSubmit={save}>
           <h2>Company information</h2>
@@ -2645,7 +2645,7 @@ export default function RecruitmentPage({ user }) {
   else if (path === "/recruitment/offers") content = <OffersView user={user} />;
   else if (path === "/recruitment/approvals")
     content = (
-      <OffersView user={user} approvals={user.role === "super_admin"} />
+      <OffersView user={user} approvals={["super_admin", "admin"].includes(user.role)} />
     );
   else if (path === "/recruitment/reports") content = <ReportsView />;
   else if (path === "/recruitment/settings") content = <RecruitmentSettings />;

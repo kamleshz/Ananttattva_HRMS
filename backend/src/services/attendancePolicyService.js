@@ -42,7 +42,7 @@ export async function evaluateLatePolicy(employeeId, now = new Date()) {
 }
 
 export async function reportLateAttendanceEscalation(employee, monthDate, halfDayCount) {
-  const recipients = await User.find({role:{$in:['hr_admin','super_admin']},isActive:true}).select('_id email firstName')
+  const recipients = await User.find({role:{$in:['hr_admin','admin','super_admin']},isActive:true}).select('_id email firstName')
   if (!recipients.length) return { notifications:0, emails:0 }
   const employeeName = `${employee.firstName} ${employee.lastName}`.trim()
   const month = new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric'}).format(monthDate)

@@ -45,7 +45,7 @@ router.get('/employee', asyncHandler(async (req, res) => {
   })
   const effectiveMinutes=weekRecords.reduce((sum,item)=>sum+(item.workingMinutes||0),0)
   const completedDays=weekRecords.filter(item=>item.checkOut?.time).length
-  const demographics=['super_admin','hr_admin','it_admin'].includes(req.user.role)?await workforceDemographics():null
+  const demographics=['super_admin','admin','hr_admin','it_admin'].includes(req.user.role)?await workforceDemographics():null
   res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, today:attendance, birthdays, holidays, week, demographics, weekSummary:{effectiveMinutes,averageMinutes:completedDays?Math.round(effectiveMinutes/completedDays):0,onTimeDays:weekRecords.filter(item=>!item.lateMinutes).length,completedDays,monthlyLateCount:attendance?.lateOccurrenceInMonth||0}, tasks:[], away:[] } })
 }))
 router.get('/admin', authorize('super_admin','hr_admin','it_admin'), asyncHandler(async (_req, res) => {
