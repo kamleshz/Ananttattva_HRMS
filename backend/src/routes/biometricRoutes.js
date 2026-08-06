@@ -61,10 +61,15 @@ router.post('/verify', asyncHandler(async (req, res) => {
   const frontScore=scores.find(item=>item.pose==='front')?.score||0
   const bestScore=Math.max(...scores.map(item=>item.score))
   const faceMatchScore=Math.max(frontScore,bestScore)
-  if (frontScore < FRONT_FACE_MATCH_THRESHOLD && bestScore < SIDE_FACE_FALLBACK_THRESHOLD) throw new HttpError(403, 'Face confidence was too low. Your saved enrollment is unchanged. Use Repeat verification in even lighting, without a mask or strong glare. Contact HR only if three careful attempts fail.', { faceMatchScore:Number(faceMatchScore.toFixed(3)), requiredFrontScore:FRONT_FACE_MATCH_THRESHOLD })
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
+  if (frontScore < FRONT_FACE_MATCH_THRESHOLD && bestScore < SIDE_FACE_FALLBACK_THRESHOLD) {
+    if (challengePayload.mode !== 'check-in') throw new HttpError(403, 'Face confidence was too low. Repeat verification in even lighting, without a mask or strong glare.')
+    const attemptedAt = new Date()
+    const mismatchToken = jwt.sign({ purpose:'biometric_mismatch', mode:'check-in', challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash, attemptedAt:attemptedAt.toISOString() }, env.jwtSecret, { subject:req.user.id, expiresIn:'10m', jwtid:randomUUID() })
+    return res.json({ success:true, data:{ matched:false, mismatchToken, attemptedAt, faceMatchScore, livenessScore:input.livenessScore } })
+  }
   const verificationToken = jwt.sign({ purpose:'biometric_verification', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash }, env.jwtSecret, { subject:req.user.id, expiresIn:'90s', jwtid:randomUUID() })
-  res.json({ success:true, data:{ verificationToken, faceMatchScore, livenessScore:input.livenessScore } })
+  res.json({ success:true, data:{ matched:true, verificationToken, faceMatchScore, livenessScore:input.livenessScore } })
 }))
 
 export default router

@@ -146,6 +146,32 @@ export async function sendAllowanceReminder({recipient,firstName,allowanceMonth,
   return sendGraphEmail({recipient,subject:`Allowance reminder: submit ${allowanceMonth} claims by ${deadline}`,html})
 }
 
+export async function sendFaceCheckInApprovalRequest({recipient,reviewerName,employeeName,employeeCode,attemptedAt,attendanceMode,reason,faceMatchScore}){
+  const attemptLabel=new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(attemptedAt))
+  const modeLabel=String(attendanceMode).replaceAll('_',' ')
+  const html=modernMail({
+    preview:`Manual check-in approval required for ${employeeName}`,eyebrow:'Attendance approval',title:'A manual check-in needs review',
+    intro:`Hi ${escapeHtml(reviewerName)}, ${escapeHtml(employeeName)} could not complete face matching after passing the live capture check. Review the request before attendance is recorded.`,
+    content:`<div style="margin-top:8px;border:1px solid #dce9e6;border-radius:15px;overflow:hidden"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:13px 17px;background:#f2f8f6;color:#71817d;font-size:11px">Employee</td><td align="right" style="padding:13px 17px;background:#f2f8f6;color:#17213a;font-size:12px;font-weight:700">${escapeHtml(employeeName)} (${escapeHtml(employeeCode)})</td></tr><tr><td style="padding:13px 17px;border-top:1px solid #edf1f0;color:#71817d;font-size:11px">Original attempt</td><td align="right" style="padding:13px 17px;border-top:1px solid #edf1f0;color:#17213a;font-size:12px">${escapeHtml(attemptLabel)}</td></tr><tr><td style="padding:13px 17px;border-top:1px solid #edf1f0;color:#71817d;font-size:11px">Work mode</td><td align="right" style="padding:13px 17px;border-top:1px solid #edf1f0;color:#17213a;font-size:12px;text-transform:capitalize">${escapeHtml(modeLabel)}</td></tr><tr><td style="padding:13px 17px;border-top:1px solid #edf1f0;color:#71817d;font-size:11px">Face match score</td><td align="right" style="padding:13px 17px;border-top:1px solid #edf1f0;color:#a04a59;font-size:12px;font-weight:700">${Math.round(Number(faceMatchScore||0)*100)}%</td></tr></table></div><div style="margin-top:16px;padding:15px;border-left:4px solid #d89a31;border-radius:8px;background:#fff9ed;color:#735923;font-size:12px;line-height:1.65"><strong>Employee reason:</strong><br>${escapeHtml(reason)}</div>`,
+    actionLabel:'Review check-in request',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,
+    footer:'Approve only after reviewing the captured evidence in AT Connect.',
+  })
+  return sendGraphEmail({recipient,subject:`Manual check-in approval: ${employeeName} (${employeeCode})`,html})
+}
+
+export async function sendFaceCheckInDecision({recipient,firstName,decision,attemptedAt,reviewerName,reviewNote}){
+  const approved=decision==='approved'
+  const attemptLabel=new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(attemptedAt))
+  const html=modernMail({
+    preview:`Your manual check-in was ${decision}`,eyebrow:'Attendance update',title:`Manual check-in ${decision}`,
+    intro:`Hi ${escapeHtml(firstName)}, your manual check-in request for ${escapeHtml(attemptLabel)} was ${escapeHtml(decision)} by ${escapeHtml(reviewerName)}.`,
+    content:`<div style="margin-top:8px;padding:19px;border:1px solid ${approved?'#cfe7dd':'#efd5da'};border-radius:14px;background:${approved?'#f1f9f5':'#fff4f5'};color:${approved?'#27694e':'#934557'};font-size:13px;line-height:1.7"><strong>${approved?'Attendance recorded':'Attendance not recorded'}</strong><br>${approved?'Your check-in uses the original failed face-match attempt time.':'Contact HR if you need clarification or believe the request should be reconsidered.'}</div>${reviewNote?`<div style="margin-top:15px;padding:14px 16px;border-radius:10px;background:#f6f8f8;color:#56636a;font-size:12px;line-height:1.65"><strong>Review note:</strong><br>${escapeHtml(reviewNote)}</div>`:''}`,
+    actionLabel:'View attendance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,
+    footer:'This decision is recorded in the attendance audit history.',
+  })
+  return sendGraphEmail({recipient,subject:`Manual check-in ${decision}`,html})
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[character])
 }

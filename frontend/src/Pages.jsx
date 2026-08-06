@@ -190,6 +190,7 @@ export function AttendancePage({ user }) {
     [year] = useState(now.getFullYear()),
     [records, setRecords] = useState([]),
     [corrections, setCorrections] = useState([]),
+    [faceRequests, setFaceRequests] = useState([]),
     [correctionRecord, setCorrectionRecord] = useState(null),
     [correctionForm, setCorrectionForm] = useState({ requestedCheckoutTime: "", reason: "" }),
     [selected, setSelected] = useState(null),
@@ -205,6 +206,7 @@ export function AttendancePage({ user }) {
   const canExport = ["super_admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
   const canReviewCorrections = ["super_admin", "hr_admin"].includes(user.role);
+  const canReviewFaceRequests = ["super_admin", "hr_admin"].includes(user.role);
   const canReviewArrangements = ["super_admin", "hr_admin", "it_admin", "manager"].includes(user.role);
   useEffect(() => {
     (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
@@ -218,6 +220,12 @@ export function AttendancePage({ user }) {
       .then(setCorrections)
       .catch((e) => setError(e.message));
   }, [canReviewCorrections]);
+  useEffect(() => {
+    attendanceApi
+      .faceMatchRequests(canReviewFaceRequests ? "all" : "mine")
+      .then(setFaceRequests)
+      .catch((e) => setError(e.message));
+  }, [canReviewFaceRequests]);
   useEffect(() => {
     const scope=["super_admin","hr_admin","it_admin"].includes(user.role)?"all":user.role==="manager"?"team":"mine";
     workArrangementApi.list(scope).then(setArrangements).catch((e)=>setError(e.message));
@@ -288,6 +296,24 @@ export function AttendancePage({ user }) {
       setCorrectionBusy(false);
     }
   }
+  async function reviewFaceRequest(request, decision) {
+    const reviewNote = decision === "reject" ? window.prompt("Please enter the rejection reason") : "";
+    if (decision === "reject" && !reviewNote) return;
+    setCorrectionBusy(true);
+    setError("");
+    try {
+      const updated = await attendanceApi.reviewFaceMatchRequest(request._id, decision, reviewNote);
+      setFaceRequests((items) => items.map((item) => item._id === updated._id ? updated : item));
+      if (updated.attendance && decision === "approve") {
+        const refreshed = canViewAllAttendance ? await attendanceApi.allHistory(month, year) : await attendanceApi.history(month, year);
+        setRecords(refreshed);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCorrectionBusy(false);
+    }
+  }
   async function submitArrangement(event) {
     event.preventDefault();setArrangementBusy(true);setError("");
     try {
@@ -308,6 +334,7 @@ export function AttendancePage({ user }) {
   }
   const pendingCorrectionIds = new Set(corrections.filter((item) => item.status === "pending").map((item) => String(item.attendance?._id || item.attendance)));
   const pendingArrangements = arrangements.filter((item) => item.status === "pending");
+  const pendingFaceRequests = faceRequests.filter((item) => item.status === "pending");
   const orderedArrangements = [...arrangements].sort((left,right) => Number(right.status === "pending") - Number(left.status === "pending"));
   return (
     <>
@@ -471,6 +498,38 @@ export function AttendancePage({ user }) {
           </div>
         )}
       </section>
+      {(faceRequests.length > 0 || canReviewFaceRequests) && (
+        <section className="content-card attendance-corrections-card" id="face-checkin-approvals">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Face verification exceptions</p>
+              <h2>{canReviewFaceRequests ? `Manual check-in approvals${pendingFaceRequests.length ? ` (${pendingFaceRequests.length})` : ""}` : "My manual check-in requests"}</h2>
+            </div>
+          </div>
+          {faceRequests.length === 0 ? <StateMessage>No face-match check-in requests.</StateMessage> : (
+            <div className="attendance-correction-list face-request-list">
+              {faceRequests.map((request) => (
+                <article key={request._id}>
+                  <button className="approval-avatar face-request-photo" title="View captured photo" onClick={() => setViewingPhoto({src:request.photo,label:`Face mismatch attempt · ${formatTime(request.attemptedAt)}`})}>
+                    <img src={request.photo} alt="Manual check-in request" />
+                  </button>
+                  <div>
+                    <strong>{request.employee?.firstName ? `${request.employee.firstName} ${request.employee.lastName || ""}` : "My check-in request"}</strong>
+                    <span>{formatDate(request.attemptedAt)} · Attempted {formatTime(request.attemptedAt)} · Match {Math.round((request.faceMatchScore || 0) * 100)}%</span>
+                    <p>{request.reason}</p>
+                    {request.reviewNote && <small>Review note: {request.reviewNote}</small>}
+                  </div>
+                  <StatusBadge status={request.status} />
+                  {canReviewFaceRequests && request.status === "pending" && <div className="correction-review-actions">
+                    <button className="reject-button" disabled={correctionBusy} onClick={() => reviewFaceRequest(request, "reject")}>Reject</button>
+                    <button className="approve-button" disabled={correctionBusy} onClick={() => reviewFaceRequest(request, "approve")}><Check size={13} /> Approve check-in</button>
+                  </div>}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       <section className="content-card work-arrangements-card" id="work-mode-approvals">
         <div className="section-heading">
           <div><p className="eyebrow">Flexible attendance</p><h2>{canReviewArrangements ? "Work-mode approvals" : "My work-mode requests"}</h2></div>

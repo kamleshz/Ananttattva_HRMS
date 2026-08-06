@@ -12,7 +12,7 @@ const punchSchema = new mongoose.Schema({
   address: String,
   ipAddress: String,
   device: String,
-  source: { type: String, enum: ['biometric', 'system_auto', 'hr_correction'], default: 'biometric' },
+  source: { type: String, enum: ['biometric', 'manual_approval', 'system_auto', 'hr_correction'], default: 'biometric' },
 }, { _id: false })
 
 const attendanceSchema = new mongoose.Schema({

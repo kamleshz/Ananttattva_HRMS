@@ -83,6 +83,9 @@ export const attendanceApi = {
   corrections: (scope = "mine") => api(`/attendance/corrections${scope === "all" ? "?scope=all" : ""}`),
   requestCorrection: (id, data) => api(`/attendance/${id}/correction`, { method: "POST", body: JSON.stringify(data) }),
   reviewCorrection: (id, decision, reviewNote = "") => api(`/attendance/corrections/${id}/${decision}`, { method: "PATCH", body: JSON.stringify({ reviewNote }) }),
+  faceMatchRequests: (scope = "mine") => api(`/attendance/face-match-requests${scope === "all" ? "?scope=all" : ""}`),
+  requestFaceMatchApproval: (data) => api("/attendance/face-match-requests", { method:"POST", body:JSON.stringify(data) }),
+  reviewFaceMatchRequest: (id, decision, reviewNote = "") => api(`/attendance/face-match-requests/${id}/${decision}`, { method:"PATCH", body:JSON.stringify({reviewNote}) }),
   checkIn: (data) =>
     api("/attendance/check-in", { method: "POST", body: JSON.stringify(data) }),
   checkOut: (data) =>

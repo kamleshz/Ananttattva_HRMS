@@ -16,6 +16,8 @@ import { Notification } from '../models/Recruitment.js'
 import { User } from '../models/User.js'
 import { OfficeLocation, OrganizationProfile } from '../models/Organization.js'
 import { WorkArrangementRequest } from '../models/WorkArrangementRequest.js'
+import { FaceAttendanceRequest } from '../models/FaceAttendanceRequest.js'
+import { sendFaceCheckInApprovalRequest, sendFaceCheckInDecision } from '../services/mailService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -26,12 +28,42 @@ const punchSchema = z.object({
   biometricToken: z.string().min(20),
 })
 const meta = (req) => ({ ipAddress: req.ip, device: req.get('user-agent') })
+const faceRequestSchema = z.object({
+  photo: z.string().startsWith('data:image/', 'A captured attendance photo is required').max(4_500_000),
+  attendanceMode: z.enum(['office', 'wfh', 'client_location', 'field_visit']).default('office'),
+  location: z.object({ latitude:z.number().min(-90).max(90), longitude:z.number().min(-180).max(180), accuracyMeters:z.number().positive().max(5000), address:z.string().max(300).optional() }),
+  mismatchToken: z.string().min(20),
+  reason: z.string().trim().min(10, 'Please explain why manual approval is required').max(1000),
+})
 function distanceMeters(from,to){
   const radians=value=>value*Math.PI/180
   const earthRadius=6371000
   const latitudeDelta=radians(to.latitude-from.latitude),longitudeDelta=radians(to.longitude-from.longitude)
   const value=Math.sin(latitudeDelta/2)**2+Math.cos(radians(from.latitude))*Math.cos(radians(to.latitude))*Math.sin(longitudeDelta/2)**2
   return Math.round(earthRadius*2*Math.atan2(Math.sqrt(value),Math.sqrt(1-value)))
+}
+async function verifyRequestedLocation(input,user,attemptedAt){
+  const dayStart=startOfLocalDay(attemptedAt),dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);dayEnd.setMilliseconds(-1)
+  if(input.attendanceMode==='office'){
+    const offices=await OfficeLocation.find({isActive:true}).lean()
+    if(!offices.length)throw new HttpError(409,'Attendance location is not configured. Please contact an administrator')
+    const ranked=offices.map(office=>({...office,distanceMeters:distanceMeters(input.location,office)})).sort((a,b)=>a.distanceMeters-b.distanceMeters)
+    const office=ranked[0]
+    if(input.location.accuracyMeters>office.maximumAccuracyMeters)throw new HttpError(422,`GPS accuracy is ${Math.round(input.location.accuracyMeters)} metres. Retry when accuracy is within ${office.maximumAccuracyMeters} metres`)
+    if(Math.max(0,office.distanceMeters-Math.round(input.location.accuracyMeters))>office.allowedRadiusMeters)throw new HttpError(403,`Your GPS position is outside the ${office.name} attendance boundary`)
+    return {...input.location,address:office.address||input.location.address,officeLocation:office._id,officeName:office.name,distanceMeters:office.distanceMeters}
+  }
+  const arrangement=await WorkArrangementRequest.findOne({employee:user.employee?._id,type:input.attendanceMode,status:'approved',startDate:{$lte:dayEnd},endDate:{$gte:dayStart}}).lean()
+  if(!arrangement)throw new HttpError(403,`An approved ${input.attendanceMode.replaceAll('_',' ')} request is required for the attempted date`)
+  if(input.location.accuracyMeters>150)throw new HttpError(422,'Enable precise location and retry when GPS accuracy is within 150 metres')
+  const destination=arrangement.destination
+  if(destination?.latitude==null||destination?.longitude==null){
+    if(input.attendanceMode==='wfh')return {...input.location,address:input.location.address||'Approved work from home',officeName:'Work from home'}
+    throw new HttpError(409,'The approved destination is missing coordinates')
+  }
+  const travelledDistance=distanceMeters(input.location,destination),allowedRadius=destination.allowedRadiusMeters||250
+  if(Math.max(0,travelledDistance-Math.round(input.location.accuracyMeters))>allowedRadius)throw new HttpError(403,'Your GPS position is outside the approved work location')
+  return {...input.location,address:destination.address||input.location.address,officeName:input.attendanceMode==='wfh'?'Work from home':arrangement.clientName||destination.name||'Approved destination',distanceMeters:travelledDistance}
 }
 async function verifiedPunch(req, mode) {
   const input = punchSchema.parse(req.body)
@@ -85,11 +117,65 @@ async function verifiedPunch(req, mode) {
 }
 router.post('/check-in', asyncHandler(async (req, res) => res.status(201).json({ success: true, data: await checkIn(req.user.employee, await verifiedPunch(req,'check-in'), meta(req)) })))
 router.post('/check-out', asyncHandler(async (req, res) => res.json({ success: true, data: await checkOut(req.user.employee, await verifiedPunch(req,'check-out'), meta(req)) })))
+router.post('/face-match-requests', asyncHandler(async (req,res)=>{
+  if(!req.user.employee)throw new HttpError(409,'No employee profile is linked to this account')
+  const input=faceRequestSchema.parse(req.body)
+  let proof
+  try{proof=jwt.verify(input.mismatchToken,env.jwtSecret)}catch{throw new HttpError(401,'Face mismatch proof expired. Please repeat verification')}
+  const photoHash=createHash('sha256').update(input.photo).digest('hex')
+  if(proof.purpose!=='biometric_mismatch'||proof.sub!==req.user.id||proof.mode!=='check-in'||proof.photoHash!==photoHash||proof.livenessScore<.65)throw new HttpError(401,'Invalid face mismatch proof')
+  const attemptedAt=new Date(proof.attemptedAt)
+  if(Number.isNaN(attemptedAt.getTime()))throw new HttpError(401,'Invalid face mismatch attempt time')
+  const date=startOfLocalDay(attemptedAt)
+  if(await Attendance.exists({employee:req.user.employee._id,date}))throw new HttpError(409,'Attendance is already recorded for this date')
+  if(await FaceAttendanceRequest.exists({employee:req.user.employee._id,date,status:'pending'}))throw new HttpError(409,'A manual check-in request is already pending for this date')
+  const location=await verifyRequestedLocation(input,req.user,attemptedAt)
+  const request=await FaceAttendanceRequest.create({employee:req.user.employee._id,requestedBy:req.user._id,date,attemptedAt,attendanceMode:input.attendanceMode,photo:input.photo,location,faceMatchScore:proof.faceMatchScore,livenessScore:proof.livenessScore,reason:input.reason,...meta(req)})
+  const reviewers=await User.find({role:{$in:['hr_admin','super_admin']},isActive:true}).select('_id email firstName')
+  if(reviewers.length)await Notification.insertMany(reviewers.map(reviewer=>({recipient:reviewer._id,type:'Face Check-in Approval',title:'Manual check-in approval requested',message:`${req.user.firstName} ${req.user.lastName} could not complete face matching and requested check-in approval.`,employee:req.user.employee._id})))
+  const employeeName=`${req.user.firstName} ${req.user.lastName}`.trim()
+  const emailResults=await Promise.allSettled(reviewers.filter(reviewer=>reviewer.email).map(reviewer=>sendFaceCheckInApprovalRequest({recipient:reviewer.email,reviewerName:reviewer.firstName||'Reviewer',employeeName,employeeCode:req.user.employee.employeeCode,attemptedAt,attendanceMode:input.attendanceMode,reason:input.reason,faceMatchScore:proof.faceMatchScore})))
+  emailResults.filter(result=>result.status==='rejected').forEach(result=>console.error('Manual check-in approval email failed:',result.reason?.message||result.reason))
+  res.status(201).json({success:true,data:request})
+}))
+router.get('/face-match-requests', asyncHandler(async (req,res)=>{
+  const reviewer=['super_admin','hr_admin'].includes(req.user.role)
+  const filter=reviewer&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
+  const requests=await FaceAttendanceRequest.find(filter).populate('employee','firstName lastName employeeCode department designation').populate('reviewedBy','firstName lastName role').populate('attendance','date checkIn status attendanceMode').sort({createdAt:-1}).limit(100)
+  res.json({success:true,data:requests})
+}))
+router.patch('/face-match-requests/:id/:decision', authorize('super_admin','hr_admin'), asyncHandler(async (req,res)=>{
+  if(!['approve','reject'].includes(req.params.decision))throw new HttpError(400,'Invalid manual check-in decision')
+  const input=z.object({reviewNote:z.string().trim().max(500).default('')}).parse(req.body)
+  if(req.params.decision==='reject'&&input.reviewNote.length<3)throw new HttpError(422,'A rejection reason is required')
+  const approved=req.params.decision==='approve',nextStatus=approved?'approved':'rejected',reviewedAt=new Date()
+  const request=await FaceAttendanceRequest.findOneAndUpdate({_id:req.params.id,status:'pending'},{$set:{status:nextStatus,reviewedBy:req.user._id,reviewedAt,reviewNote:input.reviewNote}},{new:true}).populate('employee')
+  if(!request)throw new HttpError(409,'This manual check-in request is no longer pending')
+  try{
+    if(approved){
+      const attendance=await checkIn(request.employee,{attendanceMode:request.attendanceMode,locationVerified:true,location:request.location.toObject(),photo:request.photo,source:'manual_approval',biometricVerification:{verified:false,method:'hr_face_mismatch_approval',livenessScore:request.livenessScore,faceMatchScore:request.faceMatchScore,verifiedAt:request.reviewedAt}},{ipAddress:request.ipAddress,device:request.device},request.attemptedAt)
+      request.attendance=attendance._id
+      await request.save()
+    }
+  }catch(error){
+    await FaceAttendanceRequest.updateOne({_id:request._id,status:nextStatus,reviewedBy:req.user._id},{$set:{status:'pending',reviewedBy:null,reviewedAt:null,reviewNote:''}})
+    throw error
+  }
+  const employeeUser=await User.findOne({employee:request.employee._id,isActive:true}).select('_id email firstName')
+  if(employeeUser)await Notification.create({recipient:employeeUser._id,type:`Manual Check-in ${approved?'Approved':'Rejected'}`,title:`Manual check-in ${approved?'approved':'rejected'}`,message:input.reviewNote||(approved?'Your attendance was recorded using the original check-in attempt time.':'Your manual check-in request was rejected.'),employee:request.employee._id})
+  if(employeeUser?.email){
+    const [emailResult]=await Promise.allSettled([sendFaceCheckInDecision({recipient:employeeUser.email,firstName:employeeUser.firstName||request.employee.firstName,decision:approved?'approved':'rejected',attemptedAt:request.attemptedAt,reviewerName:`${req.user.firstName} ${req.user.lastName}`.trim(),reviewNote:input.reviewNote})])
+    if(emailResult.status==='rejected')console.error('Manual check-in decision email failed:',emailResult.reason?.message||emailResult.reason)
+  }
+  const result=await FaceAttendanceRequest.findById(request._id).populate('employee','firstName lastName employeeCode department designation').populate('reviewedBy','firstName lastName role').populate('attendance','date checkIn status attendanceMode')
+  res.json({success:true,data:result})
+}))
 router.get('/today', asyncHandler(async (req, res) => {
   const employee=req.user.employee
-  const [record,organization]=await Promise.all([
+  const [record,organization,pendingFaceRequest]=await Promise.all([
     employee?Attendance.findOne({employee:employee._id,date:startOfLocalDay()}).lean():null,
     OrganizationProfile.findOne({singletonKey:'organization'}).select('timeZone').lean(),
+    employee?FaceAttendanceRequest.findOne({employee:employee._id,date:startOfLocalDay(),status:'pending'}).select('attemptedAt status').lean():null,
   ])
   const shift=employee?.shift||{name:'General Shift',startTime:'10:00',endTime:'18:30'}
   const state=!record?.checkIn?.time?'NOT_CHECKED_IN':record?.checkOut?.time?'CHECKED_OUT':'CHECKED_IN'
@@ -97,6 +183,7 @@ router.get('/today', asyncHandler(async (req, res) => {
   const localDate=`${attendanceDate.getFullYear()}-${String(attendanceDate.getMonth()+1).padStart(2,'0')}-${String(attendanceDate.getDate()).padStart(2,'0')}`
   res.json({success:true,data:{
     state,
+    manualCheckInRequest:pendingFaceRequest,
     organizationTimezone:organization?.timeZone||'Asia/Kolkata',
     date:localDate,
     shift,

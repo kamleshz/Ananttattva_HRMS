@@ -106,7 +106,7 @@ function Avatar({ children, tone = "teal" }) {
 
 function Sidebar({ open, close, user, employee, path, navigate }) {
   const [recruitmentOpen,setRecruitmentOpen]=useState(path.startsWith('/recruitment'));
-  useEffect(()=>{if(path.startsWith('/recruitment'))setRecruitmentOpen(true)},[path]);
+  const recruitmentExpanded=recruitmentOpen||path.startsWith('/recruitment');
   const primaryNavigation = user.role === "employee"
     ? navigation.filter(([, , route]) => employeeAllowedPaths.has(route))
     : navigation;
@@ -159,10 +159,10 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>
-              <button type="button" onClick={()=>setRecruitmentOpen(value=>!value)} className={`nav-item recruitment-parent ${path.startsWith('/recruitment')?'active':''}`} aria-expanded={recruitmentOpen}>
-                <BriefcaseBusiness size={18}/><span>Candidate Recruitment</span><ChevronDown className={recruitmentOpen?'':'rotated'} size={16}/>
+              <button type="button" onClick={()=>setRecruitmentOpen(value=>!value)} className={`nav-item recruitment-parent ${path.startsWith('/recruitment')?'active':''}`} aria-expanded={recruitmentExpanded}>
+                <BriefcaseBusiness size={18}/><span>Candidate Recruitment</span><ChevronDown className={recruitmentExpanded?'':'rotated'} size={16}/>
               </button>
-              {recruitmentOpen&&<div className="subnav recruitment-subnav">{recruitmentNavigation[user.role].map(([label, route]) => (
+              {recruitmentExpanded&&<div className="subnav recruitment-subnav">{recruitmentNavigation[user.role].map(([label, route]) => (
                 <button key={route} onClick={()=>{navigate(route);close()}} className={`nav-item recruitment-nav-item ${path.startsWith(route)?"active":""}`}>
                   <span>{label}</span>
                 </button>
@@ -773,6 +773,7 @@ function ModernAttendanceCard() {
   const state = attendance?.state || "NOT_CHECKED_IN";
   const checkedIn = state === "CHECKED_IN";
   const completed = state === "CHECKED_OUT";
+  const pendingApproval = Boolean(attendance?.manualCheckInRequest);
   const checkInTime = attendance?.checkIn?.time ? new Date(attendance.checkIn.time) : null;
   const checkOutTime = attendance?.checkOut?.time ? new Date(attendance.checkOut.time) : null;
   const durationSeconds = checkInTime ? Math.max(0, Math.floor(((checkOutTime || now) - checkInTime) / 1000)) : 0;
@@ -784,13 +785,14 @@ function ModernAttendanceCard() {
   const office = attendance?.checkIn?.officeName || (selectedMode === "office" ? "Configured office" : selectedMode.replaceAll("_", " "));
   return <>
     <section className={`card attendance-card attendance-state-${state.toLowerCase()}`}>
-      <div className="card-heading"><div><p className="eyebrow">Today&apos;s attendance</p><h2>{shift.name}</h2></div><span className={`status ${state === "NOT_CHECKED_IN" ? "neutral" : "present"}`}><i/>{completed ? "Day completed" : checkedIn ? "Checked in" : "Not checked in"}</span></div>
+      <div className="card-heading"><div><p className="eyebrow">Today&apos;s attendance</p><h2>{shift.name}</h2></div><span className={`status ${state === "NOT_CHECKED_IN" ? "neutral" : "present"}`}><i/>{completed ? "Day completed" : checkedIn ? "Checked in" : pendingApproval ? "Approval pending" : "Not checked in"}</span></div>
       <div className="shift-row"><div className="shift-icon"><CalendarDays size={19}/></div><div><span>Shift timing</span><strong>{shift.startTime} – {shift.endTime}</strong><small>{office}</small></div></div>
-      {error ? <div className="attendance-error" role="alert">{error}</div> : state === "NOT_CHECKED_IN" ? <div className="clock-block"><p className="clock-label">Current time</p><div className="live-time">{now.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div><p className="clock-note">You haven&apos;t checked in yet.</p></div> : <div className="attendance-live-layout"><div className="duration-ring" style={{"--progress":`${progress * 3.6}deg`}}><div><strong>{durationClock(durationSeconds)}</strong><span>{completed ? "Total working" : "Working duration"}</span></div></div><dl className="attendance-facts"><div><dt>Check-In</dt><dd>{checkInTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "Unavailable"}</dd></div><div><dt>Check-Out</dt><dd>{checkOutTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "In progress"}</dd></div><div><dt>Office</dt><dd>{office}</dd></div><div><dt>Location</dt><dd>{attendance?.checkIn?.distanceMeters != null ? `Verified · ${attendance.checkIn.distanceMeters}m` : "Verified"}</dd></div><div><dt>Face</dt><dd>Verified</dd></div><div><dt>Shift progress</dt><dd>{progress}%</dd></div></dl></div>}
+      {error ? <div className="attendance-error" role="alert">{error}</div> : state === "NOT_CHECKED_IN" ? <div className="clock-block"><p className="clock-label">Current time</p><div className="live-time">{now.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div><p className="clock-note">You haven&apos;t checked in yet.</p></div> : <div className="attendance-live-layout"><div className="duration-ring" style={{"--progress":`${progress * 3.6}deg`}}><div><strong>{durationClock(durationSeconds)}</strong><span>{completed ? "Total working" : "Working duration"}</span></div></div><dl className="attendance-facts"><div><dt>Check-In</dt><dd>{checkInTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "Unavailable"}</dd></div><div><dt>Check-Out</dt><dd>{checkOutTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "In progress"}</dd></div><div><dt>Office</dt><dd>{office}</dd></div><div><dt>Location</dt><dd>{attendance?.checkIn?.distanceMeters != null ? `Verified · ${attendance.checkIn.distanceMeters}m` : "Verified"}</dd></div><div><dt>Face</dt><dd>{attendance?.checkIn?.source === "manual_approval" ? "HR approved" : "Verified"}</dd></div><div><dt>Shift progress</dt><dd>{progress}%</dd></div></dl></div>}
       {attendance?.checkoutType === "AUTO_CHECKOUT" && <div className="auto-checkout-banner"><strong>Your previous attendance session was automatically closed.</strong><span>Request an attendance correction if the recorded effective hours are inaccurate.</span></div>}
+      {pendingApproval && <div className="late-policy-banner"><strong>Manual check-in awaiting approval</strong><span>HR or Admin will review the captured selfie and original attempt time. You will be notified after a decision.</span></div>}
       {attendance?.late?.isLate && <div className="late-policy-banner"><strong>{attendance.late.halfDayPenaltyApplied ? "Half-Day Penalty Applied" : "Late Arrival"}</strong><span>{attendance.late.lateMinutes} minutes late · Monthly count: {attendance.late.monthlyLateCount}</span></div>}
-      {!checkedIn && !completed && availableModes.length > 1 && <div className="attendance-mode-picker" aria-label="Attendance mode">{availableModes.map(item=><button key={item} className={selectedMode===item?'active':''} onClick={()=>setSelectedMode(item)}>{item==='office'?'Office':item==='wfh'?'Work from home':item==='client_location'?'Client location':'Field visit'}</button>)}</div>}
-      {!completed && !error && <button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out" : `Check In · ${selectedMode==='office'?'Office':selectedMode.replaceAll('_',' ')}`}<ChevronRight size={17}/></button>}
+      {!pendingApproval && !checkedIn && !completed && availableModes.length > 1 && <div className="attendance-mode-picker" aria-label="Attendance mode">{availableModes.map(item=><button key={item} className={selectedMode===item?'active':''} onClick={()=>setSelectedMode(item)}>{item==='office'?'Office':item==='wfh'?'Work from home':item==='client_location'?'Client location':'Field visit'}</button>)}</div>}
+      {!pendingApproval && !completed && !error && <button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out" : `Check In · ${selectedMode==='office'?'Office':selectedMode.replaceAll('_',' ')}`}<ChevronRight size={17}/></button>}
       {completed && <button className="full-link" onClick={() => navigate("/attendance")}>View attendance details <ChevronRight size={15}/></button>}
       <div className="requirements"><span><CheckCircle2 size={14}/>Location required</span><span><CheckCircle2 size={14}/>Face verification required</span></div>
     </section>
