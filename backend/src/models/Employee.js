@@ -36,6 +36,19 @@ const employeeSchema = new mongoose.Schema({
   },
   manager: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  probation: {
+    durationMonths: { type: Number, min: 0, max: 24, default: 3 },
+    expectedEndDate: { type: Date, default: null },
+    confirmationStatus: { type: String, enum: ['in_probation', 'pending_confirmation', 'confirmed', 'extended'], default: 'in_probation', index: true },
+    confirmedAt: { type: Date, default: null },
+    confirmedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    confirmationNote: { type: String, trim: true, maxLength: 500, default: '' },
+  },
+  leavePlan: {
+    annualPaidLeaves: { type: Number, min: 0, max: 60, default: 18 },
+    cycleStartMonth: { type: Number, min: 1, max: 12, default: 4 },
+    accrualMode: { type: String, enum: ['monthly_1_5', 'grant_on_confirmation'], default: 'grant_on_confirmation' },
+  },
 }, { timestamps: true })
 
 employeeSchema.index({ firstName: 'text', lastName: 'text', employeeCode: 'text', officialEmail: 'text' })

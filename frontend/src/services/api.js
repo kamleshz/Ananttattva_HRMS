@@ -113,10 +113,13 @@ export const employeeApi = {
   getBiometrics: (id) => api(`/employees/${id}/biometrics`),
   updateBiometrics: (id, data) =>
     api(`/employees/${id}/biometrics`, { method: "PUT", body: JSON.stringify(data) }),
+  confirmProbation: (id, data) =>
+    api(`/employees/${id}/confirm-probation`, { method: "PATCH", body: JSON.stringify(data) }),
 };
 export const leaveApi = {
+  balance: () => api('/leaves/balance'),
   list: (scope = "mine") =>
-    api(`/leaves${scope === "all" ? "?scope=all" : ""}`),
+    api(`/leaves${scope === "mine" ? "" : `?scope=${scope}`}`),
   create: (data) =>
     api("/leaves", { method: "POST", body: JSON.stringify(data) }),
   review: (id, decision, reviewNote = "") =>

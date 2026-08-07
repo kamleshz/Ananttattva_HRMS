@@ -929,7 +929,7 @@ export default function App() {
     "/": <HomePage user={user} dashboard={dashboard} />,
     "/my-space": <MySpacePage />,
     "/attendance": <AttendancePage user={user} />,
-    "/leave": <LeavePage />,
+    "/leave": <LeavePage user={user} />,
     "/requests": <RequestsPage user={user} />,
     "/people": <PeoplePage user={user} />,
     "/organization-chart": <OrganizationChartPage />,
@@ -942,7 +942,7 @@ export default function App() {
   const editEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/edit$/);
   const activePage =
     editEmployeeMatch ? (
-      <EmployeeEditPage employeeId={editEmployeeMatch[1]} />
+      <EmployeeEditPage employeeId={editEmployeeMatch[1]} user={user} />
     ) : biometricEmployeeMatch ? (
       <EmployeeBiometricPage employeeId={biometricEmployeeMatch[1]} />
     ) : location.pathname.startsWith("/recruitment") ||

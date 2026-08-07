@@ -172,6 +172,85 @@ export async function sendFaceCheckInDecision({recipient,firstName,decision,atte
   return sendGraphEmail({recipient,subject:`Manual check-in ${decision}`,html})
 }
 
+function companyEmailTemplate({ greeting, summary, details = [], actionLabel, actionUrl, footer }) {
+  const rows = details.map(({ label, value }) => `<tr><td style="font-size:13px;color:#64748b;padding:6px 10px 6px 0;vertical-align:top;width:170px">${escapeHtml(label)}</td><td style="font-size:14px;color:#0f172a;padding:6px 0;vertical-align:top">${escapeHtml(String(value))}</td></tr>`).join('')
+  const button = actionUrl ? `<a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#0f766e;color:#fff;text-decoration:none;font-weight:600;letter-spacing:-0.01em">${escapeHtml(actionLabel)}</a>` : ''
+  return `
+    <div style="font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f8fafc;padding:24px;color:#0f172a">
+      <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden">
+        <div style="background:linear-gradient(90deg,#0f766e,#0ea5e9);padding:22px 24px;color:#fff">
+          <div style="font-size:12px;letter-spacing:0.14em;opacity:0.9;text-transform:uppercase;margin-bottom:6px">AT Connect</div>
+          <h1 style="font-size:18px;margin:0;font-weight:600">${escapeHtml(greeting)}</h1>
+        </div>
+        <div style="padding:22px 24px 8px">
+          <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#334155">${escapeHtml(summary)}</p>
+          <table style="width:100%;border-collapse:collapse;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px">${rows}</table>
+          <div style="margin:16px 0 4px">${button}</div>
+        </div>
+        <div style="padding:12px 24px 22px;font-size:12px;color:#64748b;line-height:1.55">${escapeHtml(footer)}</div>
+      </div>
+    </div>`
+}
+
+export async function sendLeaveApprovalRequest({ recipient, reviewerName, employeeName, employeeCode, leaveType, startDate, endDate, days, reason, stepLabel, longLeave }) {
+  const base = env.clientUrl.replace(/\/$/, '')
+  const details = [
+    { label: 'Employee', value: `${employeeName} (${employeeCode})` },
+    { label: 'Leave type', value: leaveType },
+    { label: 'Dates', value: `${startDate} – ${endDate}` },
+    { label: 'Working days', value: `${days} day${days === 1 ? '' : 's'}` },
+    ...(longLeave ? [{ label: 'Approval chain', value: stepLabel }] : []),
+    { label: 'Reason', value: reason },
+  ]
+  const html = companyEmailTemplate({
+    greeting: `Leave request awaiting your review`,
+    summary: `${escapeHtml(reviewerName || 'Reviewer')}, a new leave request requires your approval in AT Connect.`,
+    details,
+    actionLabel: 'Review request',
+    actionUrl: `${base}/leave`,
+    footer: 'Approve only after verifying leave balance and handoff coverage with the employee.',
+  })
+  return sendGraphEmail({ recipient, subject: `Leave approval: ${employeeName} (${days}d)`, html })
+}
+
+export async function sendLeaveDecision({ recipient, firstName, decision, leaveType, startDate, endDate, reviewerName, reviewNote }) {
+  const base = env.clientUrl.replace(/\/$/, '')
+  const details = [
+    { label: 'Decision', value: decision },
+    { label: 'Leave type', value: leaveType },
+    { label: 'Dates', value: `${startDate} – ${endDate}` },
+    { label: 'Reviewed by', value: reviewerName || 'AT Connect reviewer' },
+    ...(reviewNote ? [{ label: 'Review note', value: reviewNote }] : []),
+  ]
+  const html = companyEmailTemplate({
+    greeting: `Your leave request was ${decision}`,
+    summary: `${escapeHtml(firstName)}, here is an update on the leave application you submitted.`,
+    details,
+    actionLabel: 'View leave details',
+    actionUrl: `${base}/leave`,
+    footer: 'Reach out to your manager or HR if you have questions about this decision.',
+  })
+  return sendGraphEmail({ recipient, subject: `Leave ${decision} for ${startDate} to ${endDate}`, html })
+}
+
+export async function sendProbationConfirmation({ recipient, firstName, employeeCode, confirmedAt, reviewNote }) {
+  const base = env.clientUrl.replace(/\/$/, '')
+  const details = [
+    { label: 'Employee', value: `${firstName} (${employeeCode})` },
+    { label: 'Confirmed on', value: confirmedAt },
+    ...(reviewNote ? [{ label: 'Note from HR', value: reviewNote }] : []),
+  ]
+  const html = companyEmailTemplate({
+    greeting: 'Your probation has been confirmed',
+    summary: `${escapeHtml(firstName)}, HR has confirmed your probation. Paid leave eligibility is now active for the remainder of the financial year.`,
+    details,
+    actionLabel: 'Open My Space',
+    actionUrl: `${base}/my-space`,
+    footer: 'Paid leaves are prorated from the confirmation month through the end of the financial year.',
+  })
+  return sendGraphEmail({ recipient, subject: 'Probation confirmed', html })
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[character])
 }

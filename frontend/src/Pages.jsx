@@ -740,17 +740,49 @@ function PhotoViewer({ photo, close }) {
   );
 }
 
-function LeaveDrawer({ close, saved }) {
+function LeaveDrawer({ close, saved, balance }) {
+  const defaultLeaveType = balance?.plan?.canApplyPaidLeave ? "paid_leave" : "unpaid_leave";
   const [form, setForm] = useState({
-      leaveType: "casual",
+      leaveType: defaultLeaveType,
       startDate: "",
       endDate: "",
       reason: "",
     }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const canApplyPaid = Boolean(balance?.plan?.canApplyPaidLeave);
+  const workingDays = useMemo(() => {
+    if (!form.startDate || !form.endDate) return 0;
+    const s = new Date(form.startDate); const e = new Date(form.endDate);
+    if (e < s) return 0;
+    let count = 0; const cur = new Date(s);
+    while (cur <= e) { const d = cur.getDay(); if (d !== 0 && d !== 6) count += 1; cur.setDate(cur.getDate() + 1); }
+    return count;
+  }, [form.startDate, form.endDate]);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const startDateObj = form.startDate ? new Date(form.startDate) : null;
+  const calendarNoticeDays = startDateObj ? Math.max(0, Math.ceil((startDateObj - today) / (1000 * 60 * 60 * 24))) : 0;
+  const isLongLeave = workingDays >= 4;
+  const longLeaveNoticeOk = !isLongLeave || calendarNoticeDays >= 10;
+  const approvalChain = useMemo(() => isLongLeave ? ["Manager", "HR", "Super Admin"] : ["Manager", "HR"], [isLongLeave]);
+  const paymentPreview = useMemo(() => {
+    const mode = form.leaveType === "unpaid_leave" ? "unpaid" : "paid";
+    if (mode === "unpaid") return { mode: "unpaid", paid: 0, unpaid: workingDays };
+    const available = Number(balance?.paidAvailable || 0);
+    const paid = Math.min(available, workingDays);
+    const unpaid = Math.max(0, workingDays - paid);
+    return { mode: unpaid === workingDays ? "unpaid" : paid === workingDays ? "paid" : "partially_paid", paid, unpaid };
+  }, [workingDays, form.leaveType, balance]);
   async function submit(event) {
     event.preventDefault();
+    if (form.leaveType === "paid_leave" && !canApplyPaid) {
+      setError("Paid leaves are locked until your probation is confirmed. Please select unpaid leave.");
+      return;
+    }
+    if (isLongLeave && !longLeaveNoticeOk) {
+      setError(`4+ working days require applying at least 10 days in advance. You are ${10 - calendarNoticeDays} day(s) short.`);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -765,16 +797,25 @@ function LeaveDrawer({ close, saved }) {
   return (
     <div className="drawer-layer">
       <button className="drawer-backdrop" onClick={close} />
-      <aside className="form-drawer">
+      <aside className="form-drawer leave-drawer">
         <div className="drawer-heading">
           <div>
             <p className="eyebrow">New request</p>
             <h2>Apply for leave</h2>
           </div>
-          <button onClick={close}>
-            <X size={20} />
-          </button>
+          <button onClick={close} aria-label="Close"><X size={20} /></button>
         </div>
+
+        {!canApplyPaid && (
+          <div className="leave-policy-banner probation-banner">
+            <Clock3 size={16} />
+            <div>
+              <strong>Paid leave eligibility</strong>
+              <span>{balance?.plan?.blockedReason || "Paid leaves unlock once HR confirms your probation. You can still apply for unpaid leave."}</span>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={submit}>
           <label>
             Leave type
@@ -782,10 +823,8 @@ function LeaveDrawer({ close, saved }) {
               value={form.leaveType}
               onChange={(e) => setForm({ ...form, leaveType: e.target.value })}
             >
-              <option value="casual">Casual leave</option>
-              <option value="sick">Sick leave</option>
-              <option value="earned">Earned leave</option>
-              <option value="unpaid">Unpaid leave</option>
+              <option value="paid_leave" disabled={!canApplyPaid}>Paid leave ({balance?.paidAvailable ?? 0} available)</option>
+              <option value="unpaid_leave">Unpaid leave</option>
             </select>
           </label>
           <div className="form-row">
@@ -795,9 +834,8 @@ function LeaveDrawer({ close, saved }) {
                 type="date"
                 required
                 value={form.startDate}
-                onChange={(e) =>
-                  setForm({ ...form, startDate: e.target.value })
-                }
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setForm({ ...form, startDate: e.target.value })}
               />
             </label>
             <label>
@@ -806,10 +844,50 @@ function LeaveDrawer({ close, saved }) {
                 type="date"
                 required
                 value={form.endDate}
+                min={form.startDate || new Date().toISOString().slice(0, 10)}
                 onChange={(e) => setForm({ ...form, endDate: e.target.value })}
               />
             </label>
           </div>
+
+          {(workingDays > 0 || form.startDate) && (
+            <div className="leave-preview-card">
+              <div className="leave-preview-row">
+                <span>Working days</span>
+                <strong>{workingDays} day{workingDays === 1 ? "" : "s"}</strong>
+              </div>
+              <div className="leave-preview-row">
+                <span>Payment split</span>
+                <strong>
+                  {paymentPreview.paid > 0 && `${paymentPreview.paid} paid`}
+                  {paymentPreview.unpaid > 0 && `${paymentPreview.paid ? " · " : ""}${paymentPreview.unpaid} unpaid`}
+                  {!paymentPreview.paid && !paymentPreview.unpaid && "—"}
+                </strong>
+              </div>
+              <div className="leave-preview-row">
+                <span>Advance notice</span>
+                <strong className={isLongLeave && !longLeaveNoticeOk ? "error" : ""}>
+                  {calendarNoticeDays} day{calendarNoticeDays === 1 ? "" : "s"}
+                </strong>
+              </div>
+              <div className="leave-preview-row approval-chain-row">
+                <span>Approval chain</span>
+                <div className="approval-chain">
+                  {approvalChain.map((role, idx) => (
+                    <span key={role} className={`chain-step ${idx === 0 ? "current" : ""}`}>
+                      {role}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {isLongLeave && !longLeaveNoticeOk && (
+                <p className="leave-rule-error">
+                  4+ leaves must be applied 10 days before. Your leave starts in {calendarNoticeDays} day(s).
+                </p>
+              )}
+            </div>
+          )}
+
           <label>
             Reason
             <textarea
@@ -818,14 +896,12 @@ function LeaveDrawer({ close, saved }) {
               rows="5"
               value={form.reason}
               onChange={(e) => setForm({ ...form, reason: e.target.value })}
-              placeholder="Tell your manager why you need time away."
+              placeholder="Tell your manager why you need time away, plus coverage plan if possible."
             />
           </label>
           {error && <StateMessage error>{error}</StateMessage>}
           <div className="drawer-actions">
-            <button type="button" className="secondary-button" onClick={close}>
-              Cancel
-            </button>
+            <button type="button" className="secondary-button" onClick={close}>Cancel</button>
             <button className="primary-button" disabled={busy}>
               {busy ? "Submitting…" : "Submit request"}
             </button>
@@ -836,19 +912,163 @@ function LeaveDrawer({ close, saved }) {
   );
 }
 
-export function LeavePage() {
+function LeaveRequestCard({ item, currentUser, onReview }) {
+  const canReview = ["super_admin", "hr_admin", "manager"].includes(currentUser?.role);
+  const pending = item.status === "pending";
+  const nextRole = item.workflow?.nextRole;
+  const isMyTurn = (
+    pending && (
+      (currentUser?.role === "manager" && nextRole === "manager") ||
+      (currentUser?.role === "hr_admin" && nextRole === "hr_admin") ||
+      (currentUser?.role === "super_admin" && (nextRole === "super_admin" || !nextRole))
+    )
+  );
+  const [note, setNote] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(null);
+  async function review(decision) {
+    if (decision === "reject" && note.trim().length < 3) {
+      alert("A rejection reason is required.");
+      return;
+    }
+    setReviewBusy(decision);
+    try {
+      await onReview(item._id, decision, note);
+      setNote("");
+    } finally {
+      setReviewBusy(null);
+    }
+  }
+  const leaveTypeLabel = item.leaveType === "paid_leave" ? "Paid leave" : item.leaveType === "unpaid_leave" ? "Unpaid leave" : capitalize(item.leaveType);
+  const payments = item.payments || {};
+  const workflowSteps = item.workflow?.steps || [];
+  const requiredSteps = item.workflow?.requiredSteps || [];
+  const employeeName = item.employee ? `${item.employee.firstName} ${item.employee.lastName}` : "";
+  return (
+    <article className="leave-request-card">
+      <header className="leave-card-header">
+        <div className="leave-card-left">
+          <span className={`request-icon ${item.leaveType === "unpaid_leave" ? "unpaid" : ""}`}>
+            <Plane size={17} />
+          </span>
+          <div>
+            <strong>{leaveTypeLabel}</strong>
+            {employeeName && <small>by {employeeName}</small>}
+            <span>
+              {formatDate(item.startDate)} – {formatDate(item.endDate)} · {item.workingDays || item.days} working day{(item.workingDays || item.days) === 1 ? "" : "s"}
+            </span>
+          </div>
+        </div>
+        <div className="leave-card-right">
+          <StatusBadge status={item.status} />
+          {item.policySnapshot?.longLeave?.isLongLeave && (
+            <span className="soft-badge purple">Long leave · 3-level</span>
+          )}
+        </div>
+      </header>
+
+      <div className="leave-card-body">
+        <p className="leave-reason">{item.reason}</p>
+
+        {(payments.paidDays || payments.unpaidDays) && (
+          <div className="leave-payment-strip">
+            {payments.paidDays > 0 && <span><i className="paid-dot" /> {payments.paidDays} paid</span>}
+            {payments.unpaidDays > 0 && <span><i className="unpaid-dot" /> {payments.unpaidDays} unpaid</span>}
+            <span className="balance-note">Balance: {payments.balanceAfter ?? "—"} left</span>
+          </div>
+        )}
+
+        {requiredSteps.length > 0 && (
+          <div className="workflow-timeline">
+            {requiredSteps.map((role, idx) => {
+              const step = workflowSteps.find(s => s.role === role) || { status: "pending" };
+              const label = { manager: "Manager", hr_admin: "HR", super_admin: "Super Admin" }[role] || capitalize(role);
+              return (
+                <div key={role} className={`wf-step wf-${step.status}`}>
+                  <i className={`wf-dot ${step.status}`} />
+                  <span className="wf-label">{label}</span>
+                  {idx < requiredSteps.length - 1 && <span className="wf-connector" />}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {pending && nextRole && (
+          <p className="next-approver-line">
+            Next: <strong>{nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR Admin" : "Super Admin"}</strong>
+          </p>
+        )}
+
+        {(item.reviewNote && (item.status === "approved" || item.status === "rejected")) && (
+          <blockquote className="review-note-box">{item.reviewNote}</blockquote>
+        )}
+      </div>
+
+      {canReview && isMyTurn && (
+        <footer className="leave-card-actions">
+          <textarea
+            rows="2"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Add a comment (required when rejecting)"
+          />
+          <div className="action-buttons-row">
+            <button className="reject-button" disabled={Boolean(reviewBusy)} onClick={() => review("reject")}>
+              {reviewBusy === "reject" ? "Rejecting…" : "Reject"}
+            </button>
+            <button className="approve-button" disabled={Boolean(reviewBusy)} onClick={() => review("approve")}>
+              <Check size={14} /> {reviewBusy === "approve" ? "Approving…" : "Approve"}
+            </button>
+          </div>
+        </footer>
+      )}
+    </article>
+  );
+}
+
+export function LeavePage({ user }) {
   const [requests, setRequests] = useState([]),
+    [balance, setBalance] = useState(null),
     [drawer, setDrawer] = useState(false),
-    [loading, setLoading] = useState(true);
-  useEffect(() => {
-    leaveApi
-      .list()
-      .then(setRequests)
-      .finally(() => setLoading(false));
-  }, []);
+    [scope, setScope] = useState("mine"),
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState("");
+  const canReview = ["super_admin", "hr_admin", "manager"].includes(user?.role);
+  const scopes = useMemo(() => {
+    const items = [{ value: "mine", label: "My leave" }];
+    if (user?.role === "manager") items.push({ value: "team", label: "Team" });
+    if (["hr_admin", "super_admin"].includes(user?.role)) {
+      items.push({ value: "approvals", label: "Approvals" });
+      items.push({ value: "all", label: "All" });
+    }
+    return items;
+  }, [user?.role]);
+  function load() {
+    setLoading(true);
+    setError("");
+    Promise.all([
+      leaveApi.balance().catch(e => { setError(e.message); return null; }),
+      leaveApi.list(scope).catch(e => { setError(e.message); return []; }),
+    ]).then(([b, r]) => {
+      if (b) setBalance(b);
+      if (Array.isArray(r)) setRequests(r);
+    }).finally(() => setLoading(false));
+  }
+  useEffect(() => { load(); }, [scope]);
+  async function review(id, decision, reviewNote) {
+    try {
+      const updated = await leaveApi.review(id, decision, reviewNote);
+      setRequests(value => value.map(item => item._id === id ? { ...item, ...updated } : item));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  const paidPct = balance && balance.paidEntitled > 0 ? Math.min(100, Math.round((balance.paidUsed / balance.paidEntitled) * 100)) : 0;
+  const probationConfirmed = Boolean(balance?.probation?.confirmationStatus === "confirmed");
   return (
     <>
       <PageHeader
+        eyebrow="Time off"
         title="Leave"
         description="Plan time away and track your leave applications."
         action={
@@ -857,42 +1077,65 @@ export function LeavePage() {
           </button>
         }
       />
+
+      {scopes.length > 1 && (
+        <div className="leave-scope-tabs">
+          {scopes.map(tab => (
+            <button key={tab.value} className={scope === tab.value ? "active" : ""} onClick={() => setScope(tab.value)}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!probationConfirmed && balance && (
+        <div className="probation-notice-card">
+          <Clock3 size={18} />
+          <div>
+            <strong>Probation in progress</strong>
+            <span>{balance.plan?.blockedReason || "Your paid leave balance unlocks once HR confirms your probation."}</span>
+          </div>
+        </div>
+      )}
+
       <div className="leave-balances">
         <div>
-          <span className="balance-icon teal">
-            <Plane size={18} />
-          </span>
-          <span>Casual leave</span>
+          <span className="balance-icon teal"><Plane size={18} /></span>
+          <span>Paid leave {balance?.plan?.fyLabel ? `· ${balance.plan.fyLabel}` : ""}</span>
           <strong>
-            8 <small>days</small>
+            {balance?.paidAvailable ?? 0} <small>days</small>
           </strong>
+          <div className="balance-meter">
+            <i style={{ width: `${paidPct}%` }} />
+          </div>
+          <small>Used {balance?.paidUsed ?? 0} · Entitled {balance?.paidEntitled ?? 0}</small>
         </div>
         <div>
-          <span className="balance-icon purple">
-            <FileText size={18} />
-          </span>
-          <span>Sick leave</span>
+          <span className="balance-icon purple"><FileText size={18} /></span>
+          <span>Unpaid leave taken</span>
           <strong>
-            6 <small>days</small>
+            {balance?.unpaidApprovedCount ?? 0} <small>request(s)</small>
           </strong>
+          <small style={{ visibility: "hidden" }}>—</small>
         </div>
         <div>
-          <span className="balance-icon amber">
-            <CalendarDays size={18} />
-          </span>
-          <span>Earned leave</span>
-          <strong>
-            13 <small>days</small>
+          <span className="balance-icon amber"><UsersRound size={18} /></span>
+          <span>Reporting to</span>
+          <strong style={{ fontSize: 14 }}>
+            {balance?.manager ? `${balance.manager.firstName} ${balance.manager.lastName}` : "Not assigned"}
           </strong>
+          {balance?.manager && <small>{balance.manager.employeeCode}</small>}
         </div>
       </div>
+
       <section className="content-card">
         <div className="section-heading">
           <div>
             <p className="eyebrow">History</p>
-            <h2>My leave requests</h2>
+            <h2>{scope === "mine" ? "My leave requests" : scope === "team" ? "Team leave requests" : scope === "approvals" ? "Leave for your review" : "All leave requests"}</h2>
           </div>
         </div>
+        {error && <StateMessage error>{error}</StateMessage>}
         {loading ? (
           <StateMessage>Loading requests…</StateMessage>
         ) : requests.length === 0 ? (
@@ -900,29 +1143,27 @@ export function LeavePage() {
             No leave requests yet. Your applications will appear here.
           </StateMessage>
         ) : (
-          <div className="request-list">
+          <div className="request-list leave-cards-list">
             {requests.map((item) => (
-              <div className="request-row" key={item._id}>
-                <span className="request-icon">
-                  <Plane size={17} />
-                </span>
-                <div>
-                  <strong>{capitalize(item.leaveType)} leave</strong>
-                  <span>
-                    {formatDate(item.startDate)} – {formatDate(item.endDate)} ·{" "}
-                    {item.days} day{item.days > 1 ? "s" : ""}
-                  </span>
-                </div>
-                <StatusBadge status={item.status} />
-              </div>
+              <LeaveRequestCard
+                key={item._id}
+                item={item}
+                currentUser={user}
+                onReview={review}
+              />
             ))}
           </div>
         )}
       </section>
+
       {drawer && (
         <LeaveDrawer
+          balance={balance}
           close={() => setDrawer(false)}
-          saved={(request) => setRequests((value) => [request, ...value])}
+          saved={(request) => {
+            setRequests(value => [request, ...value]);
+            leaveApi.balance().then(setBalance).catch(() => {});
+          }}
         />
       )}
     </>
@@ -941,9 +1182,9 @@ export function RequestsPage({ user }) {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [canReview]);
-  async function review(id, decision) {
+  async function review(id, decision, note = "") {
     try {
-      const updated = await leaveApi.review(id, decision);
+      const updated = await leaveApi.review(id, decision, note);
       setRequests((value) =>
         value.map((item) => (item._id === id ? { ...item, ...updated } : item)),
       );
@@ -962,12 +1203,6 @@ export function RequestsPage({ user }) {
             : "Track the progress of requests you have submitted."
         }
       />
-      <div className="request-tabs">
-        <button className="active">All requests</button>
-        <button>Attendance</button>
-        <button>Leave</button>
-        <button>Onboarding</button>
-      </div>
       <section className="content-card request-inbox">
         {error && <StateMessage error>{error}</StateMessage>}
         {loading ? (
@@ -977,43 +1212,16 @@ export function RequestsPage({ user }) {
             You’re all caught up. There are no requests to show.
           </StateMessage>
         ) : (
-          requests.map((item) => (
-            <article className="approval-card" key={item._id}>
-              <div className="approval-avatar">
-                <UserRound size={19} />
-              </div>
-              <div className="approval-body">
-                <p className="eyebrow">Leave request</p>
-                <h3>
-                  {item.employee?.firstName} {item.employee?.lastName}
-                </h3>
-                <p>
-                  {capitalize(item.leaveType)} leave ·{" "}
-                  {formatDate(item.startDate)} – {formatDate(item.endDate)}
-                </p>
-                <blockquote>{item.reason}</blockquote>
-              </div>
-              <div className="approval-side">
-                <StatusBadge status={item.status} />
-                {canReview && item.status === "pending" && (
-                  <div>
-                    <button
-                      className="reject-button"
-                      onClick={() => review(item._id, "reject")}
-                    >
-                      Reject
-                    </button>
-                    <button
-                      className="approve-button"
-                      onClick={() => review(item._id, "approve")}
-                    >
-                      <Check size={14} /> Approve
-                    </button>
-                  </div>
-                )}
-              </div>
-            </article>
-          ))
+          <div className="request-list leave-cards-list">
+            {requests.map((item) => (
+              <LeaveRequestCard
+                key={item._id}
+                item={item}
+                currentUser={user}
+                onReview={review}
+              />
+            ))}
+          </div>
         )}
       </section>
     </>
@@ -1117,20 +1325,282 @@ export function PeoplePage({ user }) {
   );
 }
 
-export function EmployeeEditPage({ employeeId }) {
-  const navigate=useNavigate();
-  const [form,setForm]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  useEffect(()=>{employeeApi.get(employeeId).then(employee=>setForm({...employee,dateOfBirth:employee.dateOfBirth?new Date(employee.dateOfBirth).toISOString().slice(0,10):"",joiningDate:employee.joiningDate?new Date(employee.joiningDate).toISOString().slice(0,10):"",gender:employee.gender||"not_specified",shift:employee.shift||{name:"General Shift",startTime:"10:00",endTime:"18:30",graceMinutes:15}})).catch(requestError=>setError(requestError.message))},[employeeId]);
-  const update=(field,value)=>setForm(current=>({...current,[field]:value}));
-  async function save(event){event.preventDefault();setBusy(true);setError("");try{await employeeApi.update(employeeId,{firstName:form.firstName,lastName:form.lastName,dateOfBirth:form.dateOfBirth||null,gender:form.gender,officialEmail:form.officialEmail,personalEmail:form.personalEmail||"",mobile:form.mobile||"",department:form.department||"General",designation:form.designation||"Employee",branch:form.branch||"Head Office",workLocation:form.workLocation||"Main Office",joiningDate:form.joiningDate,employmentType:form.employmentType,employeeStatus:form.employeeStatus,shift:{...form.shift,graceMinutes:Number(form.shift.graceMinutes)}});navigate("/people")}catch(requestError){setError(requestError.message)}finally{setBusy(false)}}
-  if(error&&!form)return <><button className="back-link" onClick={()=>navigate("/people")}><ArrowLeft size={15}/> Back to employees</button><StateMessage error>{error}</StateMessage></>;
-  if(!form)return <StateMessage>Loading employee details…</StateMessage>;
-  return <><button className="back-link" onClick={()=>navigate("/people")}><ArrowLeft size={15}/> Back to employees</button><PageHeader eyebrow="People · Employee record" title={`Edit ${form.firstName} ${form.lastName}`} description={`${form.employeeCode} · Update personal, employment and shift details.`}/><form className="onboarding-form employee-edit-form" onSubmit={save}><aside className="onboarding-steps"><div className="active"><span>01</span><div><strong>Personal details</strong><small>Identity and contact information</small></div></div><div><span>02</span><div><strong>Job details</strong><small>Employment and workplace</small></div></div><div><span>03</span><div><strong>Shift details</strong><small>Attendance schedule</small></div></div></aside><div className="onboarding-content">
-    <section className="form-section"><div className="form-section-title"><span><UserRound size={18}/></span><div><h2>Personal details</h2><p>Fields used in the employee profile and workforce dashboard.</p></div></div><div className="field-grid"><label>Employee number<input value={form.employeeCode} readOnly aria-readonly="true"/></label><label>Gender *<select required value={form.gender} onChange={e=>update("gender",e.target.value)}><option value="not_specified">Not specified</option><option value="male">Male</option><option value="female">Female</option><option value="non_binary">Non-binary</option><option value="prefer_not_to_say">Prefer not to say</option></select></label><label>First name *<input required value={form.firstName} onChange={e=>update("firstName",e.target.value)}/></label><label>Last name *<input required value={form.lastName} onChange={e=>update("lastName",e.target.value)}/></label><label>Date of birth<input type="date" max={new Date().toISOString().slice(0,10)} value={form.dateOfBirth} onChange={e=>update("dateOfBirth",e.target.value)}/></label><label>Mobile<input value={form.mobile||""} onChange={e=>update("mobile",e.target.value)}/></label><label>Official email *<input required type="email" value={form.officialEmail} onChange={e=>update("officialEmail",e.target.value)}/></label><label>Personal email<input type="email" value={form.personalEmail||""} onChange={e=>update("personalEmail",e.target.value)}/></label></div></section>
-    <section className="form-section"><div className="form-section-title"><span><BriefcaseBusiness size={18}/></span><div><h2>Job details</h2><p>Employment status and organizational information.</p></div></div><div className="field-grid"><label>Department<input value={form.department||""} onChange={e=>update("department",e.target.value)}/></label><label>Designation<input value={form.designation||""} onChange={e=>update("designation",e.target.value)}/></label><label>Branch<input value={form.branch||""} onChange={e=>update("branch",e.target.value)}/></label><label>Work location<input value={form.workLocation||""} onChange={e=>update("workLocation",e.target.value)}/></label><label>Joining date *<input required type="date" value={form.joiningDate} onChange={e=>update("joiningDate",e.target.value)}/></label><label>Employment type<select value={form.employmentType} onChange={e=>update("employmentType",e.target.value)}><option value="permanent">Permanent</option><option value="probation">Probation</option><option value="contract">Contract</option><option value="intern">Intern</option><option value="consultant">Consultant</option></select></label><label>Employee status<select value={form.employeeStatus} onChange={e=>update("employeeStatus",e.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option><option value="notice_period">Notice period</option><option value="resigned">Resigned</option><option value="terminated">Terminated</option></select></label></div></section>
-    <section className="form-section"><div className="form-section-title"><span><Clock3 size={18}/></span><div><h2>Shift details</h2><p>Working schedule used for attendance calculations.</p></div></div><div className="field-grid"><label>Shift name<input required value={form.shift.name} onChange={e=>update("shift",{...form.shift,name:e.target.value})}/></label><label>Grace period (minutes)<input required type="number" min="0" max="180" value={form.shift.graceMinutes} onChange={e=>update("shift",{...form.shift,graceMinutes:e.target.value})}/></label><label>Start time<input required type="time" value={form.shift.startTime} onChange={e=>update("shift",{...form.shift,startTime:e.target.value})}/></label><label>End time<input required type="time" value={form.shift.endTime} onChange={e=>update("shift",{...form.shift,endTime:e.target.value})}/></label></div></section>
-    {error&&<StateMessage error>{error}</StateMessage>}<div className="onboarding-actions"><button type="button" className="secondary-button" onClick={()=>navigate("/people")}>Cancel</button><button className="primary-button" disabled={busy}>{busy?"Saving…":"Save employee details"}</button></div>
-  </div></form></>;
+export function EmployeeEditPage({ employeeId, user }) {
+  const navigate = useNavigate();
+  const [form, setForm] = useState(null);
+  const [managers, setManagers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmModal, setConfirmModal] = useState(false);
+  const [confirmForm, setConfirmForm] = useState({ reviewNote: "", confirmationDate: new Date().toISOString().slice(0, 10), updateEmploymentType: true });
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    Promise.all([employeeApi.get(employeeId), employeeApi.list()])
+      .then(([employee, list]) => {
+        setForm({
+          ...employee,
+          dateOfBirth: employee.dateOfBirth ? new Date(employee.dateOfBirth).toISOString().slice(0, 10) : "",
+          joiningDate: employee.joiningDate ? new Date(employee.joiningDate).toISOString().slice(0, 10) : "",
+          gender: employee.gender || "not_specified",
+          shift: employee.shift || { name: "General Shift", startTime: "10:00", endTime: "18:30", graceMinutes: 15 },
+          probation: employee.probation || { durationMonths: 3, expectedEndDate: null, confirmationStatus: "in_probation", confirmedAt: null, confirmationNote: "" },
+          leavePlan: employee.leavePlan || { annualPaidLeaves: 18, cycleStartMonth: 4, accrualMode: "grant_on_confirmation" },
+          manager: employee.manager ? (typeof employee.manager === "object" ? employee.manager._id : employee.manager) : "",
+        });
+        setManagers(list.filter(item => String(item._id) !== String(employeeId)));
+      })
+      .catch(requestError => setError(requestError.message));
+  }, [employeeId]);
+  const update = (field, value) => setForm(current => ({ ...current, [field]: value }));
+  const updateNested = (root, field, value) => setForm(current => ({ ...current, [root]: { ...current[root], [field]: value } }));
+  const confirmProbationStatus = employeeApi && employeeApi.confirmProbation;
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const payload = {
+        firstName: form.firstName,
+        lastName: form.lastName,
+        dateOfBirth: form.dateOfBirth || null,
+        gender: form.gender,
+        officialEmail: form.officialEmail,
+        personalEmail: form.personalEmail || "",
+        mobile: form.mobile || "",
+        department: form.department || "General",
+        designation: form.designation || "Employee",
+        branch: form.branch || "Head Office",
+        workLocation: form.workLocation || "Main Office",
+        joiningDate: form.joiningDate,
+        employmentType: form.employmentType,
+        employeeStatus: form.employeeStatus,
+        manager: form.manager || null,
+        probation: form.probation,
+        leavePlan: form.leavePlan,
+        shift: { ...form.shift, graceMinutes: Number(form.shift.graceMinutes) },
+      };
+      await employeeApi.update(employeeId, payload);
+      navigate("/people");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function confirmProbation() {
+    setConfirming(true);
+    setError("");
+    try {
+      const updated = await employeeApi.confirmProbation(employeeId, confirmForm);
+      setForm(current => ({ ...current, probation: updated.probation, employmentType: updated.employmentType }));
+      setConfirmModal(false);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setConfirming(false);
+    }
+  }
+  if (error && !form) return <><button className="back-link" onClick={() => navigate("/people")}><ArrowLeft size={15} /> Back to employees</button><StateMessage error>{error}</StateMessage></>;
+  if (!form) return <StateMessage>Loading employee details…</StateMessage>;
+  const probationStatus = form.probation?.confirmationStatus || "in_probation";
+  const confirmed = probationStatus === "confirmed";
+  const canConfirm = ["super_admin", "hr_admin"].includes(user?.role) && !confirmed && confirmProbationStatus;
+  const selectedManager = typeof form.manager === "object" ? form.manager?._id : form.manager;
+  return (
+    <>
+      <button className="back-link" onClick={() => navigate("/people")}>
+        <ArrowLeft size={15} /> Back to employees
+      </button>
+      <PageHeader
+        eyebrow="People · Employee record"
+        title={`Edit ${form.firstName} ${form.lastName}`}
+        description={`${form.employeeCode} · Update personal, employment and shift details.`}
+      />
+      <form className="onboarding-form employee-edit-form" onSubmit={save}>
+        <aside className="onboarding-steps">
+          <div className="active"><span>01</span><div><strong>Personal details</strong><small>Identity and contact information</small></div></div>
+          <div><span>02</span><div><strong>Job & Manager</strong><small>Reporting, role, probation</small></div></div>
+          <div><span>03</span><div><strong>Shift & Leave plan</strong><small>Schedule and benefits</small></div></div>
+        </aside>
+        <div className="onboarding-content">
+          <section className="form-section">
+            <div className="form-section-title">
+              <span><UserRound size={18} /></span>
+              <div><h2>Personal details</h2><p>Fields used in the employee profile and workforce dashboard.</p></div>
+            </div>
+            <div className="field-grid">
+              <label>Employee number<input value={form.employeeCode} readOnly aria-readonly="true" /></label>
+              <label>Gender *
+                <select required value={form.gender} onChange={e => update("gender", e.target.value)}>
+                  <option value="not_specified">Not specified</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="non_binary">Non-binary</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
+                </select>
+              </label>
+              <label>First name *<input required value={form.firstName} onChange={e => update("firstName", e.target.value)} /></label>
+              <label>Last name *<input required value={form.lastName} onChange={e => update("lastName", e.target.value)} /></label>
+              <label>Date of birth<input type="date" max={new Date().toISOString().slice(0, 10)} value={form.dateOfBirth} onChange={e => update("dateOfBirth", e.target.value)} /></label>
+              <label>Mobile<input value={form.mobile || ""} onChange={e => update("mobile", e.target.value)} /></label>
+              <label>Official email *<input required type="email" value={form.officialEmail} onChange={e => update("officialEmail", e.target.value)} /></label>
+              <label>Personal email<input type="email" value={form.personalEmail || ""} onChange={e => update("personalEmail", e.target.value)} /></label>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-title">
+              <span><BriefcaseBusiness size={18} /></span>
+              <div><h2>Job & Manager</h2><p>Reporting structure and employment configuration.</p></div>
+            </div>
+            <div className="field-grid">
+              <label>Department<input value={form.department || ""} onChange={e => update("department", e.target.value)} /></label>
+              <label>Designation<input value={form.designation || ""} onChange={e => update("designation", e.target.value)} /></label>
+              <label>Branch<input value={form.branch || ""} onChange={e => update("branch", e.target.value)} /></label>
+              <label>Work location<input value={form.workLocation || ""} onChange={e => update("workLocation", e.target.value)} /></label>
+              <label>Joining date *<input required type="date" value={form.joiningDate} onChange={e => update("joiningDate", e.target.value)} /></label>
+              <label>Employment type
+                <select value={form.employmentType} onChange={e => update("employmentType", e.target.value)}>
+                  <option value="permanent">Permanent</option>
+                  <option value="probation">Probation</option>
+                  <option value="contract">Contract</option>
+                  <option value="intern">Intern</option>
+                  <option value="consultant">Consultant</option>
+                </select>
+              </label>
+              <label>Employee status
+                <select value={form.employeeStatus} onChange={e => update("employeeStatus", e.target.value)}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="notice_period">Notice period</option>
+                  <option value="resigned">Resigned</option>
+                  <option value="terminated">Terminated</option>
+                </select>
+              </label>
+              <label>Reporting manager
+                <select value={selectedManager || ""} onChange={e => update("manager", e.target.value || null)}>
+                  <option value="">No manager assigned</option>
+                  {managers.map(m => (
+                    <option key={m._id} value={m._id}>
+                      {m.firstName} {m.lastName} · {m.designation || "Employee"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
+              <div className={`probation-card ${confirmed ? "confirmed" : ""}`}>
+                <div className="probation-card-header">
+                  <div>
+                    <p className="eyebrow">Probation tracking</p>
+                    <h3>{form.probation?.durationMonths || 0} months · Ends {form.probation?.expectedEndDate ? formatDate(form.probation.expectedEndDate) : "—"}</h3>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <StatusBadge status={confirmed ? "approved" : "pending"} label={confirmed ? "Confirmed" : capitalize(probationStatus.replace("_", " "))} />
+                    {canConfirm && (
+                      <button type="button" className="primary-button" onClick={() => setConfirmModal(true)}>
+                        <Check size={14} /> Confirm probation
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="probation-meta">
+                  <div>
+                    <span>Status</span>
+                    <strong>{capitalize(probationStatus.replaceAll("_", " "))}</strong>
+                  </div>
+                  <div>
+                    <span>Confirmed on</span>
+                    <strong>{form.probation?.confirmedAt ? formatDate(form.probation.confirmedAt) : "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Confirmation note</span>
+                    <strong>{form.probation?.confirmationNote || "No notes yet."}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-title">
+              <span><Clock3 size={18} /></span>
+              <div><h2>Shift & Leave plan</h2><p>Working schedule and annual paid leave configuration.</p></div>
+            </div>
+            <div className="field-grid">
+              <label>Shift name<input required value={form.shift.name} onChange={e => updateNested("shift", "name", e.target.value)} /></label>
+              <label>Grace period (minutes)<input required type="number" min="0" max="180" value={form.shift.graceMinutes} onChange={e => updateNested("shift", "graceMinutes", e.target.value)} /></label>
+              <label>Start time<input required type="time" value={form.shift.startTime} onChange={e => updateNested("shift", "startTime", e.target.value)} /></label>
+              <label>End time<input required type="time" value={form.shift.endTime} onChange={e => updateNested("shift", "endTime", e.target.value)} /></label>
+              <label>Annual paid leaves<input type="number" min="0" max="60" value={form.leavePlan.annualPaidLeaves} onChange={e => updateNested("leavePlan", "annualPaidLeaves", Number(e.target.value))} /></label>
+              <label>FY start month
+                <select value={form.leavePlan.cycleStartMonth} onChange={e => updateNested("leavePlan", "cycleStartMonth", Number(e.target.value))}>
+                  {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((label, idx) => (
+                    <option key={idx + 1} value={idx + 1}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Accrual mode
+                <select value={form.leavePlan.accrualMode} onChange={e => updateNested("leavePlan", "accrualMode", e.target.value)}>
+                  <option value="grant_on_confirmation">Grant on probation confirmation (pro-rated)</option>
+                  <option value="monthly_1_5">Monthly accrual 1.5 days</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          {error && <StateMessage error>{error}</StateMessage>}
+          <div className="onboarding-actions">
+            <button type="button" className="secondary-button" onClick={() => navigate("/people")}>Cancel</button>
+            <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save employee details"}</button>
+          </div>
+        </div>
+      </form>
+
+      {confirmModal && (
+        <div className="drawer-layer">
+          <button className="drawer-backdrop" onClick={() => !confirming && setConfirmModal(false)} />
+          <aside className="form-drawer">
+            <div className="drawer-heading">
+              <div>
+                <p className="eyebrow">HR action</p>
+                <h2>Confirm probation</h2>
+              </div>
+              <button onClick={() => !confirming && setConfirmModal(false)} disabled={confirming}>
+                <X size={20} />
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 20 }}>
+              <div style={{ padding: 14, background: "#f2f8f6", border: "1px solid #dce9e5", borderRadius: 10 }}>
+                <p style={{ fontSize: 9.5, margin: 0, color: "#52706a" }}>Employee</p>
+                <strong style={{ fontSize: 11 }}>{form.firstName} {form.lastName} · {form.employeeCode}</strong>
+              </div>
+              <label>
+                Confirmation date
+                <input type="date" value={confirmForm.confirmationDate} onChange={e => setConfirmForm({ ...confirmForm, confirmationDate: e.target.value })} />
+              </label>
+              <label>
+                Note for the employee
+                <textarea rows="4" value={confirmForm.reviewNote} onChange={e => setConfirmForm({ ...confirmForm, reviewNote: e.target.value })} placeholder="Share confirmation highlights or welcome note (optional)" />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, flexDirection: "row", cursor: "pointer" }}>
+                <input type="checkbox" checked={confirmForm.updateEmploymentType} onChange={e => setConfirmForm({ ...confirmForm, updateEmploymentType: e.target.checked })} />
+                <span style={{ fontSize: 10.5 }}>Mark employment type as Permanent after confirmation</span>
+              </label>
+              {error && <StateMessage error>{error}</StateMessage>}
+              <div className="drawer-actions">
+                <button type="button" className="secondary-button" onClick={() => setConfirmModal(false)} disabled={confirming}>Cancel</button>
+                <button type="button" className="primary-button" onClick={confirmProbation} disabled={confirming}>
+                  {confirming ? "Confirming…" : "Confirm probation"}
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+    </>
+  );
 }
 
 export function OrganizationChartPage() {
@@ -1147,6 +1617,7 @@ export function OrganizationChartPage() {
 
 export function EmployeeOnboardingPage({ user }) {
   const navigate = useNavigate();
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState(() => ({
     employeeCode: `EMP${String(Date.now()).slice(-5)}`,
     firstName: "",
@@ -1154,18 +1625,35 @@ export function EmployeeOnboardingPage({ user }) {
     dateOfBirth: "",
     gender: "not_specified",
     officialEmail: "",
+    personalEmail: "",
+    mobile: "",
     department: "",
     designation: "",
+    branch: "Head Office",
+    workLocation: "Main Office",
+    joiningDate: todayIso,
+    employmentType: "probation",
+    employeeStatus: "active",
+    manager: "",
     temporaryPassword: "Welcome@123",
     role: "employee",
     profilePhoto: "",
     biometricTemplate: [],
     biometricSamples: [],
+    probation: { durationMonths: 3, confirmationStatus: "in_probation" },
+    leavePlan: { annualPaidLeaves: 18, cycleStartMonth: 4, accrualMode: "grant_on_confirmation" },
+    shift: { name: "General Shift", startTime: "10:00", endTime: "18:30", graceMinutes: 15 },
   }));
+  const [managers, setManagers] = useState([]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  useEffect(() => {
+    employeeApi.list().then(setManagers).catch(() => setManagers([]));
+  }, []);
   const update = (field, value) =>
     setForm((current) => ({ ...current, [field]: value }));
+  const updateNested = (root, field, value) =>
+    setForm(current => ({ ...current, [root]: { ...current[root], [field]: value } }));
   async function submit(event) {
     event.preventDefault();
     if (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3) {
@@ -1177,7 +1665,19 @@ export function EmployeeOnboardingPage({ user }) {
     setBusy(true);
     setError("");
     try {
-      await employeeApi.create(form);
+      const payload = {
+        ...form,
+        manager: form.manager || null,
+        employmentType: form.employmentType,
+        employeeStatus: form.employeeStatus,
+      };
+      if (form.employmentType === "probation" && !form.probation.expectedEndDate && form.joiningDate) {
+        const joining = new Date(form.joiningDate);
+        const months = Number(form.probation.durationMonths || 3);
+        joining.setMonth(joining.getMonth() + months);
+        payload.probation = { ...form.probation, expectedEndDate: joining.toISOString().slice(0, 10) };
+      }
+      await employeeApi.create(payload);
       navigate("/people");
     } catch (e) {
       setError(e.message);
@@ -1223,29 +1723,36 @@ export function EmployeeOnboardingPage({ user }) {
       <PageHeader
         eyebrow="People · Onboarding"
         title="Add employee"
-        description="Create the employee profile and secure login account together."
+        description="Create the employee profile, set reporting, and secure login account together."
       />
       <form className="onboarding-form" onSubmit={submit}>
         <aside className="onboarding-steps">
           <div className="active">
             <span>01</span>
             <div>
-              <strong>Basic details</strong>
-              <small>Name and employee number</small>
+              <strong>Personal</strong>
+              <small>Identity and contacts</small>
             </div>
           </div>
           <div>
             <span>02</span>
             <div>
-              <strong>Job details</strong>
-              <small>Team and designation</small>
+              <strong>Work setup</strong>
+              <small>Manager, role, branch</small>
             </div>
           </div>
           <div>
             <span>03</span>
             <div>
-              <strong>Account setup</strong>
-              <small>Email, role and access</small>
+              <strong>Benefits</strong>
+              <small>Probation & leave plan</small>
+            </div>
+          </div>
+          <div>
+            <span>04</span>
+            <div>
+              <strong>Account</strong>
+              <small>Role, password, shift</small>
             </div>
           </div>
         </aside>
@@ -1256,8 +1763,8 @@ export function EmployeeOnboardingPage({ user }) {
                 <UserRound size={18} />
               </span>
               <div>
-                <h2>Basic details</h2>
-                <p>Employee’s core identity information.</p>
+                <h2>Personal details</h2>
+                <p>Employee’s core identity and contact information.</p>
               </div>
             </div>
             <div className="field-grid">
@@ -1308,16 +1815,25 @@ export function EmployeeOnboardingPage({ user }) {
                   <option value="prefer_not_to_say">Prefer not to say</option>
                 </select>
               </label>
+              <label>
+                Mobile
+                <input value={form.mobile || ""} placeholder="e.g. +91 98765 43210" onChange={(e) => update("mobile", e.target.value)} />
+              </label>
+              <label>
+                Personal email
+                <input type="email" value={form.personalEmail || ""} placeholder="name@example.com" onChange={(e) => update("personalEmail", e.target.value)} />
+              </label>
             </div>
           </section>
+
           <section className="form-section">
             <div className="form-section-title">
               <span>
                 <BriefcaseBusiness size={18} />
               </span>
               <div>
-                <h2>Job details</h2>
-                <p>Where this employee works.</p>
+                <h2>Work setup</h2>
+                <p>Reporting manager, employment type and branch.</p>
               </div>
             </div>
             <div className="field-grid">
@@ -1337,16 +1853,103 @@ export function EmployeeOnboardingPage({ user }) {
                   onChange={(e) => update("designation", e.target.value)}
                 />
               </label>
+              <label>
+                Branch
+                <input value={form.branch || ""} placeholder="e.g. Head Office" onChange={(e) => update("branch", e.target.value)} />
+              </label>
+              <label>
+                Work location
+                <input value={form.workLocation || ""} placeholder="e.g. Main Office / WFO" onChange={(e) => update("workLocation", e.target.value)} />
+              </label>
+              <label>
+                Joining date *
+                <input type="date" required value={form.joiningDate} onChange={(e) => update("joiningDate", e.target.value)} />
+              </label>
+              <label>
+                Reporting manager
+                <select value={form.manager || ""} onChange={(e) => update("manager", e.target.value || null)}>
+                  <option value="">No manager assigned</option>
+                  {managers.map(m => (
+                    <option key={m._id} value={m._id}>{m.firstName} {m.lastName} · {m.designation || "Employee"}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Employment type
+                <select value={form.employmentType} onChange={(e) => update("employmentType", e.target.value)}>
+                  <option value="probation">Probation</option>
+                  <option value="permanent">Permanent</option>
+                  <option value="contract">Contract</option>
+                  <option value="intern">Intern</option>
+                  <option value="consultant">Consultant</option>
+                </select>
+              </label>
+              <label>
+                Employee status
+                <select value={form.employeeStatus} onChange={(e) => update("employeeStatus", e.target.value)}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="notice_period">Notice period</option>
+                  <option value="resigned">Resigned</option>
+                  <option value="terminated">Terminated</option>
+                </select>
+              </label>
             </div>
           </section>
+
+          <section className="form-section">
+            <div className="form-section-title">
+              <span>
+                <CalendarDays size={18} />
+              </span>
+              <div>
+                <h2>Probation & Leave plan</h2>
+                <p>Probation period and annual paid leave configuration.</p>
+              </div>
+            </div>
+            <div className="field-grid">
+              <label>
+                Probation duration (months)
+                <input type="number" min="0" max="24" value={form.probation.durationMonths} onChange={(e) => updateNested("probation", "durationMonths", Number(e.target.value))} />
+              </label>
+              <label>
+                Probation start status
+                <select value={form.probation.confirmationStatus} onChange={(e) => updateNested("probation", "confirmationStatus", e.target.value)}>
+                  <option value="in_probation">In probation</option>
+                  <option value="pending_confirmation">Pending confirmation</option>
+                  <option value="confirmed">Confirmed (pre-join)</option>
+                </select>
+              </label>
+              <label>
+                Annual paid leaves
+                <input type="number" min="0" max="60" value={form.leavePlan.annualPaidLeaves} onChange={(e) => updateNested("leavePlan", "annualPaidLeaves", Number(e.target.value))} />
+              </label>
+              <label>
+                FY start month
+                <select value={form.leavePlan.cycleStartMonth} onChange={(e) => updateNested("leavePlan", "cycleStartMonth", Number(e.target.value))}>
+                  {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map((label, idx) => (
+                    <option key={idx + 1} value={idx + 1}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="policy-note">
+              <Clock3 size={16} />
+              <div>
+                <strong>Leave policy note</strong>
+                <span>Paid leaves are prorated at 1.5 days/month from probation confirmation until FY end (March). 4+ working-day leaves require 10-day advance notice plus Manager → HR → Super Admin approvals.</span>
+              </div>
+            </div>
+          </section>
+
           <section className="form-section">
             <div className="form-section-title">
               <span>
                 <ShieldCheck size={18} />
               </span>
               <div>
-                <h2>Account setup</h2>
-                <p>Credentials and application permissions.</p>
+                <h2>Account & Shift</h2>
+                <p>Application role, credentials and attendance schedule.</p>
               </div>
             </div>
             <div className="field-grid">
@@ -1391,8 +1994,25 @@ export function EmployeeOnboardingPage({ user }) {
                 />
                 <small>Employee must change this after first login.</small>
               </label>
+              <label>
+                Shift name
+                <input value={form.shift.name} onChange={(e) => updateNested("shift", "name", e.target.value)} />
+              </label>
+              <label>
+                Shift start
+                <input type="time" value={form.shift.startTime} onChange={(e) => updateNested("shift", "startTime", e.target.value)} />
+              </label>
+              <label>
+                Shift end
+                <input type="time" value={form.shift.endTime} onChange={(e) => updateNested("shift", "endTime", e.target.value)} />
+              </label>
+              <label>
+                Grace minutes
+                <input type="number" min="0" max="180" value={form.shift.graceMinutes} onChange={(e) => updateNested("shift", "graceMinutes", Number(e.target.value))} />
+              </label>
             </div>
           </section>
+
           {error && <StateMessage error>{error}</StateMessage>}
           <div className="onboarding-actions">
             <button
