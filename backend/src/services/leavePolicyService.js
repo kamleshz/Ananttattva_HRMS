@@ -152,11 +152,8 @@ export function longLeavePolicy({ startDate, days, asOf = new Date() } = {}) {
   };
 }
 
-export function buildApprovalChain({ days } = {}) {
-  if (Number(days || 0) >= LONG_LEAVE_DAYS) {
-    return ['manager', 'hr_admin', 'super_admin'];
-  }
-  return ['manager', 'hr_admin'];
+export function buildApprovalChain() {
+  return ['manager', 'hr_admin', 'super_admin'];
 }
 
 export async function countPaidLeaveDaysForEmployee({ employeeId, leaveRequestModel, leaveTypeKey = 'paid_leave' } = {}) {

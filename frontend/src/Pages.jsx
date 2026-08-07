@@ -928,14 +928,14 @@ function LeaveDrawer({ close, saved, balance }) {
 }
 
 function LeaveRequestCard({ item, currentUser, onReview }) {
-  const canReview = ["super_admin", "hr_admin", "manager"].includes(currentUser?.role);
+  const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(currentUser?.role);
   const pending = item.status === "pending";
   const nextRole = item.workflow?.nextRole;
   const isMyTurn = (
     pending && (
       (currentUser?.role === "manager" && nextRole === "manager") ||
       (currentUser?.role === "hr_admin" && nextRole === "hr_admin") ||
-      (currentUser?.role === "super_admin" && (nextRole === "super_admin" || !nextRole))
+      (["super_admin", "admin"].includes(currentUser?.role) && nextRole === "super_admin")
     )
   );
   const [note, setNote] = useState("");
@@ -996,7 +996,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
           <div className="workflow-timeline">
             {requiredSteps.map((role, idx) => {
               const step = workflowSteps.find(s => s.role === role) || { status: "pending" };
-              const label = { manager: "Manager", hr_admin: "HR", super_admin: "Super Admin" }[role] || capitalize(role);
+              const label = { manager: "Manager", hr_admin: "HR", super_admin: "Admin / Super Admin" }[role] || capitalize(role);
               return (
                 <div key={role} className={`wf-step wf-${step.status}`}>
                   <i className={`wf-dot ${step.status}`} />
@@ -1010,7 +1010,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
 
         {pending && nextRole && (
           <p className="next-approver-line">
-            Next: <strong>{nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR Admin" : "Super Admin"}</strong>
+            Next: <strong>{nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR Admin" : "Admin / Super Admin"}</strong>
           </p>
         )}
 

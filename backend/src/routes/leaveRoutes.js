@@ -56,7 +56,7 @@ async function findNextManagerUser(employeeId, reportingManagerId) {
   if (!employee?.manager) return null
   return User.findOne({ employee: employee.manager, isActive: true }).select('_id email firstName role').populate('employee', 'firstName lastName employeeCode')
 }
-async function notifyStep({ request, employeeUser, chainMap }) {
+async function notifyStep({ request, employeeUser, chainMap, notifyEmployee = false }) {
   const nextRole = request.workflow?.nextRole
   if (!nextRole) return
   const label = {
@@ -101,7 +101,7 @@ async function notifyStep({ request, employeeUser, chainMap }) {
       if (result.status === 'rejected') console.error('Leave request approval email failed:', result.reason?.message || result.reason)
     }
   }))
-  if (employeeUser) {
+  if (notifyEmployee && employeeUser) {
     await Notification.create({
       recipient: employeeUser._id,
       type: 'Leave Submitted',
@@ -117,7 +117,7 @@ async function notifyStep({ request, employeeUser, chainMap }) {
 async function loadReviewerFilters(currentEmployee, role) {
   const [hr, superAdmins] = await Promise.all([
     User.find({ role: 'hr_admin', isActive: true }).select('_id email firstName role').populate('employee', 'firstName lastName employeeCode'),
-    User.find({ role: 'super_admin', isActive: true }).select('_id email firstName role').populate('employee', 'firstName lastName employeeCode'),
+    User.find({ role: { $in: ['super_admin', 'admin'] }, isActive: true }).select('_id email firstName role').populate('employee', 'firstName lastName employeeCode'),
   ])
   let manager = null
   if (role === 'manager' && currentEmployee) {
@@ -167,7 +167,7 @@ router.get('/', asyncHandler(async (req, res) => {
     filter = { $or: [{ employee: { $in: directReports } }, myPendingForManager] }
   } else if (req.user.role === 'hr_admin' && scope === 'approvals') {
     filter = { $or: [{ 'workflow.nextRole': 'hr_admin', status: 'pending' }, { employee: req.user.employee?._id && currentEmployee?._id }].filter(Boolean) }
-  } else if (req.user.role === 'super_admin' && scope === 'approvals') {
+  } else if (['super_admin', 'admin'].includes(req.user.role) && scope === 'approvals') {
     filter = { 'workflow.nextRole': 'super_admin', status: 'pending' }
   } else if (currentEmployee) {
     filter = { employee: currentEmployee._id }
@@ -232,9 +232,13 @@ router.post('/', asyncHandler(async (req, res) => {
   if (isPaid && payments.paidDays < Math.min(1, days)) {
     throw new HttpError(422, 'You do not have enough paid leave balance. Try unpaid leave or reduce the number of days.')
   }
-  const requiredSteps = buildApprovalChain({ days })
+  const requiredSteps = buildApprovalChain()
   const reportingManager = employee.manager || null
-  const now = new Date()
+  const chainMap = await loadReviewerFilters(employee, req.user.role)
+  chainMap.manager = await findNextManagerUser(employee._id, reportingManager)
+  if (!chainMap.manager) throw new HttpError(422, 'An active reporting manager must be assigned before applying for leave.')
+  if (!chainMap.hr.length) throw new HttpError(422, 'No active HR Admin is available to review leave requests.')
+  if (!chainMap.superAdmins.length) throw new HttpError(422, 'No active Admin or Super Admin is available to review leave requests.')
   const steps = requiredSteps.map((role) => {
     const step = { role, status: 'pending', comment: '' }
     if (role === 'manager' && reportingManager) {
@@ -275,17 +279,15 @@ router.post('/', asyncHandler(async (req, res) => {
   })
   await request.populate('employee', 'firstName lastName employeeCode department')
   await request.populate('reportingManager', 'firstName lastName employeeCode')
-  const chainMap = await loadReviewerFilters(employee, req.user.role)
-  chainMap.manager = await findNextManagerUser(employee._id, reportingManager)
   const employeeUser = await User.findOne({ employee: employee._id, isActive: true }).select('_id email firstName')
-  await notifyStep({ request, employeeUser, chainMap })
+  await notifyStep({ request, employeeUser, chainMap, notifyEmployee: true })
   const range = financialYearRange(new Date(input.startDate), plan.cycleStartMonth)
   res.status(201).json({ success: true, data: { ...request.toObject(), finance: { fyStart, fyEnd, fyLabel: range.label } } })
 }))
 
 const reviewSchema = z.object({ reviewNote: z.string().trim().max(500).default('') })
 
-router.patch('/:id/:decision', authorize('super_admin', 'hr_admin', 'manager'), asyncHandler(async (req, res) => {
+router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'manager'), asyncHandler(async (req, res) => {
   if (!['approve', 'reject'].includes(req.params.decision)) throw new HttpError(400, 'Invalid decision')
   const input = reviewSchema.parse(req.body)
   const request = await LeaveRequest.findById(req.params.id)
@@ -314,9 +316,9 @@ router.patch('/:id/:decision', authorize('super_admin', 'hr_admin', 'manager'), 
       canAct = true
       activeRole = 'hr_admin'
     }
-  } else if (req.user.role === 'super_admin') {
+  } else if (['super_admin', 'admin'].includes(req.user.role) && nextRole === 'super_admin') {
     canAct = true
-    activeRole = nextRole === 'super_admin' ? 'super_admin' : (nextRole || 'super_admin')
+    activeRole = 'super_admin'
   }
   if (!canAct) throw new HttpError(403, 'This request is not currently yours to review.')
   const chainMap = await loadReviewerFilters(currentEmployee, req.user.role)
@@ -381,7 +383,8 @@ router.patch('/:id/:decision', authorize('super_admin', 'hr_admin', 'manager'), 
   const employeeUser = employee
     ? await User.findOne({ employee: employee._id, isActive: true }).select('_id email firstName')
     : null
-  if (employeeUser?.email) {
+  const isFinalDecision = !approved || request.status === 'approved'
+  if (isFinalDecision && employeeUser?.email) {
     const decision = approved ? 'approved' : 'rejected'
     const finalApprover = approved ? (req.user.firstName ? `${req.user.firstName} ${req.user.lastName || ''}`.trim() : '') : ''
     const [mailResult] = await Promise.allSettled([sendLeaveDecision({
@@ -396,7 +399,7 @@ router.patch('/:id/:decision', authorize('super_admin', 'hr_admin', 'manager'), 
     })])
     if (mailResult.status === 'rejected') console.error('Leave decision email failed:', mailResult.reason?.message || mailResult.reason)
   }
-  if (employeeUser) {
+  if (isFinalDecision && employeeUser) {
     await Notification.create({
       recipient: employeeUser._id,
       type: `Leave ${approved ? 'Approved' : 'Rejected'}`,

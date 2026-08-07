@@ -3,6 +3,7 @@ import { calculateLatePolicy, lateCutoff } from '../services/attendancePolicySer
 import { allocateMonthlyAllowance, allowanceSubmissionDeadline } from '../services/allowancePolicyService.js'
 import { allowanceReminderContext } from '../services/allowanceReminderService.js'
 import { scheduledShiftCheckout } from '../services/missingCheckoutService.js'
+import { buildApprovalChain } from '../services/leavePolicyService.js'
 
 assert.deepEqual(calculateLatePolicy(0,0),{lateOccurrence:1,becomesHalfDay:false,halfDayOccurrence:0,shouldEscalate:false})
 assert.deepEqual(calculateLatePolicy(2,0),{lateOccurrence:3,becomesHalfDay:true,halfDayOccurrence:1,shouldEscalate:false})
@@ -28,4 +29,6 @@ assert.equal(automaticCheckout.getHours(),18)
 assert.equal(automaticCheckout.getMinutes(),30)
 assert.equal(scheduledShiftCheckout(new Date(2026,6,31),new Date(2026,6,31,20,0),'18:30').getHours(),20)
 
-console.log(JSON.stringify({latePolicy:'passed',halfDayEscalation:'passed',allowanceCap:'passed',allowanceDeadline:'passed',allowanceReminder:'passed',missingCheckout:'passed'}))
+assert.deepEqual(buildApprovalChain(),['manager','hr_admin','super_admin'])
+
+console.log(JSON.stringify({latePolicy:'passed',halfDayEscalation:'passed',allowanceCap:'passed',allowanceDeadline:'passed',allowanceReminder:'passed',missingCheckout:'passed',leaveApprovalChain:'passed'}))
