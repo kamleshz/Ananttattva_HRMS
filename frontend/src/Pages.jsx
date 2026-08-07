@@ -1048,28 +1048,31 @@ export function LeavePage({ user }) {
     [scope, setScope] = useState("mine"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
-  const canReview = ["super_admin", "hr_admin", "manager"].includes(user?.role);
   const scopes = useMemo(() => {
     const items = [{ value: "mine", label: "My leave" }];
     if (user?.role === "manager") items.push({ value: "team", label: "Team" });
-    if (["hr_admin", "super_admin"].includes(user?.role)) {
+    if (["hr_admin", "admin", "super_admin"].includes(user?.role)) {
       items.push({ value: "approvals", label: "Approvals" });
       items.push({ value: "all", label: "All" });
     }
     return items;
   }, [user?.role]);
-  function load() {
-    setLoading(true);
-    setError("");
+  useEffect(() => {
+    let active = true;
     Promise.all([
-      leaveApi.balance().catch(e => { setError(e.message); return null; }),
-      leaveApi.list(scope).catch(e => { setError(e.message); return []; }),
+      leaveApi.balance(),
+      leaveApi.list(scope),
     ]).then(([b, r]) => {
+      if (!active) return;
       if (b) setBalance(b);
       if (Array.isArray(r)) setRequests(r);
-    }).finally(() => setLoading(false));
-  }
-  useEffect(() => { load(); }, [scope]);
+    }).catch(e => {
+      if (active) setError(e.message);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [scope]);
   async function review(id, decision, reviewNote) {
     try {
       const updated = await leaveApi.review(id, decision, reviewNote);
@@ -1096,7 +1099,7 @@ export function LeavePage({ user }) {
       {scopes.length > 1 && (
         <div className="leave-scope-tabs">
           {scopes.map(tab => (
-            <button key={tab.value} className={scope === tab.value ? "active" : ""} onClick={() => setScope(tab.value)}>
+            <button key={tab.value} className={scope === tab.value ? "active" : ""} onClick={() => { setLoading(true); setError(""); setScope(tab.value); }}>
               {tab.label}
             </button>
           ))}
