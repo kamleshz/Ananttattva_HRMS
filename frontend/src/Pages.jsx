@@ -56,6 +56,21 @@ const capitalize = (value) =>
     .replaceAll("_", " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
 
+function addMonthsISO(dateIso, monthsToAdd) {
+  if (!dateIso || !Number.isFinite(Number(monthsToAdd))) return "";
+  const raw = new Date(dateIso);
+  if (Number.isNaN(raw.getTime())) return "";
+  const targetMonthIndex = raw.getMonth() + Number(monthsToAdd);
+  const targetYear = raw.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const clampedMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDayOfTarget = new Date(targetYear, clampedMonth + 1, 0).getDate();
+  const day = Math.min(raw.getDate(), lastDayOfTarget);
+  const result = new Date(targetYear, clampedMonth, day);
+  return result.toISOString().slice(0, 10);
+}
+const expectedProbationEnd = (joiningDateIso, durationMonths) =>
+  addMonthsISO(joiningDateIso, durationMonths);
+
 function PageHeader({ eyebrow = "My Space", title, description, action }) {
   return (
     <div className="page-title-row">
@@ -1337,13 +1352,18 @@ export function EmployeeEditPage({ employeeId, user }) {
   useEffect(() => {
     Promise.all([employeeApi.get(employeeId), employeeApi.list()])
       .then(([employee, list]) => {
+        const joining = employee.joiningDate ? new Date(employee.joiningDate).toISOString().slice(0, 10) : "";
+        const probationBase = employee.probation || { durationMonths: 3, expectedEndDate: null, confirmationStatus: "in_probation", confirmedAt: null, confirmationNote: "" };
+        const autoExpected = probationBase.expectedEndDate
+          ? new Date(probationBase.expectedEndDate).toISOString().slice(0, 10)
+          : expectedProbationEnd(joining, probationBase.durationMonths || 3);
         setForm({
           ...employee,
           dateOfBirth: employee.dateOfBirth ? new Date(employee.dateOfBirth).toISOString().slice(0, 10) : "",
-          joiningDate: employee.joiningDate ? new Date(employee.joiningDate).toISOString().slice(0, 10) : "",
+          joiningDate: joining,
           gender: employee.gender || "not_specified",
           shift: employee.shift || { name: "General Shift", startTime: "10:00", endTime: "18:30", graceMinutes: 15 },
-          probation: employee.probation || { durationMonths: 3, expectedEndDate: null, confirmationStatus: "in_probation", confirmedAt: null, confirmationNote: "" },
+          probation: { ...probationBase, expectedEndDate: autoExpected || probationBase.expectedEndDate },
           leavePlan: employee.leavePlan || { annualPaidLeaves: 18, cycleStartMonth: 4, accrualMode: "grant_on_confirmation" },
           manager: employee.manager ? (typeof employee.manager === "object" ? employee.manager._id : employee.manager) : "",
         });
@@ -1351,8 +1371,23 @@ export function EmployeeEditPage({ employeeId, user }) {
       })
       .catch(requestError => setError(requestError.message));
   }, [employeeId]);
-  const update = (field, value) => setForm(current => ({ ...current, [field]: value }));
-  const updateNested = (root, field, value) => setForm(current => ({ ...current, [root]: { ...current[root], [field]: value } }));
+  const update = (field, value) => setForm(current => {
+    const next = { ...current, [field]: value };
+    if (field === "joiningDate" && next.probation) {
+      const auto = expectedProbationEnd(value, next.probation.durationMonths);
+      if (auto) next.probation = { ...next.probation, expectedEndDate: auto };
+    }
+    return next;
+  });
+  const updateNested = (root, field, value) => setForm(current => {
+    const nextRoot = { ...current[root], [field]: value };
+    const next = { ...current, [root]: nextRoot };
+    if (root === "probation" && field === "durationMonths" && next.joiningDate) {
+      const auto = expectedProbationEnd(next.joiningDate, value);
+      if (auto) next.probation = { ...next.probation, expectedEndDate: auto };
+    }
+    return next;
+  });
   const confirmProbationStatus = employeeApi && employeeApi.confirmProbation;
   async function save(event) {
     event.preventDefault();
@@ -1490,6 +1525,29 @@ export function EmployeeEditPage({ employeeId, user }) {
             </div>
 
             <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
+              <div className="field-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 14 }}>
+                <label>
+                  Probation duration (months)
+                  <input
+                    type="number"
+                    min="1"
+                    max="24"
+                    value={form.probation?.durationMonths ?? 3}
+                    disabled={confirmed}
+                    onChange={e => updateNested("probation", "durationMonths", Math.max(1, Math.min(24, Number(e.target.value) || 0)))}
+                  />
+                </label>
+                <label>
+                  Expected probation end (auto-calculated)
+                  <input
+                    type="date"
+                    value={form.probation?.expectedEndDate || expectedProbationEnd(form.joiningDate, form.probation?.durationMonths || 3)}
+                    disabled
+                    aria-readonly="true"
+                    title="Joining date + probation duration months"
+                  />
+                </label>
+              </div>
               <div className={`probation-card ${confirmed ? "confirmed" : ""}`}>
                 <div className="probation-card-header">
                   <div>
@@ -1499,7 +1557,20 @@ export function EmployeeEditPage({ employeeId, user }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <StatusBadge status={confirmed ? "approved" : "pending"} label={confirmed ? "Confirmed" : capitalize(probationStatus.replace("_", " "))} />
                     {canConfirm && (
-                      <button type="button" className="primary-button" onClick={() => setConfirmModal(true)}>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => {
+                          const autoDate = expectedProbationEnd(form.joiningDate, form.probation?.durationMonths || 3);
+                          const today = new Date().toISOString().slice(0, 10);
+                          setConfirmForm({
+                            reviewNote: confirmForm.reviewNote,
+                            confirmationDate: autoDate || today,
+                            updateEmploymentType: confirmForm.updateEmploymentType ?? true,
+                          });
+                          setConfirmModal(true);
+                        }}
+                      >
                         <Check size={14} /> Confirm probation
                       </button>
                     )}
@@ -1651,9 +1722,24 @@ export function EmployeeOnboardingPage({ user }) {
     employeeApi.list().then(setManagers).catch(() => setManagers([]));
   }, []);
   const update = (field, value) =>
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "joiningDate" && next.probation) {
+        const auto = expectedProbationEnd(value, next.probation.durationMonths || 3);
+        if (auto) next.probation = { ...next.probation, expectedEndDate: auto };
+      }
+      return next;
+    });
   const updateNested = (root, field, value) =>
-    setForm(current => ({ ...current, [root]: { ...current[root], [field]: value } }));
+    setForm(current => {
+      const nextRoot = { ...current[root], [field]: value };
+      const next = { ...current, [root]: nextRoot };
+      if (root === "probation" && field === "durationMonths" && next.joiningDate) {
+        const auto = expectedProbationEnd(next.joiningDate, value);
+        if (auto) next.probation = { ...next.probation, expectedEndDate: auto };
+      }
+      return next;
+    });
   async function submit(event) {
     event.preventDefault();
     if (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3) {
@@ -1672,10 +1758,8 @@ export function EmployeeOnboardingPage({ user }) {
         employeeStatus: form.employeeStatus,
       };
       if (form.employmentType === "probation" && !form.probation.expectedEndDate && form.joiningDate) {
-        const joining = new Date(form.joiningDate);
-        const months = Number(form.probation.durationMonths || 3);
-        joining.setMonth(joining.getMonth() + months);
-        payload.probation = { ...form.probation, expectedEndDate: joining.toISOString().slice(0, 10) };
+        const auto = expectedProbationEnd(form.joiningDate, form.probation.durationMonths || 3);
+        if (auto) payload.probation = { ...form.probation, expectedEndDate: auto };
       }
       await employeeApi.create(payload);
       navigate("/people");
@@ -1910,7 +1994,17 @@ export function EmployeeOnboardingPage({ user }) {
             <div className="field-grid">
               <label>
                 Probation duration (months)
-                <input type="number" min="0" max="24" value={form.probation.durationMonths} onChange={(e) => updateNested("probation", "durationMonths", Number(e.target.value))} />
+                <input type="number" min="1" max="24" value={form.probation.durationMonths} onChange={(e) => updateNested("probation", "durationMonths", Math.max(1, Math.min(24, Number(e.target.value) || 0)))} />
+              </label>
+              <label>
+                Expected probation end (auto)
+                <input
+                  type="date"
+                  value={form.probation.expectedEndDate || expectedProbationEnd(form.joiningDate, form.probation.durationMonths || 3)}
+                  disabled
+                  aria-readonly="true"
+                  title="Joining date + probation duration months"
+                />
               </label>
               <label>
                 Probation start status
