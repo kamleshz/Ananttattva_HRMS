@@ -4,8 +4,6 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
-  "cleanUrls": true,
-  "trailingSlash": false,
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -15,6 +13,6 @@
     }
   ],
   "rewrites": [
-    { "source": "/((?!assets/|mediapipe/|models/|favicon\\.svg).*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
