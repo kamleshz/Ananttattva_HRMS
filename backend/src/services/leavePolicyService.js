@@ -1,4 +1,4 @@
-import { Holiday } from '../models/Organization.js';
+import { Holiday } from '../models/Holiday.js';
 
 export const LONG_LEAVE_DAYS = 4;
 export const LONG_LEAVE_NOTICE_DAYS = 10;
