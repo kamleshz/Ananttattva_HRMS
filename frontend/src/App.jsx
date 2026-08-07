@@ -72,7 +72,7 @@ const teamNavigation = [
   ["Reports", FileText, "/reports"],
   ["Holidays", CalendarDays, "/holidays"],
 ];
-const employeeAllowedPaths = new Set(["/", "/attendance", "/allowances"]);
+const employeeAllowedPaths = new Set(["/", "/attendance", "/leave", "/allowances"]);
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
