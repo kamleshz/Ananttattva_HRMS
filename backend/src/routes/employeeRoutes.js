@@ -58,7 +58,7 @@ const probationSchema=z.object({
   expectedEndDate:z.coerce.date().optional(),
   confirmationStatus:z.enum(['in_probation','pending_confirmation','confirmed','extended']).optional(),
   confirmedAt:z.coerce.date().nullable().optional(),
-  confirmedBy:z.string().optional(),
+  confirmedBy:z.string().nullable().optional(),
   confirmationNote:z.string().trim().max(500).optional(),
 })
 const leavePlanSchema=z.object({
