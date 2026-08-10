@@ -70,6 +70,7 @@ export default function AttendanceVerificationDrawer({
   attendanceMode = "office",
   close,
   recorded,
+  manualFallback,
 }) {
   const videoRef = useRef(null),
     canvasRef = useRef(null);
@@ -98,7 +99,10 @@ export default function AttendanceVerificationDrawer({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [mismatch, setMismatch] = useState(null),
-    [approvalReason, setApprovalReason] = useState("");
+    [faceAttempts, setFaceAttempts] = useState(0),
+    [cameraErrorCode, setCameraErrorCode] = useState(
+      navigator.mediaDevices?.getUserMedia ? "" : "CAMERA_NOT_AVAILABLE",
+    );
 
   async function openCamera() {
     const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -167,11 +171,11 @@ export default function AttendanceVerificationDrawer({
               audio: false,
             })
             .then(setStream)
-            .catch(() =>
-              setCameraError(
-                "Camera permission is required to record attendance.",
-              ),
-            );
+            .catch((mediaError) => {
+              const denied=mediaError?.name==='NotAllowedError';
+              setCameraErrorCode(denied?'CAMERA_PERMISSION_DENIED':'CAMERA_NOT_AVAILABLE');
+              setCameraError(denied?'Camera permission was denied.':'Camera could not be started on this device.');
+            });
         biometricApi
           .challenge(mode)
           .then(setChallenge)
@@ -350,9 +354,13 @@ export default function AttendanceVerificationDrawer({
         faceCount: 1,
       });
       if (verification.matched === false) {
+        const attempts=faceAttempts+1;
+        setFaceAttempts(attempts);
         setMismatch(verification);
         setError(
-          "Face matching was unsuccessful. Repeat verification or request HR/Admin approval below.",
+          attempts >= 2
+            ? "Face matching failed twice. You may send a controlled manual attendance request for review."
+            : "Face matching was unsuccessful. Please repeat verification once.",
         );
         return;
       }
@@ -373,26 +381,6 @@ export default function AttendanceVerificationDrawer({
       setBusy(false);
     }
   }
-  async function requestApproval() {
-    if (!mismatch || approvalReason.trim().length < 10) return;
-    setBusy(true);
-    setError("");
-    try {
-      await attendanceApi.requestFaceMatchApproval({
-        photo,
-        attendanceMode,
-        location: coordinates,
-        mismatchToken: mismatch.mismatchToken,
-        reason: approvalReason,
-      });
-      await recorded();
-      close();
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function retake() {
     stream?.getTracks().forEach((track) => track.stop());
     setPhoto("");
@@ -401,7 +389,6 @@ export default function AttendanceVerificationDrawer({
     setChallengeComplete(false);
     setLivenessScore(0);
     setMismatch(null);
-    setApprovalReason("");
     setError("");
     setCameraError("");
     setLivenessStatus("Preparing a new challenge…");
@@ -561,39 +548,28 @@ export default function AttendanceVerificationDrawer({
           )}
         </div>
         {error && <p className="attendance-error drawer-error">{error}</p>}
-        {mismatch && mode === "check-in" && (
+        {mismatch && faceAttempts >= 2 && (
           <section className="manual-checkin-request">
             <div>
               <ShieldCheck size={18} />
               <p>
-                <strong>Request manual check-in</strong>
+                <strong>Use controlled manual fallback</strong>
                 <span>
-                  Your selfie, location, original attempt time, and match score
-                  will be sent to HR and Admin for review.
+                  Your evidence, location, and a new server request time will be sent to an authorized reviewer.
                 </span>
               </p>
             </div>
-            <label>
-              Reason for approval
-              <textarea
-                rows="3"
-                minLength="10"
-                maxLength="1000"
-                value={approvalReason}
-                onChange={(event) => setApprovalReason(event.target.value)}
-                placeholder="Explain why face verification may have failed"
-              />
-            </label>
             <button
               className="primary-button"
-              disabled={approvalReason.trim().length < 10 || busy}
-              onClick={requestApproval}
+              disabled={busy}
+              onClick={()=>manualFallback?.({reasonCode:'FACE_MISMATCH',photo,mismatchToken:mismatch.mismatchToken,faceMatchScore:mismatch.faceMatchScore,attempts:faceAttempts,cameraStatus:'working',livenessStatus:'passed',faceMatchStatus:'failed',location:coordinates})}
             >
-              {busy ? "Sending request..." : "Send to HR and Admin"}
+              Continue to manual request
               <ChevronRight size={15} />
             </button>
           </section>
         )}
+        {cameraError && <section className="manual-checkin-request"><div><ShieldCheck size={18}/><p><strong>Biometric verification is unavailable</strong><span>You can submit a manual request immediately for this technical failure.</span></p></div><button className="primary-button" onClick={()=>manualFallback?.({reasonCode:cameraErrorCode||'CAMERA_NOT_AVAILABLE',technicalErrorCode:cameraErrorCode||'CAMERA_NOT_AVAILABLE',attempts:0,cameraStatus:'failed',location:coordinates})}>Use manual fallback <ChevronRight size={15}/></button></section>}
         <div className="attendance-drawer-footer">
           <div>
             <Clock3 size={16} />

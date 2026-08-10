@@ -63,7 +63,8 @@ const templateSchema = new mongoose.Schema({ name:{ type:String, required:true }
 const jobOpeningSchema = new mongoose.Schema({ code:String, title:{ type:String, required:true }, department:String, designation:String, employmentType:String, location:String, hiringManager:{ type:objectId, ref:'User' }, openings:Number, status:{ type:String, default:'Open' } }, { timestamps:true, collection:'jobOpenings' })
 const communicationSchema = new mongoose.Schema({ candidate:{ type:objectId, ref:'Candidate' }, offer:{ type:objectId, ref:'OfferLetter' }, type:String, recipient:String, subject:String, status:String, providerMessageId:String, sentBy:{ type:objectId, ref:'User' } }, { timestamps:true, collection:'candidateCommunications' })
 const settingsSchema = new mongoose.Schema({ key:{ type:String, unique:true }, value:mongoose.Schema.Types.Mixed, updatedBy:{ type:objectId, ref:'User' } }, { timestamps:true, collection:'recruitmentSettings' })
-const notificationSchema = new mongoose.Schema({ recipient:{ type:objectId, ref:'User', required:true, index:true }, type:String, title:String, message:String, candidate:{ type:objectId, ref:'Candidate' }, offer:{ type:objectId, ref:'OfferLetter' }, employee:{ type:objectId, ref:'Employee' }, readAt:Date }, { timestamps:true, collection:'notifications' })
+const notificationSchema = new mongoose.Schema({ recipient:{ type:objectId, ref:'User', required:true, index:true }, type:String, title:String, message:String, candidate:{ type:objectId, ref:'Candidate' }, offer:{ type:objectId, ref:'OfferLetter' }, employee:{ type:objectId, ref:'Employee' }, dedupeKey:{type:String,index:true,sparse:true}, readAt:Date }, { timestamps:true, collection:'notifications' })
+notificationSchema.index({recipient:1,dedupeKey:1},{unique:true,sparse:true})
 
 export const Candidate = mongoose.model('Candidate', candidateSchema)
 export const Interview = mongoose.model('Interview', interviewSchema)

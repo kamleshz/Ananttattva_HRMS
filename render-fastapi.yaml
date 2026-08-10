@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: at-connect-fastapi
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: peoplepulse_hr
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: REFRESH_TOKEN_SECRET
+        generateValue: true
+      - key: CLIENT_URLS
+        sync: false
+      - key: SEED_ADMIN_ENABLED
+        value: "false"
+      - key: MS_CLIENT_ID
+        sync: false
+      - key: MS_TENANT_ID
+        sync: false
+      - key: MS_CLIENT_SECRET
+        sync: false
+      - key: MAIL_SENDER_EMAIL
+        sync: false
+

@@ -12,7 +12,10 @@ const punchSchema = new mongoose.Schema({
   address: String,
   ipAddress: String,
   device: String,
-  source: { type: String, enum: ['biometric', 'manual_approval', 'system_auto', 'hr_correction'], default: 'biometric' },
+  source: { type: String, enum: ['biometric', 'manual_fallback', 'manual_hr', 'manual_approval', 'system_auto', 'hr_correction'], default: 'biometric' },
+  manualRequest: { type: mongoose.Schema.Types.ObjectId, ref: 'FaceAttendanceRequest' },
+  proofPhotoStorageKey: String,
+  verification: mongoose.Schema.Types.Mixed,
 }, { _id: false })
 
 const attendanceSchema = new mongoose.Schema({

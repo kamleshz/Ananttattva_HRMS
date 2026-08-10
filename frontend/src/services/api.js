@@ -86,6 +86,10 @@ export const attendanceApi = {
   faceMatchRequests: (scope = "mine") => api(`/attendance/face-match-requests${scope === "all" ? "?scope=all" : ""}`),
   requestFaceMatchApproval: (data) => api("/attendance/face-match-requests", { method:"POST", body:JSON.stringify(data) }),
   reviewFaceMatchRequest: (id, decision, reviewNote = "") => api(`/attendance/face-match-requests/${id}/${decision}`, { method:"PATCH", body:JSON.stringify({reviewNote}) }),
+  manualRequests: (scope = "mine") => api(`/attendance/manual${scope === "all" ? "?scope=all" : ""}`),
+  createManualRequest: (data) => api('/attendance/manual', { method:'POST', body:JSON.stringify(data) }),
+  reviewManualRequest: (id, decision, reviewNote = "") => api(`/attendance/manual/${id}/${decision}`, { method:'PATCH', body:JSON.stringify({reviewNote}) }),
+  manualMetrics: () => api('/attendance/manual/metrics'),
   checkIn: (data) =>
     api("/attendance/check-in", { method: "POST", body: JSON.stringify(data) }),
   checkOut: (data) =>

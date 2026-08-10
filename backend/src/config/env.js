@@ -1,6 +1,6 @@
 import 'dotenv/config'
 
-const defaultClientUrl = 'http://127.0.0.1:6173'
+const defaultClientUrl = 'http://127.0.0.1:7173'
 const clientUrls = (process.env.CLIENT_URLS || process.env.CLIENT_URL || defaultClientUrl)
   .split(',')
   .map((value) => value.trim())
@@ -8,7 +8,7 @@ const clientUrls = (process.env.CLIENT_URLS || process.env.CLIENT_URL || default
 
 export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
-  port: Number(process.env.PORT || 5000),
+  port: Number(process.env.PORT || 7000),
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/peoplepulse_hr',
   jwtSecret: process.env.JWT_SECRET || 'development-only-secret-change-in-production',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '8h',
@@ -24,6 +24,12 @@ export const env = {
   otpSenderEmail: process.env.OTP_SENDER_EMAIL || '',
   mailFromName: process.env.MAIL_FROM_NAME || 'AT Connect',
   mailReplyTo: process.env.MAIL_REPLY_TO || '',
+  cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+  cloudinaryApiKey: process.env.CLOUDINARY_API_KEY || '',
+  cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET || '',
+  manualAttendanceReviewThreshold: Number(process.env.MANUAL_ATTENDANCE_REVIEW_THRESHOLD || 3),
+  manualAttendanceFaceRetryLimit: Number(process.env.MANUAL_ATTENDANCE_FACE_RETRY_LIMIT || 2),
+  manualAttendanceAllowLocationException: process.env.MANUAL_ATTENDANCE_ALLOW_LOCATION_EXCEPTION !== 'false',
 }
 
 if (env.nodeEnv === 'production' && env.jwtSecret.includes('development')) {

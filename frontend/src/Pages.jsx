@@ -221,7 +221,7 @@ export function AttendancePage({ user }) {
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
   const canReviewCorrections = ["super_admin", "admin", "hr_admin"].includes(user.role);
-  const canReviewFaceRequests = ["super_admin", "admin", "hr_admin"].includes(user.role);
+  const canReviewFaceRequests = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
   const canReviewArrangements = ["super_admin", "admin", "hr_admin", "it_admin", "manager"].includes(user.role);
   useEffect(() => {
     (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
@@ -237,7 +237,7 @@ export function AttendancePage({ user }) {
   }, [canReviewCorrections]);
   useEffect(() => {
     attendanceApi
-      .faceMatchRequests(canReviewFaceRequests ? "all" : "mine")
+      .manualRequests(canReviewFaceRequests ? "all" : "mine")
       .then(setFaceRequests)
       .catch((e) => setError(e.message));
   }, [canReviewFaceRequests]);
@@ -317,7 +317,7 @@ export function AttendancePage({ user }) {
     setCorrectionBusy(true);
     setError("");
     try {
-      const updated = await attendanceApi.reviewFaceMatchRequest(request._id, decision, reviewNote);
+      const updated = await attendanceApi.reviewManualRequest(request._id, decision, reviewNote);
       setFaceRequests((items) => items.map((item) => item._id === updated._id ? updated : item));
       if (updated.attendance && decision === "approve") {
         const refreshed = canViewAllAttendance ? await attendanceApi.allHistory(month, year) : await attendanceApi.history(month, year);
@@ -517,27 +517,27 @@ export function AttendancePage({ user }) {
         <section className="content-card attendance-corrections-card" id="face-checkin-approvals">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Face verification exceptions</p>
-              <h2>{canReviewFaceRequests ? `Manual check-in approvals${pendingFaceRequests.length ? ` (${pendingFaceRequests.length})` : ""}` : "My manual check-in requests"}</h2>
+              <p className="eyebrow">Biometric attendance exceptions</p>
+              <h2>{canReviewFaceRequests ? `Manual attendance approvals${pendingFaceRequests.length ? ` (${pendingFaceRequests.length})` : ""}` : "My manual attendance requests"}</h2>
             </div>
           </div>
-          {faceRequests.length === 0 ? <StateMessage>No face-match check-in requests.</StateMessage> : (
+          {faceRequests.length === 0 ? <StateMessage>No manual attendance requests.</StateMessage> : (
             <div className="attendance-correction-list face-request-list">
               {faceRequests.map((request) => (
                 <article key={request._id}>
-                  <button className="approval-avatar face-request-photo" title="View captured photo" onClick={() => setViewingPhoto({src:request.photo,label:`Face mismatch attempt · ${formatTime(request.attemptedAt)}`})}>
-                    <img src={request.photo} alt="Manual check-in request" />
-                  </button>
+                  <span className="approval-avatar face-request-photo" title={request.biometricAttempt?.photoAvailable ? "Private proof available" : "No proof photo attached"}>
+                    <ShieldCheck size={18} />
+                  </span>
                   <div>
-                    <strong>{request.employee?.firstName ? `${request.employee.firstName} ${request.employee.lastName || ""}` : "My check-in request"}</strong>
-                    <span>{formatDate(request.attemptedAt)} · Attempted {formatTime(request.attemptedAt)} · Match {Math.round((request.faceMatchScore || 0) * 100)}%</span>
-                    <p>{request.reason}</p>
+                    <strong>{request.employee?.firstName ? `${request.employee.firstName} ${request.employee.lastName || ""}` : "My attendance request"} · {request.action?.replace('_','-')}</strong>
+                    <span>{formatDate(request.requestedAt || request.attemptedAt)} · Requested {formatTime(request.requestedAt || request.attemptedAt)} · Match {Math.round((request.faceMatchScore || 0) * 100)}%</span>
+                    <p>{request.reasonLabel || request.reason}{request.remarks ? ` — ${request.remarks}` : ''} · {request.locationVerified?'Location verified':'Location exception'} · {request.riskLevel || 'normal'} risk</p>
                     {request.reviewNote && <small>Review note: {request.reviewNote}</small>}
                   </div>
                   <StatusBadge status={request.status} />
                   {canReviewFaceRequests && request.status === "pending" && <div className="correction-review-actions">
                     <button className="reject-button" disabled={correctionBusy} onClick={() => reviewFaceRequest(request, "reject")}>Reject</button>
-                    <button className="approve-button" disabled={correctionBusy} onClick={() => reviewFaceRequest(request, "approve")}><Check size={13} /> Approve check-in</button>
+                    <button className="approve-button" disabled={correctionBusy} onClick={() => reviewFaceRequest(request, "approve")}><Check size={13} /> Approve {request.action?.replace('_','-')}</button>
                   </div>}
                 </article>
               ))}

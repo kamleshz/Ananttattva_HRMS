@@ -1,6 +1,6 @@
 # AT Connect
 
-Full-stack HR attendance application with a React/Vite frontend and Express/MongoDB backend.
+AT Connect is the HRMS for Ananttattva Private Limited. The current React/Vite + Express/MongoDB application remains runnable while its backend is migrated module-by-module to FastAPI, PyMongo Async, Redis, and Celery.
 
 ## Structure
 
@@ -9,6 +9,8 @@ Full-stack HR attendance application with a React/Vite frontend and Express/Mong
 
 ## Local setup
 
+The staged FastAPI service, migration boundary, audit findings, and module cutover sequence are documented in [docs/FASTAPI_MIGRATION.md](docs/FASTAPI_MIGRATION.md). The backend uses port `7000`; the legacy Express API remains authoritative until each migrated module reaches contract parity.
+
 1. Start MongoDB locally, or run `docker compose up -d`.
 2. Copy `backend/.env.example` to `backend/.env` and change `JWT_SECRET`.
 3. Optionally copy `frontend/.env.example` to `frontend/.env`.
@@ -16,7 +18,7 @@ Full-stack HR attendance application with a React/Vite frontend and Express/Mong
 5. Start the API with `npm run dev:backend`.
 6. In another terminal, start the UI with `npm run dev:frontend`.
 
-The frontend runs at `http://127.0.0.1:6173` and the API runs at `http://127.0.0.1:5000`.
+The frontend runs at `http://127.0.0.1:7173` and the API runs at `http://127.0.0.1:7000`.
 
 The development seed creates `admin@peoplepulse.local` with password `ChangeMe123!`. Change these values in `backend/.env` for any shared environment.
 

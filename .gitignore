@@ -13,3 +13,11 @@ backend/node_modules/
 
 .DS_Store
 Thumbs.db
+
+.venv/
+backend/.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

@@ -1,12 +1,54 @@
 services:
   mongodb:
     image: mongo:7
-    container_name: peoplepulse-mongodb
+    container_name: at-connect-mongodb
     restart: unless-stopped
     ports:
       - "27017:27017"
     volumes:
       - peoplepulse_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: at-connect-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - at_connect_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  fastapi-migration:
+    profiles: ["fastapi-migration"]
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: development
+      MONGODB_URI: mongodb://mongodb:27017/peoplepulse_hr
+      MONGODB_DATABASE: peoplepulse_hr
+      REDIS_URL: redis://redis:6379/0
+      CLIENT_URLS: http://127.0.0.1:7173,http://localhost:7173
+      JWT_SECRET: development-access-secret-change-me
+      REFRESH_TOKEN_SECRET: development-refresh-secret-change-me
+      OTP_EMAILS_ENABLED: "false"
+    ports:
+      - "7000:7000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   peoplepulse_data:
+  at_connect_redis_data:

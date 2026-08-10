@@ -63,9 +63,8 @@ router.post('/verify', asyncHandler(async (req, res) => {
   const faceMatchScore=Math.max(frontScore,bestScore)
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
   if (frontScore < FRONT_FACE_MATCH_THRESHOLD && bestScore < SIDE_FACE_FALLBACK_THRESHOLD) {
-    if (challengePayload.mode !== 'check-in') throw new HttpError(403, 'Face confidence was too low. Repeat verification in even lighting, without a mask or strong glare.')
     const attemptedAt = new Date()
-    const mismatchToken = jwt.sign({ purpose:'biometric_mismatch', mode:'check-in', challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash, attemptedAt:attemptedAt.toISOString() }, env.jwtSecret, { subject:req.user.id, expiresIn:'10m', jwtid:randomUUID() })
+    const mismatchToken = jwt.sign({ purpose:'biometric_mismatch', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash, attemptedAt:attemptedAt.toISOString() }, env.jwtSecret, { subject:req.user.id, expiresIn:'10m', jwtid:randomUUID() })
     return res.json({ success:true, data:{ matched:false, mismatchToken, attemptedAt, faceMatchScore, livenessScore:input.livenessScore } })
   }
   const verificationToken = jwt.sign({ purpose:'biometric_verification', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash }, env.jwtSecret, { subject:req.user.id, expiresIn:'90s', jwtid:randomUUID() })

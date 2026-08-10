@@ -18,9 +18,11 @@ import { OfficeLocation, OrganizationProfile } from '../models/Organization.js'
 import { WorkArrangementRequest } from '../models/WorkArrangementRequest.js'
 import { FaceAttendanceRequest } from '../models/FaceAttendanceRequest.js'
 import { sendFaceCheckInApprovalRequest, sendFaceCheckInDecision } from '../services/mailService.js'
+import manualAttendanceRoutes from './manualAttendanceRoutes.js'
 
 const router = Router()
 router.use(authenticate)
+router.use('/manual',manualAttendanceRoutes)
 const punchSchema = z.object({
   photo: z.string().startsWith('data:image/', 'A captured attendance photo is required').max(4_500_000),
   attendanceMode: z.enum(['office', 'wfh', 'client_location', 'field_visit']).default('office'),
@@ -117,6 +119,8 @@ async function verifiedPunch(req, mode) {
 }
 router.post('/check-in', asyncHandler(async (req, res) => res.status(201).json({ success: true, data: await checkIn(req.user.employee, await verifiedPunch(req,'check-in'), meta(req)) })))
 router.post('/check-out', asyncHandler(async (req, res) => res.json({ success: true, data: await checkOut(req.user.employee, await verifiedPunch(req,'check-out'), meta(req)) })))
+router.post('/face-match-requests',(_req,_res,next)=>next(new HttpError(410,'This endpoint was replaced by the secure /api/attendance/manual workflow')))
+router.patch('/face-match-requests/:id/:decision',(_req,_res,next)=>next(new HttpError(410,'Review this request through /api/attendance/manual instead')))
 router.post('/face-match-requests', asyncHandler(async (req,res)=>{
   if(!req.user.employee)throw new HttpError(409,'No employee profile is linked to this account')
   const input=faceRequestSchema.parse(req.body)
@@ -130,7 +134,7 @@ router.post('/face-match-requests', asyncHandler(async (req,res)=>{
   if(await Attendance.exists({employee:req.user.employee._id,date}))throw new HttpError(409,'Attendance is already recorded for this date')
   if(await FaceAttendanceRequest.exists({employee:req.user.employee._id,date,status:'pending'}))throw new HttpError(409,'A manual check-in request is already pending for this date')
   const location=await verifyRequestedLocation(input,req.user,attemptedAt)
-  const request=await FaceAttendanceRequest.create({employee:req.user.employee._id,requestedBy:req.user._id,date,attemptedAt,attendanceMode:input.attendanceMode,photo:input.photo,location,faceMatchScore:proof.faceMatchScore,livenessScore:proof.livenessScore,reason:input.reason,...meta(req)})
+  const request=await FaceAttendanceRequest.create({employee:req.user.employee._id,requestedBy:req.user._id,date,attemptedAt,requestedAt:attemptedAt,action:'check_in',attendanceMode:input.attendanceMode,photo:input.photo,location,locationVerified:true,faceMatchScore:proof.faceMatchScore,livenessScore:proof.livenessScore,reason:input.reason,...meta(req)})
   const reviewers=await User.find({role:{$in:['hr_admin','admin','super_admin']},isActive:true}).select('_id email firstName')
   if(reviewers.length)await Notification.insertMany(reviewers.map(reviewer=>({recipient:reviewer._id,type:'Face Check-in Approval',title:'Manual check-in approval requested',message:`${req.user.firstName} ${req.user.lastName} could not complete face matching and requested check-in approval.`,employee:req.user.employee._id})))
   const employeeName=`${req.user.firstName} ${req.user.lastName}`.trim()
@@ -175,7 +179,7 @@ router.get('/today', asyncHandler(async (req, res) => {
   const [record,organization,pendingFaceRequest]=await Promise.all([
     employee?Attendance.findOne({employee:employee._id,date:startOfLocalDay()}).lean():null,
     OrganizationProfile.findOne({singletonKey:'organization'}).select('timeZone').lean(),
-    employee?FaceAttendanceRequest.findOne({employee:employee._id,date:startOfLocalDay(),status:'pending'}).select('attemptedAt status').lean():null,
+    employee?FaceAttendanceRequest.findOne({employee:employee._id,date:startOfLocalDay(),status:'pending'}).select('attemptedAt requestedAt action status reasonLabel riskLevel').lean():null,
   ])
   const shift=employee?.shift||{name:'General Shift',startTime:'10:00',endTime:'18:30'}
   const state=!record?.checkIn?.time?'NOT_CHECKED_IN':record?.checkOut?.time?'CHECKED_OUT':'CHECKED_IN'
@@ -183,7 +187,8 @@ router.get('/today', asyncHandler(async (req, res) => {
   const localDate=`${attendanceDate.getFullYear()}-${String(attendanceDate.getMonth()+1).padStart(2,'0')}-${String(attendanceDate.getDate()).padStart(2,'0')}`
   res.json({success:true,data:{
     state,
-    manualCheckInRequest:pendingFaceRequest,
+    manualCheckInRequest:pendingFaceRequest?.action==='check_in'?pendingFaceRequest:null,
+    manualRequest:pendingFaceRequest,
     organizationTimezone:organization?.timeZone||'Asia/Kolkata',
     date:localDate,
     shift,

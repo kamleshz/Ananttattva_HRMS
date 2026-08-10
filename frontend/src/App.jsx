@@ -51,6 +51,7 @@ import {
   OrganizationChartPage,
 } from "./Pages.jsx";
 import AttendanceVerificationDrawer from "./AttendanceVerificationDrawer.jsx";
+import ManualAttendanceDrawer from "./ManualAttendanceDrawer.jsx";
 import RecruitmentPage, {
   CompanyHomeSection,
   PublicOfferPage,
@@ -758,6 +759,7 @@ function ModernAttendanceCard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [manualFallback, setManualFallback] = useState(null);
   const [availableModes, setAvailableModes] = useState(["office"]);
   const [selectedMode, setSelectedMode] = useState("office");
   const [now, setNow] = useState(new Date());
@@ -783,7 +785,7 @@ function ModernAttendanceCard() {
   const state = attendance?.state || "NOT_CHECKED_IN";
   const checkedIn = state === "CHECKED_IN";
   const completed = state === "CHECKED_OUT";
-  const pendingApproval = Boolean(attendance?.manualCheckInRequest);
+  const pendingApproval = Boolean(attendance?.manualRequest);
   const checkInTime = attendance?.checkIn?.time ? new Date(attendance.checkIn.time) : null;
   const checkOutTime = attendance?.checkOut?.time ? new Date(attendance.checkOut.time) : null;
   const durationSeconds = checkInTime ? Math.max(0, Math.floor(((checkOutTime || now) - checkInTime) / 1000)) : 0;
@@ -799,14 +801,15 @@ function ModernAttendanceCard() {
       <div className="shift-row"><div className="shift-icon"><CalendarDays size={19}/></div><div><span>Shift timing</span><strong>{shift.startTime} – {shift.endTime}</strong><small>{office}</small></div></div>
       {error ? <div className="attendance-error" role="alert">{error}</div> : state === "NOT_CHECKED_IN" ? <div className="clock-block"><p className="clock-label">Current time</p><div className="live-time">{now.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div><p className="clock-note">You haven&apos;t checked in yet.</p></div> : <div className="attendance-live-layout"><div className="duration-ring" style={{"--progress":`${progress * 3.6}deg`}}><div><strong>{durationClock(durationSeconds)}</strong><span>{completed ? "Total working" : "Working duration"}</span></div></div><dl className="attendance-facts"><div><dt>Check-In</dt><dd>{checkInTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "Unavailable"}</dd></div><div><dt>Check-Out</dt><dd>{checkOutTime?.toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"}) || "In progress"}</dd></div><div><dt>Office</dt><dd>{office}</dd></div><div><dt>Location</dt><dd>{attendance?.checkIn?.distanceMeters != null ? `Verified · ${attendance.checkIn.distanceMeters}m` : "Verified"}</dd></div><div><dt>Face</dt><dd>{attendance?.checkIn?.source === "manual_approval" ? "HR approved" : "Verified"}</dd></div><div><dt>Shift progress</dt><dd>{progress}%</dd></div></dl></div>}
       {attendance?.checkoutType === "AUTO_CHECKOUT" && <div className="auto-checkout-banner"><strong>Your previous attendance session was automatically closed.</strong><span>Request an attendance correction if the recorded effective hours are inaccurate.</span></div>}
-      {pendingApproval && <div className="late-policy-banner"><strong>Manual check-in awaiting approval</strong><span>HR or Admin will review the captured selfie and original attempt time. You will be notified after a decision.</span></div>}
+      {pendingApproval && <div className="late-policy-banner"><strong>Manual {attendance.manualRequest.action?.replace('_','-')} awaiting approval</strong><span>An authorized reviewer will assess the reason, server request time, location, and available biometric evidence.</span></div>}
       {attendance?.late?.isLate && <div className="late-policy-banner"><strong>{attendance.late.halfDayPenaltyApplied ? "Half-Day Penalty Applied" : "Late Arrival"}</strong><span>{attendance.late.lateMinutes} minutes late · Monthly count: {attendance.late.monthlyLateCount}</span></div>}
       {!pendingApproval && !checkedIn && !completed && availableModes.length > 1 && <div className="attendance-mode-picker" aria-label="Attendance mode">{availableModes.map(item=><button key={item} className={selectedMode===item?'active':''} onClick={()=>setSelectedMode(item)}>{item==='office'?'Office':item==='wfh'?'Work from home':item==='client_location'?'Client location':'Field visit'}</button>)}</div>}
-      {!pendingApproval && !completed && !error && <button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out" : `Check In · ${selectedMode==='office'?'Office':selectedMode.replaceAll('_',' ')}`}<ChevronRight size={17}/></button>}
+      {!pendingApproval && !completed && !error && <><button className={`attendance-button ${checkedIn ? "checkout" : ""}`} onClick={() => setDrawerOpen(true)}>{checkedIn ? "Check Out with Face" : `Check In with Face · ${selectedMode==='office'?'Office':selectedMode.replaceAll('_',' ')}`}<ChevronRight size={17}/></button><button className="manual-fallback-link" onClick={()=>setManualFallback({})}>Having trouble? Use manual {checkedIn?'check-out':'check-in'}</button></>}
       {completed && <button className="full-link" onClick={() => navigate("/attendance")}>View attendance details <ChevronRight size={15}/></button>}
       <div className="requirements"><span><CheckCircle2 size={14}/>Location required</span><span><CheckCircle2 size={14}/>Face verification required</span></div>
     </section>
-    {drawerOpen && <AttendanceVerificationDrawer mode={checkedIn ? "check-out" : "check-in"} attendanceMode={checkedIn ? attendance.attendanceMode : selectedMode} close={() => setDrawerOpen(false)} recorded={refresh}/>}
+    {drawerOpen && <AttendanceVerificationDrawer mode={checkedIn ? "check-out" : "check-in"} attendanceMode={checkedIn ? attendance.attendanceMode : selectedMode} close={() => setDrawerOpen(false)} recorded={refresh} manualFallback={(evidence)=>{setDrawerOpen(false);setManualFallback(evidence)}}/>}
+    {manualFallback&&<ManualAttendanceDrawer action={checkedIn?'check_out':'check_in'} attendanceMode={checkedIn?attendance.attendanceMode:selectedMode} evidence={manualFallback} close={()=>setManualFallback(null)} submitted={refresh}/>}
   </>;
 }
 

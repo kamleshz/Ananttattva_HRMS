@@ -9,11 +9,13 @@
     "configure:shift": "node src/scripts/updateOfficeShift.js",
     "test:recruitment": "node src/scripts/testRecruitmentFlow.js",
     "test:policies": "node src/scripts/testPolicies.js",
+    "test:manual-attendance": "node --test src/tests/manualAttendance.test.js",
     "recalculate:allowances": "node src/scripts/recalculateAllowanceAllocations.js",
     "check": "node --check src/server.js && node --check src/app.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
+    "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
