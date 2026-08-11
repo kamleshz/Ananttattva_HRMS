@@ -15,7 +15,7 @@ services:
       - key: REDIS_URL
         sync: false
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: REFRESH_TOKEN_SECRET
         generateValue: true
       - key: CLIENT_URLS
@@ -30,4 +30,23 @@ services:
         sync: false
       - key: MAIL_SENDER_EMAIL
         sync: false
-
+      - key: FACE_ENGINE
+        value: uniface
+      - key: FACE_DETECTOR
+        value: scrfd_10g
+      - key: FACE_RECOGNIZER
+        value: arcface_mnet
+      - key: FACE_MODEL_VERSION
+        value: uniface-3.7.1-scrfd10g-arcface-mnet
+      - key: FACE_EMBEDDING_KEY
+        sync: false
+      - key: FACE_ANTI_SPOOF_ENABLED
+        value: "false"
+      - key: FACE_ENROLLMENT_CHALLENGE_EXPIRY_SECONDS
+        value: "300"
+      - key: MANUAL_ATTENDANCE_REVIEW_THRESHOLD
+        value: "3"
+      - key: MANUAL_ATTENDANCE_FACE_RETRY_LIMIT
+        value: "2"
+      - key: MANUAL_ATTENDANCE_ALLOW_LOCATION_EXCEPTION
+        value: "true"

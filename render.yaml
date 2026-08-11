@@ -19,3 +19,9 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         sync: false
+      - key: MANUAL_ATTENDANCE_REVIEW_THRESHOLD
+        value: "3"
+      - key: MANUAL_ATTENDANCE_FACE_RETRY_LIMIT
+        value: "2"
+      - key: MANUAL_ATTENDANCE_ALLOW_LOCATION_EXCEPTION
+        value: "true"

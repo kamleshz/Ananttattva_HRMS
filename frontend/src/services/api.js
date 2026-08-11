@@ -1,5 +1,7 @@
 const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
 const TOKEN_KEY = "peoplepulse_access_token";
+export const SERVER_FACE_ENABLED = import.meta.env.VITE_FACE_ENGINE === 'uniface';
+const BIOMETRIC_API_URL = (import.meta.env.VITE_BIOMETRIC_API_URL || API_URL).replace(/\/+$/, '');
 
 export function apiUrl(path = "") {
   if (!path) return API_URL;
@@ -28,6 +30,17 @@ export async function api(path, options = {}) {
       issue?.message ? `${field}${issue.message}` : payload.message || "Request failed",
     );
   }
+  return payload.data;
+}
+
+async function biometricRequest(path, options = {}) {
+  const headers={"Content-Type":"application/json",...options.headers};
+  const token=session.getToken();if(token)headers.Authorization=`Bearer ${token}`;
+  let response;
+  try { response=await fetch(`${BIOMETRIC_API_URL}${path}`,{...options,headers}); }
+  catch (cause) { const error=new Error('The biometric service could not be reached.');error.code='NETWORK_FAILED';error.cause=cause;throw error; }
+  const payload=await response.json().catch(()=>({message:'Invalid biometric service response'}));
+  if(!response.ok){const error=new Error(payload.message||'Biometric request failed');error.code=payload.details?.[0]?.code;throw error}
   return payload.data;
 }
 
@@ -105,6 +118,7 @@ export const workArrangementApi = {
   review: (id, decision, reviewNote = "") => api(`/work-arrangements/${id}/${decision}`, { method: "PATCH", body: JSON.stringify({ reviewNote }) }),
 };
 export const employeeApi = {
+  demographics: (group) => api(`/employees/demographics/list?group=${encodeURIComponent(group)}`),
   organizationChart: () => api('/employees/organization-chart'),
   list: (search = "") =>
     api(
@@ -134,13 +148,20 @@ export const leaveApi = {
 };
 export const adminApi = { dashboard: () => api("/dashboard/admin") };
 export const biometricApi = {
-  challenge: (mode) =>
-    api("/biometrics/challenge", {
+  challenge: (mode, attendanceMode = 'office', employeeId) =>
+    (SERVER_FACE_ENABLED?biometricRequest:api)("/biometrics/challenge", {
       method: "POST",
-      body: JSON.stringify({ mode }),
-    }),
+      body: JSON.stringify(SERVER_FACE_ENABLED?{action:mode,attendanceMode,...(employeeId&&{employeeId})}:{mode}),
+    }).then(data=>SERVER_FACE_ENABLED?{...data,challenge:data.steps?.[0]}:data),
   verify: (data) =>
-    api("/biometrics/verify", { method: "POST", body: JSON.stringify(data) }),
+    (SERVER_FACE_ENABLED?biometricRequest:api)("/biometrics/verify", { method: "POST", body: JSON.stringify(data) }),
+  enroll: (data) => biometricRequest('/biometrics/enroll',{method:'POST',body:JSON.stringify(data)}),
+  status: () => biometricRequest('/biometrics/me/status'),
+  employeeStatus: (id) => biometricRequest(`/employees/${id}/biometrics/status`),
+  reset: (id) => biometricRequest(`/employees/${id}/biometrics/reset`,{method:'POST',body:JSON.stringify({confirmation:'RESET BIOMETRICS'})}),
+  migrate: (id) => biometricRequest(`/admin/biometrics/migrate/${id}`,{method:'POST'}),
+  migrateBatch: (data) => biometricRequest('/admin/biometrics/migrate-batch',{method:'POST',body:JSON.stringify(data)}),
+  healthReport: (days = 30) => biometricRequest(`/admin/biometrics/health-report?days=${days}`),
 };
 export const holidayApi = {
   list: (year = new Date().getFullYear()) => api(`/holidays?year=${year}`),

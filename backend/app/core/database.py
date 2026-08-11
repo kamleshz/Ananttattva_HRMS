@@ -36,11 +36,12 @@ class DatabaseManager:
         database = self.get_database()
         await database.users.create_index([("email", ASCENDING)], unique=True, name="users_email_unique")
         await database.employees.create_index([("employeeCode", ASCENDING)], unique=True, name="employees_code_unique")
-        await database.audit_logs.create_index([("timestamp", DESCENDING)], name="audit_timestamp")
-        await database.audit_logs.create_index(
+        await database.auditLogs.create_index([("timestamp", DESCENDING)], name="audit_timestamp")
+        await database.auditLogs.create_index(
             [("entityType", ASCENDING), ("entityId", ASCENDING), ("timestamp", DESCENDING)],
             name="audit_entity_timeline",
         )
+        await database.employees.create_index([("faceBiometric.migrationStatus", ASCENDING)], name="employee_biometric_migration")
 
 
 database_manager = DatabaseManager()

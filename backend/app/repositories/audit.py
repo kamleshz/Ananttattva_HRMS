@@ -6,7 +6,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 class AuditRepository:
     def __init__(self, database: AsyncDatabase[dict[str, Any]]) -> None:
-        self.collection = database.audit_logs
+        self.collection = database.auditLogs
 
     async def record(
         self,

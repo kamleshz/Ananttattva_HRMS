@@ -80,7 +80,18 @@ def decode_access_token(token: str, settings: Settings) -> dict[str, Any]:
             options={"require": ["sub", "role", "type", "jti", "iat", "exp"]},
         )
     except jwt.PyJWTError as exc:
-        raise AppError(401, "Invalid or expired access token") from exc
+        if not settings.accept_legacy_access_tokens:
+            raise AppError(401, "Invalid or expired access token") from exc
+        try:
+            payload = jwt.decode(
+                token,
+                settings.jwt_secret.get_secret_value(),
+                algorithms=["HS256"],
+                options={"require": ["sub", "role", "exp"]},
+            )
+            payload.setdefault("type", "access")
+        except jwt.PyJWTError as legacy_exc:
+            raise AppError(401, "Invalid or expired access token") from legacy_exc
     if payload.get("type") != "access":
         raise AppError(401, "Invalid access token")
     return payload

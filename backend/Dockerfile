@@ -4,7 +4,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN addgroup --system atconnect && adduser --system --ingroup atconnect atconnect
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system atconnect && adduser --system --ingroup atconnect atconnect
 WORKDIR /app
 
 COPY requirements.txt ./

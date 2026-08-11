@@ -31,6 +31,7 @@ import Login from "./Login.jsx";
 import {
   attendanceApi,
   dashboardApi,
+  employeeApi,
   recruitmentApi,
   session,
   workArrangementApi,
@@ -825,9 +826,12 @@ function RealHolidaysCard({ holidays = [] }) {
 }
 
 function WorkforceDemographicsCard({ demographics }) {
+  const [selected,setSelected]=useState(null),[employees,setEmployees]=useState([]),[loading,setLoading]=useState(false),[error,setError]=useState('');
   if(!demographics)return null;
   const total=demographics.male+demographics.female+demographics.nonBinary+demographics.preferNotToSay+demographics.notSpecified;
-  return <section className="card side-card workforce-demographics-card"><div className="card-heading"><div><p className="eyebrow">Workforce</p><h2>Employee demographics</h2></div><UsersRound size={18}/></div><div className="demographic-grid"><div><span>Male employees</span><strong>{demographics.male}</strong></div><div><span>Female employees</span><strong>{demographics.female}</strong></div><div><span>Other / private</span><strong>{demographics.nonBinary+demographics.preferNotToSay}</strong></div><div><span>Not specified</span><strong>{demographics.notSpecified}</strong></div></div><small className="demographic-total">{total} active employees · Counts use employee records only</small></section>;
+  const groups=[{key:'male',label:'Male employees',count:demographics.male},{key:'female',label:'Female employees',count:demographics.female},{key:'other_private',label:'Other / private',count:demographics.nonBinary+demographics.preferNotToSay},{key:'not_specified',label:'Not specified',count:demographics.notSpecified}];
+  async function openGroup(group){setSelected(group);setEmployees([]);setError('');setLoading(true);try{setEmployees(await employeeApi.demographics(group.key))}catch(requestError){setError(requestError.message)}finally{setLoading(false)}}
+  return <><section className="card side-card workforce-demographics-card"><div className="card-heading"><div><p className="eyebrow">Workforce</p><h2>Employee demographics</h2></div><UsersRound size={18}/></div><div className="demographic-grid">{groups.map(group=><button type="button" key={group.key} onClick={()=>openGroup(group)} aria-label={`View ${group.label}`}><span>{group.label}</span><strong>{group.count}</strong><small>View employees <ChevronRight size={12}/></small></button>)}</div><small className="demographic-total">{total} active employees · Select a group to view employees</small></section>{selected&&<div className="drawer-layer"><button className="drawer-backdrop" aria-label="Close employee list" onClick={()=>setSelected(null)}/><aside className="demographic-list-drawer"><div className="drawer-heading"><div><p className="eyebrow">Workforce directory</p><h2>{selected.label}</h2><p>{selected.count} active {selected.count===1?'employee':'employees'} in this group</p></div><button aria-label="Close" onClick={()=>setSelected(null)}><X size={20}/></button></div><div className="demographic-employee-list">{loading?<div className="demographic-list-state">Loading employees…</div>:error?<div className="attendance-error" role="alert">{error}</div>:employees.length===0?<div className="demographic-list-state">No active employees in this group.</div>:employees.map(employee=><article key={employee._id}>{employee.profilePhoto?<img src={employee.profilePhoto} alt=""/>:<span>{employee.firstName?.[0]}{employee.lastName?.[0]}</span>}<div><strong>{employee.firstName} {employee.lastName}</strong><small>{employee.employeeCode} · {employee.designation||'Employee'}</small><p>{employee.department||'General'}{employee.workLocation?` · ${employee.workLocation}`:''}</p></div></article>)}</div></aside></div>}</>;
 }
 
 function HomePage({ user, dashboard }) {

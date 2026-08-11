@@ -12,6 +12,7 @@ import {
   attendanceApi,
   biometricApi,
   organizationApi,
+  SERVER_FACE_ENABLED,
   workArrangementApi,
 } from "./services/api.js";
 import {
@@ -100,6 +101,7 @@ export default function AttendanceVerificationDrawer({
     [error, setError] = useState("");
   const [mismatch, setMismatch] = useState(null),
     [faceAttempts, setFaceAttempts] = useState(0),
+    [fallbackFailure, setFallbackFailure] = useState(null),
     [cameraErrorCode, setCameraErrorCode] = useState(
       navigator.mediaDevices?.getUserMedia ? "" : "CAMERA_NOT_AVAILABLE",
     );
@@ -116,7 +118,7 @@ export default function AttendanceVerificationDrawer({
     setStream(mediaStream);
   }
   async function requestChallenge() {
-    setChallenge(await biometricApi.challenge(mode));
+    setChallenge(await biometricApi.challenge(mode,attendanceMode));
   }
 
   useEffect(() => {
@@ -177,7 +179,7 @@ export default function AttendanceVerificationDrawer({
               setCameraError(denied?'Camera permission was denied.':'Camera could not be started on this device.');
             });
         biometricApi
-          .challenge(mode)
+          .challenge(mode,attendanceMode)
           .then(setChallenge)
           .catch((requestError) => setError(requestError.message));
         loadFaceLandmarker()
@@ -185,11 +187,9 @@ export default function AttendanceVerificationDrawer({
           .catch(() =>
             setCameraError("Secure face detection could not be loaded."),
           );
-        loadFaceIdentityModel()
+        if (!SERVER_FACE_ENABLED) loadFaceIdentityModel()
           .then(setIdentityModel)
-          .catch(() =>
-            setCameraError("Secure identity recognition could not be loaded."),
-          );
+          .catch(() => setCameraError("Secure identity recognition could not be loaded."));
       })
       .catch((requestError) => {
         if (active) {
@@ -242,6 +242,12 @@ export default function AttendanceVerificationDrawer({
                 canvas.height = 480;
                 canvas.getContext("2d").drawImage(video, 0, 0, 640, 480);
                 neutralPhotos.push(canvas.toDataURL("image/jpeg", 0.86));
+                if (SERVER_FACE_ENABLED) {
+                  setPhoto(neutralPhotos[0]);
+                  setLivenessStatus("Live face captured and ready for secure server verification");
+                  stream.getTracks().forEach((track) => track.stop());
+                  return;
+                }
                 if (neutralPhotos.length < 3) {
                   setLivenessStatus(
                     `Capturing stable identity frames (${neutralPhotos.length}/3)…`,
@@ -305,6 +311,7 @@ export default function AttendanceVerificationDrawer({
   }, [model, stream, challenge, photo]);
 
   useEffect(() => {
+    if (SERVER_FACE_ENABLED) return;
     if (!photo || identityPhotos.length !== 3 || !identityModel || faceTemplate)
       return;
     let active = true;
@@ -341,19 +348,19 @@ export default function AttendanceVerificationDrawer({
   }, [photo, identityPhotos, identityModel, faceTemplate]);
 
   async function submit() {
-    if (!photo || !coordinates || !faceTemplate || !challenge) return;
+    if (!photo || !coordinates || !challenge || (!SERVER_FACE_ENABLED && !faceTemplate)) return;
     setBusy(true);
     setError("");
     try {
       const verification = await biometricApi.verify({
-        challengeToken: challenge.challengeToken,
-        challenge: challenge.challenge,
-        photo,
-        faceTemplate,
-        livenessScore,
-        faceCount: 1,
+        ...(SERVER_FACE_ENABLED?{
+          challengeId:challenge.challengeId,
+          completedSteps:challenge.steps,
+          proofImage:photo,
+          location:coordinates,
+        }:{challengeToken: challenge.challengeToken,challenge: challenge.challenge,photo,faceTemplate,livenessScore,faceCount: 1}),
       });
-      if (verification.matched === false) {
+      if (verification.matched === false || verification.verified === false) {
         const attempts=faceAttempts+1;
         setFaceAttempts(attempts);
         setMismatch(verification);
@@ -377,6 +384,15 @@ export default function AttendanceVerificationDrawer({
       close();
     } catch (requestError) {
       setError(requestError.message);
+      if (SERVER_FACE_ENABLED) {
+        const code=requestError.code||'UNKNOWN_ERROR';
+        const reasonByCode={FACE_ENGINE_UNAVAILABLE:'BIOMETRIC_SERVICE_UNAVAILABLE',FACE_MODEL_NOT_LOADED:'BIOMETRIC_SERVICE_UNAVAILABLE',BIOMETRIC_NOT_ENROLLED:'BIOMETRIC_SERVICE_UNAVAILABLE',BIOMETRIC_REENROLLMENT_REQUIRED:'BIOMETRIC_SERVICE_UNAVAILABLE',IMAGE_QUALITY_LOW:'POOR_IMAGE_QUALITY',FACE_EMBEDDING_FAILED:'POOR_IMAGE_QUALITY',ANTI_SPOOF_FAILED:'LIVENESS_FAILED',CHALLENGE_EXPIRED:'LIVENESS_FAILED',CHALLENGE_ALREADY_USED:'LIVENESS_FAILED'};
+        const reasonCode=reasonByCode[code]||code;
+        const technical=['BIOMETRIC_SERVICE_UNAVAILABLE','NETWORK_FAILED','LOCATION_FAILED'].includes(reasonCode);
+        const attempts=technical?faceAttempts:faceAttempts+1;
+        setFaceAttempts(attempts);
+        setFallbackFailure({reasonCode,technical,attempts});
+      }
     } finally {
       setBusy(false);
     }
@@ -389,6 +405,7 @@ export default function AttendanceVerificationDrawer({
     setChallengeComplete(false);
     setLivenessScore(0);
     setMismatch(null);
+    setFallbackFailure(null);
     setError("");
     setCameraError("");
     setLivenessStatus("Preparing a new challenge…");
@@ -398,11 +415,12 @@ export default function AttendanceVerificationDrawer({
       setCameraError("Unable to restart biometric verification.");
     }
   }
-  const ready = Boolean(
+  const identityReady=SERVER_FACE_ENABLED?Boolean(photo):Boolean(faceTemplate),
+    ready = Boolean(
       officeConfigured &&
       photo &&
       coordinates &&
-      faceTemplate?.length >= 128 &&
+      identityReady &&
       livenessScore >= 0.65,
     ),
     challengeText = challengeCopy[challenge?.challenge];
@@ -438,11 +456,7 @@ export default function AttendanceVerificationDrawer({
           <li className={challengeComplete ? "done" : stream ? "active" : ""}>
             Completing liveness challenge
           </li>
-          <li
-            className={
-              faceTemplate ? "done" : challengeComplete ? "active" : ""
-            }
-          >
+          <li className={identityReady ? "done" : challengeComplete ? "active" : ""}>
             Matching enrolled identity
           </li>
           <li className={busy ? "active" : ""}>Recording attendance</li>
@@ -502,7 +516,7 @@ export default function AttendanceVerificationDrawer({
             </div>
           )}
           <div
-            className={`camera-frame ${faceTemplate ? "liveness-passed" : ""}`}
+            className={`camera-frame ${identityReady ? "liveness-passed" : ""}`}
           >
             {photo ? (
               <img src={photo} alt="Attendance identity capture" />
@@ -526,19 +540,19 @@ export default function AttendanceVerificationDrawer({
               <div className="liveness-overlay">
                 <ShieldCheck size={25} />
                 <strong>
-                  {faceTemplate ? "Identity ready" : "Analyzing identity…"}
+                  {identityReady ? "Identity ready" : "Analyzing identity…"}
                 </strong>
                 <span>
-                  {faceTemplate
-                    ? "Server match is required before attendance"
+                  {identityReady
+                    ? "UniFace server match is required before attendance"
                     : "Creating secure face embedding"}
                 </span>
               </div>
             )}
           </div>
           <canvas ref={canvasRef} hidden />
-          <div className={`liveness-status ${faceTemplate ? "passed" : ""}`}>
-            {faceTemplate ? <CheckCircle2 size={16} /> : <ScanFace size={16} />}
+          <div className={`liveness-status ${identityReady ? "passed" : ""}`}>
+            {identityReady ? <CheckCircle2 size={16} /> : <ScanFace size={16} />}
             <span>{livenessStatus}</span>
           </div>
           {photo && (
@@ -570,6 +584,7 @@ export default function AttendanceVerificationDrawer({
           </section>
         )}
         {cameraError && <section className="manual-checkin-request"><div><ShieldCheck size={18}/><p><strong>Biometric verification is unavailable</strong><span>You can submit a manual request immediately for this technical failure.</span></p></div><button className="primary-button" onClick={()=>manualFallback?.({reasonCode:cameraErrorCode||'CAMERA_NOT_AVAILABLE',technicalErrorCode:cameraErrorCode||'CAMERA_NOT_AVAILABLE',attempts:0,cameraStatus:'failed',location:coordinates})}>Use manual fallback <ChevronRight size={15}/></button></section>}
+        {fallbackFailure && !mismatch && (fallbackFailure.technical || fallbackFailure.attempts >= 2) && <section className="manual-checkin-request"><div><ShieldCheck size={18}/><p><strong>Use controlled manual fallback</strong><span>The server could not complete biometric verification. Your available evidence and location will be sent for approval.</span></p></div><button className="primary-button" onClick={()=>manualFallback?.({reasonCode:fallbackFailure.reasonCode,technicalErrorCode:fallbackFailure.technical?fallbackFailure.reasonCode:undefined,photo,attempts:fallbackFailure.attempts,cameraStatus:photo?'working':'failed',livenessStatus:challengeComplete?'passed':'failed',faceMatchStatus:'unknown',location:coordinates})}>Continue to manual request <ChevronRight size={15}/></button></section>}
         <div className="attendance-drawer-footer">
           <div>
             <Clock3 size={16} />

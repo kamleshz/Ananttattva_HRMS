@@ -40,6 +40,15 @@ router.get('/', authorize('super_admin','hr_admin','manager'), asyncHandler(asyn
   const [items,total] = await Promise.all([Employee.find(filter).populate('manager','firstName lastName').skip((page-1)*limit).limit(limit).sort({createdAt:-1}), Employee.countDocuments(filter)])
   res.json({ success: true, data: items, pagination: { page, limit, total, pages: Math.ceil(total/limit) } })
 }))
+router.get('/demographics/list',authorize('super_admin','admin','hr_admin','it_admin'),asyncHandler(async(req,res)=>{
+  const group=z.enum(['male','female','other_private','not_specified']).parse(req.query.group)
+  const gender=group==='other_private'?{$in:['non_binary','prefer_not_to_say']}:group
+  const employees=await Employee.find({employeeStatus:'active',gender})
+    .select('employeeCode firstName lastName profilePhoto department designation workLocation')
+    .sort({firstName:1,lastName:1})
+    .lean()
+  res.json({success:true,data:employees})
+}))
 router.get('/organization-chart', authorize('super_admin','hr_admin','manager','it_admin'), asyncHandler(async (_req,res)=>{
   const existingUserIds=await User.distinct('_id',{isActive:true})
   const employees=await Employee.find({user:{$in:existingUserIds},employeeStatus:{$ne:'terminated'}}).select('employeeCode firstName lastName profilePhoto department designation workLocation employeeStatus manager').sort({firstName:1,lastName:1}).lean()
@@ -187,7 +196,7 @@ const createSchema = z.object({
   probation:probationSchema.optional(),
   leavePlan:leavePlanSchema.optional(),
   shift:shiftSchema.optional(),
-  ...biometricEnrollmentSchema.shape,
+  ...biometricEnrollmentSchema.partial().shape,
 })
 router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
   const input = createSchema.parse(req.body)
@@ -223,8 +232,8 @@ router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, r
       probation,
       leavePlan,
       shift: input.shift || { name: 'General Shift', startTime: '10:00', endTime: '18:30', graceMinutes: 15 },
-      biometricTemplateVersion: 3,
-      biometricEnrolledAt: new Date(),
+      biometricTemplateVersion: input.biometricSamples?.length===3 ? 3 : 1,
+      biometricEnrolledAt: input.biometricSamples?.length===3 ? new Date() : null,
       user: user._id,
     })
     user.employee = employee._id

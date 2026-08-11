@@ -10,9 +10,11 @@ from app.core.database import get_database
 from app.core.errors import AppError
 from app.core.redis import get_redis
 from app.core.security import decode_access_token
+from app.ml.face_engine import face_engine_manager
 from app.repositories.audit import AuditRepository
 from app.repositories.users import UserRepository
 from app.services.auth import AuthService
+from app.services.biometrics import BiometricService
 from app.services.email import GraphEmailService
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -51,3 +53,14 @@ async def get_current_user(
 CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+
+def get_biometric_service(
+    database: Annotated[AsyncDatabase[dict[str, Any]], Depends(get_database)],
+    redis: Annotated[Redis, Depends(get_redis)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> BiometricService:
+    return BiometricService(database, redis, settings, face_engine_manager)
+
+
+BiometricServiceDep = Annotated[BiometricService, Depends(get_biometric_service)]

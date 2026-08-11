@@ -11,8 +11,12 @@ import { checkIn, checkOut } from './attendanceService.js'
 import { uploadAttendanceProof } from './privateStorageService.js'
 import { recordAudit } from './auditService.js'
 
-export const MANUAL_REASONS={CAMERA_NOT_AVAILABLE:'Camera not available',CAMERA_PERMISSION_DENIED:'Camera permission denied',FACE_NOT_DETECTED:'Face not detected',LIVENESS_FAILED:'Liveness verification failed',FACE_MISMATCH:'Face mismatch',NETWORK_OR_DEVICE_ERROR:'Network or device error',BIOMETRIC_SERVICE_UNAVAILABLE:'Biometric service unavailable',OTHER:'Other'}
-export const TECHNICAL_ERRORS=new Set(['CAMERA_NOT_AVAILABLE','CAMERA_PERMISSION_DENIED','NETWORK_OR_DEVICE_ERROR','BIOMETRIC_SERVICE_UNAVAILABLE','BROWSER_UNSUPPORTED'])
+export const MANUAL_REASONS={CAMERA_PERMISSION_DENIED:'Camera permission denied',CAMERA_NOT_AVAILABLE:'Camera not available',CAMERA_INITIALIZATION_FAILED:'Camera initialization failed',CAMERA_CAPTURE_FAILED:'Camera capture failed',NO_FACE_DETECTED:'No face detected',FACE_NOT_DETECTED:'Face not detected',MULTIPLE_FACES:'Multiple faces detected',POOR_IMAGE_QUALITY:'Poor image quality',LIVENESS_FAILED:'Liveness verification failed',FACE_MATCH_FAILED:'Face match failed',FACE_MISMATCH:'Face mismatch',LOCATION_PERMISSION_DENIED:'Location permission denied',LOCATION_FAILED:'Location failed',NETWORK_FAILED:'Network failed',NETWORK_OR_DEVICE_ERROR:'Network or device error',BIOMETRIC_SERVICE_UNAVAILABLE:'Biometric service unavailable',BROWSER_NOT_SUPPORTED:'Browser not supported',UNKNOWN_ERROR:'Unknown technical error',OTHER:'Other'}
+export const TECHNICAL_ERRORS=new Set(['CAMERA_NOT_AVAILABLE','CAMERA_PERMISSION_DENIED','CAMERA_INITIALIZATION_FAILED','CAMERA_CAPTURE_FAILED','NETWORK_FAILED','NETWORK_OR_DEVICE_ERROR','BIOMETRIC_SERVICE_UNAVAILABLE','BROWSER_UNSUPPORTED','BROWSER_NOT_SUPPORTED','LOCATION_PERMISSION_DENIED','LOCATION_FAILED','UNKNOWN_ERROR'])
+
+export function normalizeDeviceDetails(details={}){
+  return Object.fromEntries(['browser','os','deviceType'].flatMap(key=>typeof details?.[key]==='string'&&details[key].trim()?[[key,details[key].trim().slice(0,80)]]:[]))
+}
 
 export function distanceMeters(from,to){
   const rad=value=>value*Math.PI/180,R=6371000,dLat=rad(to.latitude-from.latitude),dLon=rad(to.longitude-from.longitude)
@@ -23,8 +27,8 @@ export function approvalTimestamp(request){return new Date(request.requestedAt||
 export function validateFallbackEligibility({reasonCode,attempts=0,technicalErrorCode,mismatchTrusted=false}){
   if(!MANUAL_REASONS[reasonCode])throw new HttpError(422,'Select a valid manual attendance reason')
   if(TECHNICAL_ERRORS.has(technicalErrorCode)||TECHNICAL_ERRORS.has(reasonCode))return true
-  if(reasonCode==='FACE_MISMATCH'&&mismatchTrusted&&attempts>=env.manualAttendanceFaceRetryLimit)return true
-  if(['FACE_NOT_DETECTED','LIVENESS_FAILED'].includes(reasonCode)&&attempts>=env.manualAttendanceFaceRetryLimit)return true
+  if(['FACE_MISMATCH','FACE_MATCH_FAILED'].includes(reasonCode)&&mismatchTrusted&&attempts>=env.manualAttendanceFaceRetryLimit)return true
+  if(['FACE_NOT_DETECTED','NO_FACE_DETECTED','MULTIPLE_FACES','POOR_IMAGE_QUALITY','LIVENESS_FAILED'].includes(reasonCode)&&attempts>=env.manualAttendanceFaceRetryLimit)return true
   throw new HttpError(422,`Retry biometric attendance ${env.manualAttendanceFaceRetryLimit} times before using manual fallback`)
 }
 
@@ -75,7 +79,7 @@ export async function createManualAttendanceRequest({req,input,mismatchProof}){
   if(await FaceAttendanceRequest.exists({employee:employee._id,date,action:input.action,status:{$in:['pending','processing']}}))throw new HttpError(409,`A manual ${input.action.replace('_','-')} request is already pending`)
   const locationAssessment=await assessLocation(input,employee._id,requestedAt)
   const proofPhoto=await uploadAttendanceProof(input.proofPhoto,employee._id,input.action)
-  const request=await FaceAttendanceRequest.create({employee:employee._id,requestedBy:req.user._id,date,attemptedAt:requestedAt,requestedAt,action:input.action,attendanceMode:input.attendanceMode,...locationAssessment,reasonCode:input.reasonCode,reasonLabel:MANUAL_REASONS[input.reasonCode],remarks:input.remarks,reason:input.remarks||MANUAL_REASONS[input.reasonCode],clientRequestId:input.clientRequestId,ipAddress:req.ip,device:req.get('user-agent'),deviceDetails:input.deviceDetails,faceMatchScore:mismatchProof?.faceMatchScore??input.biometricAttempt?.faceMatchScore,livenessScore:mismatchProof?.livenessScore,biometricAttempt:{...input.biometricAttempt,attempted:Boolean(input.biometricAttempt?.attempts),trusted:Boolean(mismatchProof),photoAvailable:Boolean(proofPhoto),...(proofPhoto&&{proofPhotoStorageKey:proofPhoto.storageKey,proofPhotoFormat:proofPhoto.format,proofPhotoVersion:proofPhoto.version,proofPhotoBytes:proofPhoto.bytes,proofPhotoHash:proofPhoto.hash})}})
+  const request=await FaceAttendanceRequest.create({employee:employee._id,requestedBy:req.user._id,date,attemptedAt:requestedAt,requestedAt,action:input.action,attendanceMode:input.attendanceMode,...locationAssessment,reasonCode:input.reasonCode,reasonLabel:MANUAL_REASONS[input.reasonCode],remarks:input.remarks,reason:input.remarks||MANUAL_REASONS[input.reasonCode],clientRequestId:input.clientRequestId,ipAddress:req.ip,device:req.get('user-agent'),deviceDetails:normalizeDeviceDetails(input.deviceDetails),faceMatchScore:mismatchProof?.faceMatchScore??input.biometricAttempt?.faceMatchScore,livenessScore:mismatchProof?.livenessScore,biometricAttempt:{...input.biometricAttempt,attempted:Boolean(input.biometricAttempt?.attempts),trusted:Boolean(mismatchProof),photoAvailable:Boolean(proofPhoto),...(proofPhoto&&{proofPhotoStorageKey:proofPhoto.storageKey,proofPhotoFormat:proofPhoto.format,proofPhotoVersion:proofPhoto.version,proofPhotoBytes:proofPhoto.bytes,proofPhotoHash:proofPhoto.hash})}})
   const reviewers=await reviewersFor(employee),employeeName=`${employee.firstName} ${employee.lastName}`.trim()
   await Promise.all(reviewers.filter(item=>String(item._id)!==String(req.user._id)).map(item=>notifyOnce({recipient:item._id,dedupeKey:`manual-attendance:${request._id}:requested`,type:'Manual Attendance Approval',title:`Manual ${input.action.replace('_','-')} approval requested`,message:`${employeeName} requested manual attendance (${request.reasonLabel}).`,employee:employee._id})))
   await recordAudit({req,action:'MANUAL_ATTENDANCE_REQUESTED',entityType:'FaceAttendanceRequest',entityId:request._id,employeeId:employee._id,after:request.toObject(),metadata:{riskLevel:request.riskLevel,reasonCode:request.reasonCode}})

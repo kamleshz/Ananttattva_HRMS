@@ -18,6 +18,7 @@ import {
   Plus,
   ReceiptText,
   Search,
+  ScanFace,
   ShieldCheck,
   Trash2,
   Upload,
@@ -30,10 +31,12 @@ import {
   adminApi,
   allowanceApi,
   attendanceApi,
+  biometricApi,
   employeeApi,
   holidayApi,
   leaveApi,
   workArrangementApi,
+  SERVER_FACE_ENABLED,
 } from "./services/api.js";
 import BiometricEnrollment from "./BiometricEnrollment.jsx";
 import "./allowance-policy.css";
@@ -1014,9 +1017,6 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
           </p>
         )}
 
-        {(item.reviewNote && (item.status === "approved" || item.status === "rejected")) && (
-          <blockquote className="review-note-box">{item.reviewNote}</blockquote>
-        )}
       </div>
 
       {canReview && isMyTurn && (
@@ -1745,7 +1745,7 @@ export function EmployeeOnboardingPage({ user }) {
     });
   async function submit(event) {
     event.preventDefault();
-    if (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3) {
+    if (!SERVER_FACE_ENABLED && (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3)) {
       setError(
         "Biometric face enrollment is required before creating the employee.",
       );
@@ -1754,8 +1754,9 @@ export function EmployeeOnboardingPage({ user }) {
     setBusy(true);
     setError("");
     try {
+      const {biometricTemplate,biometricSamples,profilePhoto,...nonBiometricForm}=form;
       const payload = {
-        ...form,
+        ...(SERVER_FACE_ENABLED?nonBiometricForm:{...nonBiometricForm,profilePhoto,biometricTemplate,biometricSamples}),
         manager: form.manager || null,
         employmentType: form.employmentType,
         employeeStatus: form.employeeStatus,
@@ -1764,15 +1765,15 @@ export function EmployeeOnboardingPage({ user }) {
         const auto = expectedProbationEnd(form.joiningDate, form.probation.durationMonths || 3);
         if (auto) payload.probation = { ...form.probation, expectedEndDate: auto };
       }
-      await employeeApi.create(payload);
-      navigate("/people");
+      const created=await employeeApi.create(payload);
+      navigate(SERVER_FACE_ENABLED?`/people/${created._id}/biometrics`:"/people");
     } catch (e) {
       setError(e.message);
     } finally {
       setBusy(false);
     }
   }
-  if (!form.profilePhoto)
+  if (!form.profilePhoto && !SERVER_FACE_ENABLED)
     return (
       <>
         <button className="back-link" onClick={() => navigate("/people")}>
@@ -2137,18 +2138,43 @@ export function EmployeeBiometricPage({ employeeId }) {
   const [existingPhotos, setExistingPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [status, setStatus] = useState(null);
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     employeeApi.get(employeeId).then(setEmployee).catch((requestError) => setError(requestError.message));
-    employeeApi.getBiometrics(employeeId).then((data) => setExistingPhotos(data.photos || [])).catch((requestError) => setError(requestError.message));
+    if (SERVER_FACE_ENABLED) biometricApi.employeeStatus(employeeId).then(setStatus).catch((requestError) => setError(requestError.message));
+    else employeeApi.getBiometrics(employeeId).then((data) => setExistingPhotos(data.photos || [])).catch((requestError) => setError(requestError.message));
   }, [employeeId]);
 
+  async function runAdminAction(action) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      if (action === "reset") {
+        if (!window.confirm("Reset this employee's UniFace access? Legacy biometric data will be preserved.")) return;
+        const result = await biometricApi.reset(employeeId);
+        setNotice(result?.message || "Biometric access reset. Live re-enrollment is now required.");
+      } else {
+        const result = await biometricApi.migrate(employeeId);
+        setNotice(result?.message || "Migration completed.");
+      }
+      setStatus(await biometricApi.employeeStatus(employeeId));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save() {
-    if (!enrollment.profilePhoto || enrollment.biometricTemplate.length < 128 || enrollment.biometricSamples.length !== 3) return;
+    if (!enrollment.profilePhoto || enrollment.biometricSamples.length !== 3 || (!SERVER_FACE_ENABLED&&enrollment.biometricTemplate.length<128)) return;
     setBusy(true);
     setError("");
     try {
-      await employeeApi.updateBiometrics(employeeId, enrollment);
+      if(SERVER_FACE_ENABLED)await biometricApi.enroll({employeeId,challengeId:enrollment.challengeId,completedSteps:enrollment.completedSteps,samples:enrollment.biometricSamples.map(({pose,photo})=>({pose,photo}))});
+      else await employeeApi.updateBiometrics(employeeId, enrollment);
       navigate("/people");
     } catch (requestError) {
       setError(requestError.message);
@@ -2161,10 +2187,12 @@ export function EmployeeBiometricPage({ employeeId }) {
     <button className="back-link" onClick={() => navigate("/people")}><ArrowLeft size={15}/> Back to employees</button>
     <PageHeader eyebrow="People · Security" title="Re-enroll employee face" description={employee ? `Capture a new secure identity template for ${employee.firstName} ${employee.lastName} (${employee.employeeCode}).` : "Loading employee…"}/>
     <section className="content-card biometric-step-card">
+      {SERVER_FACE_ENABLED && status && <div className="existing-biometric-photos"><div><strong>UniFace biometric status</strong><span>{status.enrolled ? "Encrypted server-side identity is active." : "Server-side identity is not active."}</span></div><div className="biometric-status-grid"><span><b>Migration</b>{status.migrationStatus.replaceAll("_", " ")}</span><span><b>Model</b>{status.modelVersion || "Not enrolled"}</span><span><b>Embedding</b>{status.embeddingDimension ? `${status.embeddingDimension} dimensions` : "Unavailable"}</span><span><b>Enrolled</b>{status.enrolledAt ? new Date(status.enrolledAt).toLocaleString() : "Not enrolled"}</span><span><b>Last updated</b>{status.updatedAt ? new Date(status.updatedAt).toLocaleString() : "Unavailable"}</span><span><b>30-day exceptions</b>{status.recentVerificationFailureCount} failed · {status.manualAttendanceCount} manual</span></div><div className="onboarding-actions">{status.migrationStatus === "migration_required" && <button type="button" className="secondary-button" disabled={busy} onClick={() => runAdminAction("migrate")}>Migrate trusted photos</button>}{status.enrolled && <button type="button" className="secondary-button" disabled={busy} onClick={() => runAdminAction("reset")}>Reset face access</button>}</div></div>}
       {existingPhotos.length>0&&<div className="existing-biometric-photos"><div><strong>Current enrollment photos</strong><span>Visible only to authorized HR and Admin users.</span></div><div className="enrollment-photo-grid">{existingPhotos.map((sample,index)=><figure key={sample.pose}><img src={sample.photo} alt={`Current biometric angle ${index+1}`}/><figcaption>{sample.pose==='front'?'Straight':`Side angle ${index}`}</figcaption></figure>)}</div></div>}
-      <BiometricEnrollment value={enrollment} onChange={setEnrollment}/>
+      <BiometricEnrollment value={enrollment} onChange={setEnrollment} employeeId={employeeId}/>
       <div className="biometric-privacy-note"><ShieldCheck size={17}/><p><strong>Identity replacement</strong><span>The previous biometric template will be replaced. Complete this step only while the named employee is physically present.</span></p></div>
       {error && <p className="attendance-error">{error}</p>}
+      {notice && <p className="success-message">{notice}</p>}
       {enrollment.biometricSamples.length === 3 && <button type="button" className="primary-button" disabled={busy} onClick={save}>{busy ? "Saving secure identity…" : "Save new three-angle identity"}</button>}
     </section>
   </>;
@@ -2172,12 +2200,14 @@ export function EmployeeBiometricPage({ employeeId }) {
 
 export function ReportsPage() {
   const [data, setData] = useState(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [biometricReport, setBiometricReport] = useState(null);
   useEffect(() => {
     adminApi
       .dashboard()
       .then(setData)
       .catch((e) => setError(e.message));
+    if (SERVER_FACE_ENABLED) biometricApi.healthReport(30).then(setBiometricReport).catch(() => {});
   }, []);
   const cards = data
     ? [
@@ -2248,6 +2278,7 @@ export function ReportsPage() {
               ))}
             </div>
           </section>
+          {biometricReport && <section className="content-card report-chart"><div className="section-heading"><div><p className="eyebrow">Last 30 days</p><h2>Biometric health</h2></div></div><div className="report-metrics">{[["Success rate", `${biometricReport.metrics.biometricSuccessRate}%`],["Face match failures", `${biometricReport.metrics.faceMatchFailureRate}%`],["Liveness failures", `${biometricReport.metrics.livenessFailureRate}%`],["Camera failures", `${biometricReport.metrics.cameraFailureRate}%`],["Manual fallback", `${biometricReport.metrics.manualFallbackRate}%`],["Re-enrollment required", biometricReport.metrics.employeesRequiringReEnrollment],["Old templates", biometricReport.metrics.employeesUsingOldTemplate],["Migrated to UniFace", biometricReport.metrics.employeesMigratedToUniFace]].map(([label,value])=><div key={label}><span><ScanFace size={18}/></span><p>{label}</p><strong>{value}</strong></div>)}</div></section>}
         </>
       )}
     </>

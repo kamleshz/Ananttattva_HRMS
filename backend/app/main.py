@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.redis import redis_manager
 from app.core.seed import seed_admin
+from app.ml.face_engine import face_engine_manager
 from app.repositories.users import UserRepository
 
 logger = logging.getLogger("at_connect.api")
@@ -35,12 +37,14 @@ def create_app(enable_lifespan: bool = True) -> FastAPI:
         await redis_manager.connect(settings)
         await database_manager.ensure_indexes()
         await seed_admin(UserRepository(database_manager.get_database()), settings)
+        await asyncio.to_thread(face_engine_manager.initialize, settings)
         logger.info("application_started", extra={"context": {"environment": settings.app_env}})
         try:
             yield
         finally:
             await redis_manager.close()
             await database_manager.close()
+            face_engine_manager.close()
 
     app = FastAPI(
         title="AT Connect API",
@@ -102,7 +106,8 @@ def create_app(enable_lifespan: bool = True) -> FastAPI:
 
     @app.get("/api/health", tags=["System"])
     async def health() -> dict[str, Any]:
-        return {"success": True, "message": "AT Connect API is healthy", "timestamp": datetime.now(UTC).isoformat()}
+        face_health = face_engine_manager.health()
+        return {"success": True, "message": "AT Connect API is healthy", "timestamp": datetime.now(UTC).isoformat(), "services": {"faceEngine": "healthy" if face_health["healthy"] else "degraded"}}
 
     app.include_router(api_router, prefix="/api")
     return app

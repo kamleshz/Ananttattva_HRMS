@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Camera, CheckCircle2, RotateCcw, ScanFace, UserRound } from 'lucide-react'
 import { createIdentityTemplate, detectFace, evaluateEnrollmentPose, loadFaceIdentityModel, loadFaceLandmarker } from './services/biometrics.js'
+import { biometricApi, SERVER_FACE_ENABLED } from './services/api.js'
 
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 const poseLabel = { front:'Straight', left:'Left side', right:'Right side' }
@@ -9,10 +10,11 @@ function averageTemplates(templates) {
   return templates[0].map((_, index) => Number((templates.reduce((sum, template) => sum + template[index], 0) / templates.length).toFixed(6)))
 }
 
-export default function BiometricEnrollment({ value, onChange }) {
+export default function BiometricEnrollment({ value, onChange, employeeId }) {
   const videoRef=useRef(null),canvasRef=useRef(null)
   const [stream,setStream]=useState(null),[model,setModel]=useState(null),[identityModel,setIdentityModel]=useState(null)
   const [error,setError]=useState(''),[loading,setLoading]=useState(false),[samples,setSamples]=useState(value?.biometricSamples || [])
+  const [enrollmentChallenge,setEnrollmentChallenge]=useState(null)
 
   useEffect(()=>{
     if(videoRef.current&&stream){videoRef.current.srcObject=stream;videoRef.current.play().catch(()=>{})}
@@ -22,17 +24,19 @@ export default function BiometricEnrollment({ value, onChange }) {
   async function start(){
     setLoading(true);setError('')
     try{
-      const [mediaStream,landmarker,identity]=await Promise.all([
+      if(SERVER_FACE_ENABLED&&!employeeId)throw new Error('Create the employee record before starting UniFace enrollment.')
+      const [mediaStream,landmarker,identity,challenge]=await Promise.all([
         navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}),
-        loadFaceLandmarker(),loadFaceIdentityModel(),
+        loadFaceLandmarker(),SERVER_FACE_ENABLED?Promise.resolve(null):loadFaceIdentityModel(),
+        SERVER_FACE_ENABLED?biometricApi.challenge('enroll','office',employeeId):Promise.resolve(null),
       ])
-      setModel(landmarker);setIdentityModel(identity);setStream(mediaStream)
+      setModel(landmarker);setIdentityModel(identity);setEnrollmentChallenge(challenge);setStream(mediaStream)
     }catch{setError('Camera or secure face-recognition model is unavailable.')}
     finally{setLoading(false)}
   }
 
-  const nextTarget = samples.length === 0 ? 'front' : samples.length === 1 ? 'side' : samples[1].pose === 'left' ? 'right' : 'left'
-  const instruction = nextTarget === 'front' ? 'Look straight at the camera with a relaxed expression.' : nextTarget === 'side' ? 'Turn slightly to either side while keeping both eyes visible.' : 'Now turn slightly to the opposite side.'
+  const nextTarget = samples.length === 0 ? 'front' : SERVER_FACE_ENABLED ? (samples.length === 1 ? 'left' : 'right') : samples.length === 1 ? 'side' : samples[1].pose === 'left' ? 'right' : 'left'
+  const instruction = nextTarget === 'front' ? 'Look straight at the camera with a relaxed expression.' : nextTarget === 'side' ? 'Turn slightly to either side while keeping both eyes visible.' : nextTarget === 'left' ? 'Turn slightly to your left while keeping both eyes visible.' : 'Turn slightly to your right while keeping both eyes visible.'
 
   async function capture(){
     setLoading(true);setError('')
@@ -48,15 +52,15 @@ export default function BiometricEnrollment({ value, onChange }) {
         canvas.getContext('2d').drawImage(videoRef.current,0,0,640,480)
         const photo=canvas.toDataURL('image/jpeg',.84)
         photos.push(photo)
-        templates.push(await createIdentityTemplate(photo,identityModel))
+        if(!SERVER_FACE_ENABLED)templates.push(await createIdentityTemplate(photo,identityModel))
         if(frame<2)await wait(180)
       }
-      const sample={pose:capturedPose,photo:photos[1],template:averageTemplates(templates)}
+      const sample={pose:capturedPose,photo:photos[1],...(!SERVER_FACE_ENABLED&&{template:averageTemplates(templates)})}
       const nextSamples=[...samples,sample]
       setSamples(nextSamples)
       if(nextSamples.length===3){
         const front=nextSamples.find(item=>item.pose==='front')
-        onChange({profilePhoto:front.photo,biometricTemplate:front.template,biometricSamples:nextSamples})
+        onChange({profilePhoto:front.photo,biometricTemplate:front.template||[],biometricSamples:nextSamples,...(SERVER_FACE_ENABLED&&{challengeId:enrollmentChallenge?.challengeId,completedSteps:nextSamples.map(item=>item.pose)})})
         stream.getTracks().forEach(track=>track.stop());setStream(null)
       }
     }catch(captureError){setError(captureError.message)}

@@ -141,12 +141,15 @@ export function evaluateChallenge(result, challenge) {
   const landmarks = result.faceLandmarks[0]
   const left = landmarks[234], right = landmarks[454], nose = landmarks[1]
   const ratio = (nose.x-left.x) / Math.max(.001,right.x-left.x)
-  const movement = Math.abs(ratio-.5)
-  return { faceCount, neutral:movement < .045, passed:movement > .09, score:Math.min(1,movement*7) }
+  const signedMovement = ratio-.5, movement=Math.abs(signedMovement)
+  const directionPassed=challenge==='turn_left'?signedMovement<-.09:challenge==='turn_right'?signedMovement>.09:movement>.09
+  return { faceCount, neutral:movement < .045, passed:directionPassed, score:Math.min(1,movement*7) }
 }
 
 export const challengeCopy = {
   blink:{ title:'Blink both eyes', instruction:'Look straight and blink naturally once.' },
   smile:{ title:'Smile now', instruction:'Start with a neutral face, then give a clear smile.' },
   turn:{ title:'Turn your head', instruction:'Look straight first, then turn to either side.' },
+  turn_left:{ title:'Turn left', instruction:'Look straight first, then turn your head slightly left.' },
+  turn_right:{ title:'Turn right', instruction:'Look straight first, then turn your head slightly right.' },
 }

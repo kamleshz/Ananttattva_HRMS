@@ -19,6 +19,7 @@ import { WorkArrangementRequest } from '../models/WorkArrangementRequest.js'
 import { FaceAttendanceRequest } from '../models/FaceAttendanceRequest.js'
 import { sendFaceCheckInApprovalRequest, sendFaceCheckInDecision } from '../services/mailService.js'
 import manualAttendanceRoutes from './manualAttendanceRoutes.js'
+import { BiometricVerificationUse } from '../models/BiometricVerificationUse.js'
 
 const router = Router()
 router.use(authenticate)
@@ -73,7 +74,8 @@ async function verifiedPunch(req, mode) {
   try { verification = jwt.verify(input.biometricToken, env.jwtSecret) }
   catch { throw new HttpError(401, 'Biometric verification expired. Please verify again') }
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
-  if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || verification.mode !== mode || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || verification.faceMatchScore < .56) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
+  const authoritativeUniFace=verification.engineName==='uniface'&&verification.verified===true&&Boolean(verification.modelVersion)
+  if (verification.purpose !== 'biometric_verification' || verification.sub !== req.user.id || (verification.employeeId&&verification.employeeId!==String(req.user.employee?._id)) || verification.mode !== mode || (verification.attendanceMode&&verification.attendanceMode!==input.attendanceMode) || verification.photoHash !== photoHash || verification.identityTemplateVersion < 2 || (!authoritativeUniFace&&verification.faceMatchScore < .56)) throw new HttpError(401, 'Invalid or insufficient biometric identity verification')
   const dayStart=startOfLocalDay(),dayEnd=new Date(dayStart);dayEnd.setDate(dayEnd.getDate()+1);dayEnd.setMilliseconds(-1)
   const existing=mode==='check-out'?await Attendance.findOne({employee:req.user.employee?._id,date:dayStart}).select('attendanceMode'):null
   if(existing&&existing.attendanceMode!==input.attendanceMode)throw new HttpError(409,`Check out using the same attendance mode used at check in (${existing.attendanceMode.replaceAll('_',' ')})`)
@@ -115,6 +117,10 @@ async function verifiedPunch(req, mode) {
   }
   input.locationVerified=true
   input.biometricVerification = { verified:true, method:verification.identityTemplateVersion >= 3 ? 'active_liveness_multi_angle_face_embedding_v3' : 'active_liveness_face_embedding_v2', challenge:verification.challenge, livenessScore:verification.livenessScore, faceMatchScore:verification.faceMatchScore, verifiedAt:new Date() }
+  if(!verification.jti)throw new HttpError(401,'Biometric verification token is missing its replay identifier')
+  try{await BiometricVerificationUse.create({jti:verification.jti,employee:req.user.employee._id,action:mode,engineName:verification.engineName||'legacy_browser',expiresAt:new Date(verification.exp*1000)})}
+  catch(error){if(error?.code===11000)throw new HttpError(409,'This biometric verification has already been used');throw error}
+  if(authoritativeUniFace)input.biometricVerification.method=`uniface_${verification.modelVersion}`
   return input
 }
 router.post('/check-in', asyncHandler(async (req, res) => res.status(201).json({ success: true, data: await checkIn(req.user.employee, await verifiedPunch(req,'check-in'), meta(req)) })))
