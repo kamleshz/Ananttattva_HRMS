@@ -11,7 +11,6 @@ import {
 import {
   attendanceApi,
   biometricApi,
-  organizationApi,
   SERVER_FACE_ENABLED,
   workArrangementApi,
 } from "./services/api.js";
@@ -84,11 +83,7 @@ export default function AttendanceVerificationDrawer({
     [faceTemplate, setFaceTemplate] = useState(null),
     [livenessScore, setLivenessScore] = useState(0);
   const [challengeComplete, setChallengeComplete] = useState(false);
-  const [coordinates, setCoordinates] = useState(null),
-    [locationError, setLocationError] = useState(
-      navigator.geolocation ? "" : "Location is not supported by this browser.",
-    );
-  const [officeConfigured, setOfficeConfigured] = useState(null);
+  const [coordinates, setCoordinates] = useState(null);
   const [cameraError, setCameraError] = useState(
     navigator.mediaDevices?.getUserMedia
       ? ""
@@ -126,7 +121,7 @@ export default function AttendanceVerificationDrawer({
       stopLocation = () => {};
     const eligibility =
       attendanceMode === "office"
-        ? organizationApi.officeLocations()
+        ? Promise.resolve([{}])
         : workArrangementApi.today().then((result) => {
             if (!result.modes.includes(attendanceMode))
               throw new Error(
@@ -135,32 +130,14 @@ export default function AttendanceVerificationDrawer({
             return [{}];
           });
     eligibility
-      .then((locations) => {
+      .then(() => {
         if (!active) return;
-        if (!locations.length) {
-          setOfficeConfigured(false);
-          setLocationError(
-            "Office attendance boundary is not configured. Ask a Super Admin to add it under Settings → Office Locations.",
-          );
-          setCameraError(
-            "Face verification will be available after the office boundary is configured.",
-          );
-          return;
-        }
-        setOfficeConfigured(true);
         if (navigator.geolocation)
           stopLocation = collectBestLocation(
             (location) => {
               if (active) setCoordinates(location);
             },
-            (positionError) => {
-              if (active)
-                setLocationError(
-                  positionError.code === 1
-                    ? "Location permission was denied. Enable precise location and try again."
-                    : "Unable to determine an accurate current location. Move near a window and retry.",
-                );
-            },
+            () => {},
           );
         if (navigator.mediaDevices?.getUserMedia)
           navigator.mediaDevices
@@ -193,8 +170,7 @@ export default function AttendanceVerificationDrawer({
       })
       .catch((requestError) => {
         if (active) {
-          setOfficeConfigured(false);
-          setLocationError(requestError.message);
+          setError(requestError.message);
         }
       });
     return () => {
@@ -348,7 +324,7 @@ export default function AttendanceVerificationDrawer({
   }, [photo, identityPhotos, identityModel, faceTemplate]);
 
   async function submit() {
-    if (!photo || !coordinates || !challenge || (!SERVER_FACE_ENABLED && !faceTemplate)) return;
+    if (!photo || !challenge || (!SERVER_FACE_ENABLED && !faceTemplate)) return;
     setBusy(true);
     setError("");
     try {
@@ -357,7 +333,7 @@ export default function AttendanceVerificationDrawer({
           challengeId:challenge.challengeId,
           completedSteps:challenge.steps,
           proofImage:photo,
-          location:coordinates,
+          ...(coordinates&&{location:coordinates}),
         }:{challengeToken: challenge.challengeToken,challenge: challenge.challenge,photo,faceTemplate,livenessScore,faceCount: 1}),
       });
       if (verification.matched === false || verification.verified === false) {
@@ -374,7 +350,6 @@ export default function AttendanceVerificationDrawer({
       const payload = {
         photo,
         attendanceMode,
-        location: coordinates,
         biometricToken: verification.verificationToken,
       };
       await (mode === "check-out"
@@ -417,9 +392,7 @@ export default function AttendanceVerificationDrawer({
   }
   const identityReady=SERVER_FACE_ENABLED?Boolean(photo):Boolean(faceTemplate),
     ready = Boolean(
-      officeConfigured &&
       photo &&
-      coordinates &&
       identityReady &&
       livenessScore >= 0.65,
     ),
@@ -433,7 +406,7 @@ export default function AttendanceVerificationDrawer({
             <p className="eyebrow">Secure attendance verification</p>
             <h2>{mode === "check-out" ? "Check Out" : "Check In"}</h2>
             <p>
-              Complete location and face verification to record your attendance.
+              Capture a live photo and submit your attendance.
             </p>
           </div>
           <button onClick={close}>
@@ -444,12 +417,6 @@ export default function AttendanceVerificationDrawer({
           className="verification-progress"
           aria-label="Attendance verification progress"
         >
-          <li className={coordinates ? "done" : "active"}>
-            Detecting current location
-          </li>
-          <li className={coordinates ? "active" : ""}>
-            Verifying office geofence
-          </li>
           <li className={stream || photo ? "done" : "active"}>
             Starting camera
           </li>
@@ -462,30 +429,8 @@ export default function AttendanceVerificationDrawer({
           <li className={busy ? "active" : ""}>Recording attendance</li>
         </ol>
         <div className="verification-section">
-          <p className="verification-label">1 · Current location</p>
-          {coordinates ? (
-            <div className="verification-success">
-              <CheckCircle2 size={18} />
-              <div>
-                <strong>Location captured</strong>
-                <span>
-                  {coordinates.latitude.toFixed(6)},{" "}
-                  {coordinates.longitude.toFixed(6)} · Accuracy{" "}
-                  {Math.round(coordinates.accuracyMeters)}m
-                </span>
-              </div>
-            </div>
-          ) : locationError ? (
-            <div className="verification-error">{locationError}</div>
-          ) : (
-            <div className="verification-loading">
-              <span /> Getting your precise location…
-            </div>
-          )}
-        </div>
-        <div className="verification-section">
           <p className="verification-label">
-            2 · Active liveness and identity check
+            Live photo and identity check
           </p>
           {challengeText && (
             <div
@@ -584,13 +529,13 @@ export default function AttendanceVerificationDrawer({
           </section>
         )}
         {cameraError && <section className="manual-checkin-request"><div><ShieldCheck size={18}/><p><strong>Biometric verification is unavailable</strong><span>You can submit a manual request immediately for this technical failure.</span></p></div><button className="primary-button" onClick={()=>manualFallback?.({reasonCode:cameraErrorCode||'CAMERA_NOT_AVAILABLE',technicalErrorCode:cameraErrorCode||'CAMERA_NOT_AVAILABLE',attempts:0,cameraStatus:'failed',location:coordinates})}>Use manual fallback <ChevronRight size={15}/></button></section>}
-        {fallbackFailure && !mismatch && (fallbackFailure.technical || fallbackFailure.attempts >= 2) && <section className="manual-checkin-request"><div><ShieldCheck size={18}/><p><strong>Use controlled manual fallback</strong><span>The server could not complete biometric verification. Your available evidence and location will be sent for approval.</span></p></div><button className="primary-button" onClick={()=>manualFallback?.({reasonCode:fallbackFailure.reasonCode,technicalErrorCode:fallbackFailure.technical?fallbackFailure.reasonCode:undefined,photo,attempts:fallbackFailure.attempts,cameraStatus:photo?'working':'failed',livenessStatus:challengeComplete?'passed':'failed',faceMatchStatus:'unknown',location:coordinates})}>Continue to manual request <ChevronRight size={15}/></button></section>}
+        {fallbackFailure && !mismatch && (fallbackFailure.technical || fallbackFailure.attempts >= 2) && <section className="manual-checkin-request"><div><ShieldCheck size={18}/><p><strong>Use controlled manual fallback</strong><span>The server could not complete biometric verification. Your available attendance evidence will be sent for approval.</span></p></div><button className="primary-button" onClick={()=>manualFallback?.({reasonCode:fallbackFailure.reasonCode,technicalErrorCode:fallbackFailure.technical?fallbackFailure.reasonCode:undefined,photo,attempts:fallbackFailure.attempts,cameraStatus:photo?'working':'failed',livenessStatus:challengeComplete?'passed':'failed',faceMatchStatus:'unknown',location:coordinates})}>Continue to manual request <ChevronRight size={15}/></button></section>}
         <div className="attendance-drawer-footer">
           <div>
             <Clock3 size={16} />
             <span>
-              Attendance is blocked unless this face matches the employee’s
-              enrolled identity and office boundary.
+              Your live photo must match your enrolled identity. Location is
+              recorded only when available and never blocks attendance.
             </span>
           </div>
           <button
@@ -599,10 +544,10 @@ export default function AttendanceVerificationDrawer({
             onClick={submit}
           >
             {busy
-              ? "Matching identity and recording…"
+              ? "Verifying photo and recording…"
               : mode === "check-out"
-                ? "Confirm verified check out"
-                : "Confirm verified check in"}{" "}
+                ? "Submit check out"
+                : "Submit check in"}{" "}
             <ChevronRight size={15} />
           </button>
         </div>

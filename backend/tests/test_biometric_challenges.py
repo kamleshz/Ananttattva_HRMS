@@ -6,6 +6,7 @@ import pytest
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.schemas.biometrics import VerificationRequest
 from app.services.biometrics import BiometricService
 
 
@@ -54,4 +55,20 @@ async def test_challenge_cannot_be_used_by_another_user() -> None:
     with pytest.raises(AppError) as mismatch:
         await service(redis)._consume_challenge("challenge-1", {"_id": "user-2"}, ["blink"])
     assert code(mismatch.value) == "CHALLENGE_EMPLOYEE_MISMATCH"
+    await redis.aclose()
+
+
+def test_attendance_verification_accepts_missing_location() -> None:
+    request = VerificationRequest(
+        challengeId="challenge-1",
+        completedSteps=["blink"],
+        proofImage="data:image/jpeg;base64," + "a" * 100,
+    )
+    assert request.location is None
+
+
+async def test_missing_office_location_is_recorded_as_unavailable() -> None:
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    result = await service(redis)._assess_location("507f1f77bcf86cd799439011", "office", None)
+    assert result == {"verified": False, "status": "unavailable"}
     await redis.aclose()

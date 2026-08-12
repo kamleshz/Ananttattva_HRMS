@@ -117,35 +117,36 @@ class BiometricService:
         await self.audit.record(action=action, entity_type="Employee", entity_id=payload.employee_id, actor_user_id=_identifier(user["_id"]), actor_employee_id=_identifier(user.get("employee")) or None, role=user.get("role"), metadata={"engine": "uniface", "modelVersion": self.settings.face_model_version, "sampleCount": 3}, **request_meta)
         return await self.status(payload.employee_id)
 
-    async def _verify_location(self, employee_id: str, mode: str, location: Any) -> dict[str, Any]:
-        if location.accuracy_meters > 150:
-            raise AppError(422, "Enable precise location and try again", [{"code": "LOCATION_FAILED"}])
+    async def _assess_location(self, employee_id: str, mode: str, location: Any | None) -> dict[str, Any]:
         def distance(target: dict[str, Any]) -> float:
             lat1, lon1, lat2, lon2 = map(math.radians, [location.latitude, location.longitude, target["latitude"], target["longitude"]])
             value = math.sin((lat2-lat1)/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin((lon2-lon1)/2)**2
             return 6_371_000 * 2 * math.atan2(math.sqrt(value), math.sqrt(1-value))
         if mode == "office":
+            if location is None:
+                return {"verified": False, "status": "unavailable"}
             offices = await self.database.officelocations.find({"isActive": True}).to_list(length=100)
             if not offices:
-                raise AppError(409, "Attendance location is not configured", [{"code": "LOCATION_FAILED"}])
+                return {"verified": False, "status": "not_configured", "latitude": location.latitude, "longitude": location.longitude, "accuracyMeters": round(location.accuracy_meters)}
             office = min(offices, key=distance)
             measured = distance(office)
-            if location.accuracy_meters > office.get("maximumAccuracyMeters", 150) or max(0, measured-location.accuracy_meters) > office.get("allowedRadiusMeters", 100):
-                raise AppError(403, "Your location is outside the attendance boundary", [{"code": "LOCATION_FAILED"}])
-            return {"verified": True, "officeId": str(office["_id"]), "distanceMeters": round(measured)}
+            accurate = location.accuracy_meters <= office.get("maximumAccuracyMeters", 150)
+            within_boundary = max(0, measured-location.accuracy_meters) <= office.get("allowedRadiusMeters", 100)
+            return {"verified": accurate and within_boundary, "status": "verified" if accurate and within_boundary else "low_accuracy" if not accurate else "outside_boundary", "officeId": str(office["_id"]), "latitude": location.latitude, "longitude": location.longitude, "distanceMeters": round(measured), "accuracyMeters": round(location.accuracy_meters)}
         now = datetime.now(UTC)
         arrangement = await self.database.workarrangementrequests.find_one({"employee": ObjectId(employee_id), "type": mode, "status": "approved", "startDate": {"$lte": now}, "endDate": {"$gte": now}})
         if not arrangement:
-            raise AppError(403, "An approved work arrangement is required", [{"code": "LOCATION_FAILED"}])
+            raise AppError(403, "An approved work arrangement is required for today", [{"code": "WORK_ARRANGEMENT_REQUIRED"}])
+        if location is None:
+            return {"verified": False, "status": "unavailable", "arrangementId": str(arrangement["_id"])}
+        if location.accuracy_meters > 150:
+            return {"verified": False, "status": "low_accuracy", "arrangementId": str(arrangement["_id"]), "latitude": location.latitude, "longitude": location.longitude, "accuracyMeters": round(location.accuracy_meters)}
         destination = arrangement.get("destination") or {}
         if destination.get("latitude") is None or destination.get("longitude") is None:
-            if mode == "wfh":
-                return {"verified": True, "arrangementId": str(arrangement["_id"])}
-            raise AppError(409, "The approved destination has no coordinates", [{"code": "LOCATION_FAILED"}])
+            return {"verified": False, "status": "destination_not_configured", "arrangementId": str(arrangement["_id"]), "latitude": location.latitude, "longitude": location.longitude, "accuracyMeters": round(location.accuracy_meters)}
         measured = distance(destination)
-        if max(0, measured-location.accuracy_meters) > destination.get("allowedRadiusMeters", 250):
-            raise AppError(403, "Your location is outside the approved work location", [{"code": "LOCATION_FAILED"}])
-        return {"verified": True, "arrangementId": str(arrangement["_id"]), "distanceMeters": round(measured)}
+        within_boundary = max(0, measured-location.accuracy_meters) <= destination.get("allowedRadiusMeters", 250)
+        return {"verified": within_boundary, "status": "verified" if within_boundary else "outside_boundary", "arrangementId": str(arrangement["_id"]), "latitude": location.latitude, "longitude": location.longitude, "distanceMeters": round(measured), "accuracyMeters": round(location.accuracy_meters)}
 
     async def verify(self, user: dict[str, Any], payload: VerificationRequest, request_meta: dict[str, str | None]) -> VerificationResult:
         challenge = await self._consume_challenge(payload.challenge_id, user, payload.completed_steps)
@@ -161,7 +162,7 @@ class BiometricService:
             raise AppError(409, "UniFace enrollment is required before face attendance can be used", [{"code": code}])
         try:
             analysis = await self._analyze(payload.proof_image)
-            location = await self._verify_location(challenge["employeeId"], challenge["attendanceMode"], payload.location)
+            location = await self._assess_location(challenge["employeeId"], challenge["attendanceMode"], payload.location)
             engine = self.manager.get()
             similarity = max(engine.compare_embeddings(analysis.embedding, template) for template in templates)
             photo_hash = hashlib.sha256(payload.proof_image.encode()).hexdigest()
@@ -171,7 +172,7 @@ class BiometricService:
                 "attendanceMode": challenge["attendanceMode"], "challengeId": payload.challenge_id, "photoHash": photo_hash,
                 "proofRef": photo_hash, "livenessScore": 1.0, "faceMatchScore": round(similarity, 6),
                 "identityTemplateVersion": 4, "engineName": "uniface", "modelVersion": self.settings.face_model_version,
-                "locationVerified": True, "locationEvidence": location, "verifiedAt": now.isoformat(), "iat": now,
+                "locationVerified": bool(location.get("verified")), "locationEvidence": location, "verifiedAt": now.isoformat(), "iat": now,
             }
             if similarity < self.settings.face_match_threshold:
                 mismatch = jwt.encode({**common, "purpose": "biometric_mismatch", "attemptedAt": now.isoformat(), "jti": str(uuid.uuid4()), "exp": now + timedelta(minutes=10)}, self.settings.jwt_secret.get_secret_value(), algorithm="HS256")

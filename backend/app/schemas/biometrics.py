@@ -52,7 +52,7 @@ class VerificationRequest(BiometricModel):
     challenge_id: str
     completed_steps: list[str] = Field(min_length=1, max_length=4)
     proof_image: str = Field(min_length=100, max_length=4_500_000)
-    location: LocationInput
+    location: LocationInput | None = None
 
 
 class VerificationResult(BiometricModel):

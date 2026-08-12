@@ -10,6 +10,7 @@ const punchSchema = new mongoose.Schema({
   officeLocation: { type: mongoose.Schema.Types.ObjectId, ref: 'OfficeLocation' },
   officeName: String,
   address: String,
+  locationStatus: { type: String, enum: ['verified', 'captured', 'unavailable', 'low_accuracy', 'outside_boundary', 'not_configured', 'destination_not_configured'], default: 'unavailable' },
   ipAddress: String,
   device: String,
   source: { type: String, enum: ['biometric', 'manual_fallback', 'manual_hr', 'manual_approval', 'system_auto', 'hr_correction'], default: 'biometric' },
