@@ -3,3 +3,27 @@
 .clearance-checklist{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}.clearance-checklist label{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;border:1px solid #e4e9ed;border-radius:7px;color:#526071;font-size:8.5px}.clearance-checklist select{max-width:145px;height:30px;border:1px solid #dfe5e8;border-radius:6px;background:#fff;font-size:8px}.exit-toolbar>.exit-date-filter{height:38px;padding:0 10px;border:1px solid #dfe5e8;border-radius:8px;background:#fff;font-size:9px}
 @media(max-width:900px){.exit-summary-grid{grid-template-columns:1fr 1fr}.exit-detail-grid{grid-template-columns:1fr}.exit-progress{grid-template-columns:repeat(3,1fr)}.finance-grid{grid-template-columns:1fr 1fr}.asset-return-list article{grid-template-columns:1fr 1fr}.asset-tabs{grid-template-columns:1fr}}
 @media(max-width:620px){.exit-page-heading,.exit-case-header{align-items:stretch;flex-direction:column}.exit-heading-actions{align-items:stretch;flex-direction:column}.exit-summary-grid,.exit-form-grid,.settlement-summary{grid-template-columns:1fr}.exit-toolbar{align-items:stretch;flex-direction:column}.exit-toolbar label{min-width:0}.exit-table-head{display:none}.exit-row{grid-template-columns:1fr auto}.exit-row>span:nth-child(2),.exit-row>span:nth-child(3){display:none}.exit-progress{grid-template-columns:1fr 1fr}.asset-return-list article{grid-template-columns:1fr}.finance-grid{grid-template-columns:1fr 1fr}}
+
+/* Asset register is a full working surface, not a compact attendance drawer. */
+.asset-drawer{width:min(960px,calc(100vw - 32px));padding:32px 38px 40px}
+.asset-drawer .drawer-heading{align-items:flex-start;padding-bottom:22px;border-bottom:1px solid #e6ebef}
+.asset-drawer .drawer-heading .eyebrow{font-size:10px;letter-spacing:1.15px}
+.asset-drawer .drawer-heading h2{margin-top:7px;font-size:25px;letter-spacing:-.45px}
+.asset-drawer .drawer-heading p:last-child{max-width:620px;margin-top:8px;font-size:12px;line-height:1.55}
+.asset-drawer .drawer-heading>button{display:grid;place-items:center;width:38px;height:38px;border:1px solid #dce3e8;border-radius:50%;background:#fff}
+.asset-drawer .asset-tabs{grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:22px;margin:24px 0 28px}
+.asset-drawer .asset-tabs section{gap:16px;padding:22px;border-color:#dce4e9;border-radius:14px;background:#fbfcfd}
+.asset-drawer .asset-tabs h3,.asset-drawer>h3{font-size:15px;letter-spacing:-.15px}
+.asset-drawer .exit-form-grid{gap:15px}
+.asset-drawer .exit-field{gap:8px;font-size:11px}
+.asset-drawer .exit-field input,.asset-drawer .exit-field select,.asset-drawer .exit-field textarea{height:46px;padding:10px 13px;border-color:#d6dfe5;border-radius:9px;background:#fff;font-size:12px}
+.asset-drawer .asset-tabs .primary-button{min-height:46px;margin-top:2px;border-radius:10px;font-size:13px}
+.asset-drawer>h3{padding:2px 0 12px;border-bottom:1px solid #e4e9ed}
+.asset-drawer .asset-register-list{margin-top:0;border:1px solid #e0e6ea;border-radius:12px;overflow:hidden}
+.asset-drawer .asset-register-list article{min-height:58px;padding:13px 16px;border-top-color:#e9edef;background:#fff}
+.asset-drawer .asset-register-list strong{font-size:12px}
+.asset-drawer .asset-register-list small{font-size:10px}
+.asset-drawer .asset-register-list .exit-empty{min-height:190px;padding:34px}
+.asset-drawer .asset-register-list .exit-empty p{font-size:11px}
+@media(max-width:1050px){.asset-drawer{width:min(760px,calc(100vw - 24px));padding:27px 30px}.asset-drawer .asset-tabs{grid-template-columns:1fr}.asset-drawer .asset-tabs section{padding:20px}.asset-drawer .exit-form-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.asset-drawer{width:100vw;padding:23px 18px 32px}.asset-drawer .drawer-heading h2{font-size:22px}.asset-drawer .asset-tabs{margin-top:18px}.asset-drawer .exit-form-grid{grid-template-columns:1fr}.asset-drawer .asset-tabs section{padding:17px}.asset-drawer .exit-field input,.asset-drawer .exit-field select{height:48px}}
