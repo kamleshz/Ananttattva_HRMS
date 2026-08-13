@@ -1,4 +1,4 @@
-import { useEffect,useMemo,useState } from 'react'
+import { useCallback,useEffect,useMemo,useState } from 'react'
 import { AlertTriangle,ArrowLeft,Box,CheckCircle2,ChevronRight,Clock3,Download,FileCheck2,Laptop,Plus,RefreshCw,Search,ShieldCheck,UserRound,UsersRound,XCircle } from 'lucide-react'
 import { employeeApi,offboardingApi } from './services/api.js'
 import { useLocation,useNavigate } from './router.jsx'
@@ -24,8 +24,8 @@ export default function OffboardingPage({user}){
 
 function ExitDashboard({user}){
   const navigate=useNavigate(),[data,setData]=useState(null),[error,setError]=useState(''),[query,setQuery]=useState(''),[status,setStatus]=useState(''),[department,setDepartment]=useState(''),[exitType,setExitType]=useState(''),[lwd,setLwd]=useState(''),[creating,setCreating]=useState(false),[assetsOpen,setAssetsOpen]=useState(false)
-  const load=()=>offboardingApi.dashboard().then(setData).catch(error=>setError(error.message))
-  useEffect(load,[])
+  const load=useCallback(()=>offboardingApi.dashboard().then(setData).catch(error=>setError(error.message)),[])
+  useEffect(()=>{load()},[load])
   const items=useMemo(()=>data?.items?.filter(item=>(!status||item.status===status)&&(!department||item.employeeSnapshot?.department===department)&&(!exitType||item.exitType===exitType)&&(!lwd||String(item.lastWorkingDate).slice(0,10)===lwd)&&(!query||`${item.exitId} ${item.employeeSnapshot?.firstName} ${item.employeeSnapshot?.lastName} ${item.employeeSnapshot?.employeeCode} ${item.employeeSnapshot?.department} ${item.manager?.firstName||''} ${item.manager?.lastName||''}`.toLowerCase().includes(query.toLowerCase())))||[],[data,query,status,department,exitType,lwd])
   if(!data&&!error)return <div className="exit-loading"><RefreshCw className="spin"/>Loading offboarding workspace…</div>
   return <section className="exit-page"><header className="exit-page-heading"><div><p className="eyebrow">People operations</p><h1>Offboarding & clearance</h1><p>Track handover, last-day asset return, departmental clearance and final separation.</p></div><div className="exit-heading-actions">{['it_admin','hr_admin','admin','super_admin'].includes(user.role)&&<button className="secondary-button" onClick={()=>setAssetsOpen(true)}><Box size={15}/> Asset register</button>}{['hr_admin','admin','super_admin'].includes(user.role)&&<button className="primary-button" onClick={()=>setCreating(true)}><Plus size={15}/> Initiate exit</button>}</div></header>
@@ -45,7 +45,7 @@ function CreateExit({close,created}){
 
 function ExitDetail({user,id}){
   const navigate=useNavigate(),[item,setItem]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false)
-  const load=()=>offboardingApi.detail(id).then(setItem).catch(error=>setError(error.message));useEffect(load,[id])
+  const load=useCallback(()=>offboardingApi.detail(id).then(setItem).catch(error=>setError(error.message)),[id]);useEffect(()=>{load()},[load])
   const action=async request=>{setBusy(true);setError('');try{await request();await load()}catch(error){setError(error.message)}finally{setBusy(false)}}
   if(!item)return <div className="exit-loading">{error||'Loading exit case…'}</div>
   const clearances=[['Manager',item.managerReview],['Assets',item.assetClearance],['IT',item.itClearance],['Finance',item.financeClearance],['HR',item.hrClearance],['Management',item.management]]
@@ -72,4 +72,196 @@ function ManagementCard({item,user,busy,action}){const can=user.role==='super_ad
 function AcknowledgementCard({item,user,busy,action}){const can=String(item.employee)===String(user.employee?._id),[typedName,setTypedName]=useState(''),[otp,setOtp]=useState(''),[message,setMessage]=useState(''),[security,setSecurity]=useState(false),[representation,setRepresentation]=useState(false);if(!['employee_acknowledgement_pending','exit_cleared','separated'].includes(item.status))return null;return <section className="card exit-side-card"><p className="eyebrow">Employee confirmation</p><h3>Final acknowledgement</h3>{item.acknowledgement?.otpVerified?<div className="exit-confirmed"><CheckCircle2 size={20}/>Acknowledged by {item.acknowledgement.typedName}</div>:can?<><p className="exit-section-copy">Confirm the clearance and company data/security declarations using a code sent to your verified email.</p><label className="exit-check"><input type="checkbox" checked={security} onChange={event=>setSecurity(event.target.checked)}/> I confirm company, client, vendor, employee and confidential data has been returned or deleted from unauthorized personal devices, email, storage, cloud and messaging services.</label><label className="exit-check"><input type="checkbox" checked={representation} onChange={event=>setRepresentation(event.target.checked)}/> I understand I may not represent the company or retain company social-media/platform access after separation unless separately authorized.</label><button className="secondary-button" onClick={()=>action(async()=>{const result=await offboardingApi.requestOtp(item._id);setMessage(result.developmentCode?`${result.message} Development code: ${result.developmentCode}`:result.message)})}>Send email code</button>{message&&<small className="exit-message">{message}</small>}<Field label="Typed full name"><input value={typedName} onChange={event=>setTypedName(event.target.value)}/></Field><Field label="6-digit code"><input inputMode="numeric" maxLength="6" value={otp} onChange={event=>setOtp(event.target.value.replace(/\D/g,''))}/></Field><button disabled={busy||typedName.length<3||otp.length!==6||!security||!representation} className="primary-button" onClick={()=>action(()=>offboardingApi.acknowledge(item._id,{typedName,otp,securityDeclaration:security,representationDeclaration:representation}))}>Acknowledge exit</button></>:<p className="exit-section-copy">Waiting for employee acknowledgement.</p>}</section>}
 function FinalActions({item,user,busy,action}){const download=async()=>{const file=await offboardingApi.pdf(item._id),url=URL.createObjectURL(file.blob),anchor=document.createElement('a');anchor.href=url;anchor.download=file.fileName;anchor.click();URL.revokeObjectURL(url)};return <section className="card exit-side-card"><p className="eyebrow">Final record</p><h3>Exit document & separation</h3>{item.finalDocument?.sha256&&<button className="secondary-button" onClick={download}><Download size={15}/> Download final PDF</button>}{['hr_admin','admin','super_admin'].includes(user.role)&&item.status==='exit_cleared'&&<button disabled={busy} className="primary-button" onClick={()=>action(()=>offboardingApi.separate(item._id))}>Complete separation</button>}<small className="exit-hash">{item.finalDocument?.sha256?`SHA-256 ${item.finalDocument.sha256.slice(0,20)}…`:'Generated after OTP acknowledgement'}</small></section>}
 
-function AssetRegister({close}){const [data,setData]=useState(null),[error,setError]=useState(''),[form,setForm]=useState({assetCode:'',assetType:'laptop',brand:'',model:'',serialNumber:'',location:'',notes:''}),[assign,setAssign]=useState({assetId:'',employeeId:'',conditionAtAssignment:'good',accessories:[],remarks:''});const load=()=>offboardingApi.assets().then(setData).catch(error=>setError(error.message));useEffect(load,[]);return <div className="drawer-layer"><button className="drawer-backdrop" onClick={close}/><aside className="attendance-drawer asset-drawer"><div className="drawer-heading"><div><p className="eyebrow">Reusable custody records</p><h2>Asset register</h2><p>Assignments made here automatically appear in future employee exit cases.</p></div><button onClick={close}><XCircle size={20}/></button></div>{error&&<p className="attendance-error">{error}</p>}<div className="asset-tabs"><section><h3>Add asset</h3><div className="exit-form-grid"><Field label="Asset code"><input value={form.assetCode} onChange={event=>setForm({...form,assetCode:event.target.value})}/></Field><Field label="Type"><select value={form.assetType} onChange={event=>setForm({...form,assetType:event.target.value})}>{['laptop','desktop','monitor','keyboard','mouse','charger','mobile','sim','headset','id_card','access_card','storage_device','dongle','laptop_bag','other'].map(item=><option key={item} value={item}>{label(item)}</option>)}</select></Field><Field label="Brand"><input value={form.brand} onChange={event=>setForm({...form,brand:event.target.value})}/></Field><Field label="Model"><input value={form.model} onChange={event=>setForm({...form,model:event.target.value})}/></Field><Field label="Serial number"><input value={form.serialNumber} onChange={event=>setForm({...form,serialNumber:event.target.value})}/></Field></div><button className="primary-button" onClick={async()=>{await offboardingApi.createAsset(form);setForm({...form,assetCode:'',serialNumber:''});load()}}>Add asset</button></section><section><h3>Assign available asset</h3><Field label="Asset"><select value={assign.assetId} onChange={event=>setAssign({...assign,assetId:event.target.value})}><option value="">Select available asset</option>{data?.assets?.filter(asset=>asset.status==='available').map(asset=><option key={asset._id} value={asset._id}>{asset.assetCode} · {label(asset.assetType)}</option>)}</select></Field><Field label="Employee"><select value={assign.employeeId} onChange={event=>setAssign({...assign,employeeId:event.target.value})}><option value="">Select employee</option>{data?.employees?.map(employee=><option key={employee._id} value={employee._id}>{employee.employeeCode} · {employee.firstName} {employee.lastName}</option>)}</select></Field><button disabled={!assign.assetId||!assign.employeeId} className="primary-button" onClick={async()=>{await offboardingApi.assignAsset(assign.assetId,assign);setAssign({...assign,assetId:'',employeeId:''});load()}}>Assign asset</button></section></div><h3>Current custody</h3><div className="asset-register-list">{data?.assignments?.map(row=><article key={row._id}><Box size={17}/><span><strong>{row.asset?.assetCode} · {label(row.asset?.assetType)}</strong><small>{row.employee?.employeeCode} · {row.employee?.firstName} {row.employee?.lastName}</small></span><Status value="cleared"/></article>)||<Empty>No active asset assignments.</Empty>}</div></aside></div>}
+function AssetRegister({ close }) {
+  const [data, setData] = useState(null),
+    [error, setError] = useState(""),
+    [form, setForm] = useState({
+      assetCode: "",
+      assetType: "laptop",
+      brand: "",
+      model: "",
+      serialNumber: "",
+      location: "",
+      notes: "",
+    }),
+    [assign, setAssign] = useState({
+      assetId: "",
+      employeeId: "",
+      conditionAtAssignment: "good",
+      accessories: [],
+      remarks: "",
+    });
+  const load = useCallback(() =>
+    offboardingApi
+      .assets()
+      .then(setData)
+      .catch((error) => setError(error.message)), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  return (
+    <div className="drawer-layer">
+      <button className="drawer-backdrop" onClick={close} />
+      <aside className="attendance-drawer asset-drawer">
+        <div className="drawer-heading">
+          <div>
+            <p className="eyebrow">Reusable custody records</p>
+            <h2>Asset register</h2>
+            <p>
+              Assignments made here automatically appear in future employee exit
+              cases.
+            </p>
+          </div>
+          <button onClick={close}>
+            <XCircle size={20} />
+          </button>
+        </div>
+        {error && <p className="attendance-error">{error}</p>}
+        <div className="asset-tabs">
+          <section>
+            <h3>Add asset</h3>
+            <div className="exit-form-grid">
+              <Field label="Asset code">
+                <input
+                  value={form.assetCode}
+                  onChange={(event) =>
+                    setForm({ ...form, assetCode: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Type">
+                <select
+                  value={form.assetType}
+                  onChange={(event) =>
+                    setForm({ ...form, assetType: event.target.value })
+                  }
+                >
+                  {[
+                    "laptop",
+                    "desktop",
+                    "monitor",
+                    "keyboard",
+                    "mouse",
+                    "charger",
+                    "mobile",
+                    "sim",
+                    "headset",
+                    "id_card",
+                    "access_card",
+                    "storage_device",
+                    "dongle",
+                    "laptop_bag",
+                    "other",
+                  ].map((item) => (
+                    <option key={item} value={item}>
+                      {label(item)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Brand">
+                <input
+                  value={form.brand}
+                  onChange={(event) =>
+                    setForm({ ...form, brand: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Model">
+                <input
+                  value={form.model}
+                  onChange={(event) =>
+                    setForm({ ...form, model: event.target.value })
+                  }
+                />
+              </Field>
+              <Field label="Serial number">
+                <input
+                  value={form.serialNumber}
+                  onChange={(event) =>
+                    setForm({ ...form, serialNumber: event.target.value })
+                  }
+                />
+              </Field>
+            </div>
+            <button
+              className="primary-button"
+              onClick={async () => {
+                await offboardingApi.createAsset(form);
+                setForm({ ...form, assetCode: "", serialNumber: "" });
+                load();
+              }}
+            >
+              Add asset
+            </button>
+          </section>
+          <section>
+            <h3>Assign available asset</h3>
+            <Field label="Asset">
+              <select
+                value={assign.assetId}
+                onChange={(event) =>
+                  setAssign({ ...assign, assetId: event.target.value })
+                }
+              >
+                <option value="">Select available asset</option>
+                {data?.assets
+                  ?.filter((asset) => asset.status === "available")
+                  .map((asset) => (
+                    <option key={asset._id} value={asset._id}>
+                      {asset.assetCode} · {label(asset.assetType)}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <Field label="Employee">
+              <select
+                value={assign.employeeId}
+                onChange={(event) =>
+                  setAssign({ ...assign, employeeId: event.target.value })
+                }
+              >
+                <option value="">Select employee</option>
+                {data?.employees?.map((employee) => (
+                  <option key={employee._id} value={employee._id}>
+                    {employee.employeeCode} · {employee.firstName}{" "}
+                    {employee.lastName}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <button
+              disabled={!assign.assetId || !assign.employeeId}
+              className="primary-button"
+              onClick={async () => {
+                await offboardingApi.assignAsset(assign.assetId, assign);
+                setAssign({ ...assign, assetId: "", employeeId: "" });
+                load();
+              }}
+            >
+              Assign asset
+            </button>
+          </section>
+        </div>
+        <h3>Current custody</h3>
+        <div className="asset-register-list">
+          {data?.assignments?.map((row) => (
+            <article key={row._id}>
+              <Box size={17} />
+              <span>
+                <strong>
+                  {row.asset?.assetCode} · {label(row.asset?.assetType)}
+                </strong>
+                <small>
+                  {row.employee?.employeeCode} · {row.employee?.firstName}{" "}
+                  {row.employee?.lastName}
+                </small>
+              </span>
+              <Status value="cleared" />
+            </article>
+          )) || <Empty>No active asset assignments.</Empty>}
+        </div>
+      </aside>
+    </div>
+  );
+}
