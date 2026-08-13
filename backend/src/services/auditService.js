@@ -3,7 +3,7 @@ import { AuditLog } from '../models/AuditLog.js'
 const scrub=value=>{
   if(!value||typeof value!=='object')return value
   if(Array.isArray(value))return value.map(scrub)
-  return Object.fromEntries(Object.entries(value).filter(([key])=>!['photo','template','biometricTemplate','embedding'].includes(key)).map(([key,item])=>[key,scrub(item)]))
+  return Object.fromEntries(Object.entries(value).filter(([key])=>!['photo','template','biometricTemplate','embedding','pdfData','otpHash'].includes(key)).map(([key,item])=>[key,scrub(item)]))
 }
 
 export async function recordAudit({req,action,entityType,entityId,employeeId,before,after,metadata}){

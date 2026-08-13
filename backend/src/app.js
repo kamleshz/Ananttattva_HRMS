@@ -17,6 +17,7 @@ import publicOfferRoutes from './routes/publicOfferRoutes.js'
 import organizationRoutes from './routes/organizationRoutes.js'
 import workArrangementRoutes from './routes/workArrangementRoutes.js'
 import reportsRoutes from './routes/reportsRoutes.js'
+import offboardingRoutes from './routes/offboardingRoutes.js'
 import { errorHandler, notFound } from './middleware/error.js'
 
 export const app = express()
@@ -57,5 +58,6 @@ app.use('/api/public/offers', publicOfferRoutes)
 app.use('/api/organization', organizationRoutes)
 app.use('/api/work-arrangements', workArrangementRoutes)
 app.use('/api/reports',reportsRoutes)
+app.use('/api/offboarding',offboardingRoutes)
 app.use(notFound)
 app.use(errorHandler)

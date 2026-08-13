@@ -163,6 +163,25 @@ export const biometricApi = {
   migrateBatch: (data) => biometricRequest('/admin/biometrics/migrate-batch',{method:'POST',body:JSON.stringify(data)}),
   healthReport: (days = 30) => biometricRequest(`/admin/biometrics/health-report?days=${days}`),
 };
+export const offboardingApi = {
+  dashboard: () => api('/offboarding/dashboard'),
+  detail: (id) => api(`/offboarding/cases/${id}`),
+  timeline: (id) => api(`/offboarding/cases/${id}/timeline`),
+  create: (data) => api('/offboarding/cases',{method:'POST',body:JSON.stringify(data)}),
+  handover: (id,data) => api(`/offboarding/cases/${id}/handover`,{method:'PUT',body:JSON.stringify(data)}),
+  managerReview: (id,data) => api(`/offboarding/cases/${id}/manager-review`,{method:'PATCH',body:JSON.stringify(data)}),
+  assetReturn: (id,data) => api(`/offboarding/cases/${id}/assets`,{method:'PATCH',body:JSON.stringify(data)}),
+  clearance: (id,section,data) => api(`/offboarding/cases/${id}/clearance/${section}`,{method:'PATCH',body:JSON.stringify(data)}),
+  management: (id,data) => api(`/offboarding/cases/${id}/management`,{method:'PATCH',body:JSON.stringify(data)}),
+  requestOtp: (id) => api(`/offboarding/cases/${id}/acknowledgement/request-otp`,{method:'POST'}),
+  acknowledge: (id,data) => api(`/offboarding/cases/${id}/acknowledgement/verify`,{method:'POST',body:JSON.stringify(data)}),
+  separate: (id) => api(`/offboarding/cases/${id}/separate`,{method:'POST'}),
+  cancel: (id,reason) => api(`/offboarding/cases/${id}/cancel`,{method:'POST',body:JSON.stringify({reason})}),
+  pdf: (id) => downloadApi(`/offboarding/cases/${id}/pdf`),
+  assets: () => api('/offboarding/assets'),
+  createAsset: (data) => api('/offboarding/assets',{method:'POST',body:JSON.stringify(data)}),
+  assignAsset: (id,data) => api(`/offboarding/assets/${id}/assign`,{method:'POST',body:JSON.stringify(data)}),
+};
 export const holidayApi = {
   list: (year = new Date().getFullYear()) => api(`/holidays?year=${year}`),
   create: (data) =>

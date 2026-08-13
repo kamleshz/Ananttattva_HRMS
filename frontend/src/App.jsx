@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BriefcaseBusiness,
+  ClipboardCheck,
   CalendarDays,
   Cake,
   Check,
@@ -58,6 +59,7 @@ import RecruitmentPage, {
   PublicOfferPage,
   RecruitmentHomeWidgets,
 } from "./Recruitment.jsx";
+import OffboardingPage from "./Offboarding.jsx";
 import "./notification-menu.css";
 
 const navigation = [
@@ -74,7 +76,7 @@ const teamNavigation = [
   ["Reports", FileText, "/reports"],
   ["Holidays", CalendarDays, "/holidays"],
 ];
-const employeeAllowedPaths = new Set(["/", "/attendance", "/leave", "/allowances"]);
+const employeeAllowedPaths = new Set(["/", "/attendance", "/leave", "/allowances", "/offboarding"]);
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
@@ -168,6 +170,8 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
               <span>{label}</span>
             </button>
           ))}
+          <p className="nav-label">Employee lifecycle</p>
+          <button onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>
@@ -904,7 +908,7 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => {
-    if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/public/offers/")) navigate("/");
+    if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
   }, [user, location.pathname, navigate]);
   if (location.pathname.startsWith("/public/offers/"))
     return <PublicOfferPage />;
@@ -944,6 +948,7 @@ export default function App() {
     "/reports": <ReportsPage />,
     "/holidays": <HolidaysPage user={user} />,
     "/allowances": <AllowancesPage user={user} />,
+    "/offboarding": <OffboardingPage user={user} />,
   };
   const biometricEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/biometrics$/);
   const editEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/edit$/);
@@ -952,6 +957,8 @@ export default function App() {
       <EmployeeEditPage employeeId={editEmployeeMatch[1]} user={user} />
     ) : biometricEmployeeMatch ? (
       <EmployeeBiometricPage employeeId={biometricEmployeeMatch[1]} />
+    ) : location.pathname.startsWith("/offboarding/") ? (
+      <OffboardingPage user={user} />
     ) : location.pathname.startsWith("/recruitment") ||
     location.pathname.startsWith("/settings/") ? (
       <RecruitmentPage user={user} />

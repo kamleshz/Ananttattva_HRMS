@@ -10,6 +10,7 @@
     "test:recruitment": "node src/scripts/testRecruitmentFlow.js",
     "test:policies": "node src/scripts/testPolicies.js",
     "test:manual-attendance": "node --test src/tests/manualAttendance.test.js",
+    "test:offboarding": "node --test src/tests/offboarding.test.js",
     "recalculate:allowances": "node src/scripts/recalculateAllowanceAllocations.js",
     "check": "node --check src/server.js && node --check src/app.js"
   },
