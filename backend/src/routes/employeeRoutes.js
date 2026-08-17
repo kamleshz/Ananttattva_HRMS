@@ -8,6 +8,7 @@ import { User } from '../models/User.js'
 import { Notification } from '../models/Recruitment.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
+import { EMPLOYEE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
 import { addMonths, proratedAnnualPaidLeaves } from '../services/leavePolicyService.js'
 import { sendProbationConfirmation, sendWelcomeEmail } from '../services/mailService.js'
 
@@ -66,23 +67,23 @@ router.get('/export',authorize('super_admin','admin','hr_admin'),asyncHandler(as
   const headers=['Employee Number','Employee Name','Official Email','Mobile','Department','Designation','Branch','Work Location','Reporting Manager','Joining Date','Employment Type','Employee Status','Shift','Probation Status','Probation End Date','Annual Paid Leaves']
   const emptyRow=Array(headers.length).fill(null)
   const generatedAt=new Date()
+  const theme=EMPLOYEE_REPORT_THEME
   const sheetData=[
-    [{value:'AT Connect – Employee Master Report',columnSpan:headers.length,fontWeight:'bold',fontSize:16,color:'#FFFFFF',backgroundColor:'#187B72',height:28},...emptyRow.slice(1)],
-    [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(generatedAt)} · ${employees.length} employees`,columnSpan:headers.length,fontStyle:'italic',color:'#667085'},...emptyRow.slice(1)],
-    emptyRow,
-    headers.map(value=>({value,fontWeight:'bold',color:'#FFFFFF',backgroundColor:'#245D58',align:'center',wrap:true,height:30})),
+    [{value:'AT Connect – Employee Master Report',columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...emptyRow.slice(1)],
+    [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(generatedAt)} · ${employees.length} employees`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...emptyRow.slice(1)],
+    reportSectionRow([{label:'PERSONAL & CONTACT',span:4},{label:'ORGANIZATION',span:5},{label:'EMPLOYMENT & BENEFITS',span:7}],theme),
+    reportHeaderRow(headers,[4,5,7],theme),
   ]
   employees.forEach((employee,index)=>{
-    const fill=index%2===1?'#F3F8F7':undefined
-    const cell=(value,extra={})=>({value:value??'',backgroundColor:fill,wrap:true,...extra})
+    const cell=(value,extra={})=>reportCell(value,index,theme,extra)
     const manager=employee.manager?`${employee.manager.firstName||''} ${employee.manager.lastName||''}`.trim():''
     sheetData.push([
-      cell(employee.employeeCode),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim()),cell(employee.officialEmail),cell(employee.mobile),cell(employee.department),cell(employee.designation),cell(employee.branch),cell(employee.workLocation),cell(manager?`${manager}${employee.manager.employeeCode?` (${employee.manager.employeeCode})`:''}`:''),
-      employee.joiningDate?cell(employee.joiningDate,{type:Date,format:'dd-mmm-yyyy'}):cell(''),cell(String(employee.employmentType||'').replaceAll('_',' ')),cell(String(employee.employeeStatus||'').replaceAll('_',' ')),cell(employee.shift?.name?`${employee.shift.name} (${employee.shift.startTime||''}–${employee.shift.endTime||''})`:''),cell(String(employee.probation?.confirmationStatus||'').replaceAll('_',' ')),employee.probation?.expectedEndDate?cell(employee.probation.expectedEndDate,{type:Date,format:'dd-mmm-yyyy'}):cell(''),cell(employee.leavePlan?.annualPaidLeaves??'',employee.leavePlan?.annualPaidLeaves==null?{}:{type:Number}),
+      cell(employee.employeeCode,{fontWeight:'bold',textColor:theme.accent}),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim(),{fontWeight:'bold'}),cell(employee.officialEmail,{textColor:'#315F91'}),cell(employee.mobile),cell(employee.department,{backgroundColor:'#F0E8F5',textColor:'#624173',fontWeight:'bold'}),cell(employee.designation),cell(employee.branch),cell(employee.workLocation),cell(manager?`${manager}${employee.manager.employeeCode?` (${employee.manager.employeeCode})`:''}`:''),
+      employee.joiningDate?cell(employee.joiningDate,{type:Date,format:'dd-mmm-yyyy',align:'center'}):cell('',{align:'center'}),cell(String(employee.employmentType||'').replaceAll('_',' '),statusCellStyle(employee.employmentType)),cell(String(employee.employeeStatus||'').replaceAll('_',' '),statusCellStyle(employee.employeeStatus)),cell(employee.shift?.name?`${employee.shift.name} (${employee.shift.startTime||''}–${employee.shift.endTime||''})`:''),cell(String(employee.probation?.confirmationStatus||'').replaceAll('_',' '),statusCellStyle(employee.probation?.confirmationStatus)),employee.probation?.expectedEndDate?cell(employee.probation.expectedEndDate,{type:Date,format:'dd-mmm-yyyy',align:'center'}):cell('',{align:'center'}),cell(employee.leavePlan?.annualPaidLeaves??'',employee.leavePlan?.annualPaidLeaves==null?{align:'right'}:{type:Number,align:'right',fontWeight:'bold'}),
     ])
   })
   const columns=[18,25,30,16,20,22,18,22,28,16,18,17,28,20,18,18].map(width=>({width}))
-  const buffer=await writeXlsxFile(sheetData,{sheet:'Employee Master',columns,stickyRowsCount:4},{fontFamily:'Arial',fontSize:10}).toBuffer()
+  const buffer=await writeXlsxFile(sheetData,{sheet:'Employee Master',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.85},{fontFamily:'Calibri',fontSize:10}).toBuffer()
   const fileName=`AT_Connect_Employees_${generatedAt.toISOString().slice(0,10)}.xlsx`
   res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition',`attachment; filename="${fileName}"`)

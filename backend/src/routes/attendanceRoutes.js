@@ -5,6 +5,7 @@ import { authorize } from '../middleware/auth.js'
 import { Attendance } from '../models/Attendance.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { organizationExcelDate, organizationMonthBoundsFor, startOfLocalDay } from '../utils/date.js'
+import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
 import { checkIn, checkOut } from '../services/attendanceService.js'
 import { createHash } from 'node:crypto'
 import jwt from 'jsonwebtoken'
@@ -219,25 +220,27 @@ router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin'
   const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'}).format(start)
   const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Location','Location Verified','Face Match %','Liveness %']
   const emptyRow=Array(headers.length).fill(null)
+  const theme=ATTENDANCE_REPORT_THEME
   const sheetData=[
-    [{value:`AT Connect – Attendance Report – ${reportMonth}`,columnSpan:headers.length,fontWeight:'bold',fontSize:16,color:'#FFFFFF',backgroundColor:'#187B72',height:28},...emptyRow.slice(1)],
-    [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(new Date())} · ${records.length} records`,columnSpan:headers.length,fontStyle:'italic',color:'#667085'},...emptyRow.slice(1)],
-    emptyRow,
-    headers.map(value=>({value,fontWeight:'bold',color:'#FFFFFF',backgroundColor:'#245D58',align:'center',wrap:true,height:30})),
+    [{value:`AT Connect – Attendance Report – ${reportMonth}`,columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...emptyRow.slice(1)],
+    [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date())} · ${records.length} records · Times shown in IST`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...emptyRow.slice(1)],
+    reportSectionRow([{label:'EMPLOYEE DETAILS',span:4},{label:'ATTENDANCE & WORK HOURS',span:8},{label:'EXCEPTIONS & VERIFICATION',span:5}],theme),
+    reportHeaderRow(headers,[4,8,5],theme),
   ]
   records.forEach((record,index)=>{
     const employee=record.employee||{}
-    const fill=index%2===1?'#F3F8F7':undefined
-    const cell=(value,extra={})=>({value,backgroundColor:fill,wrap:true,...extra})
+    const cell=(value,extra={})=>reportCell(value,index,theme,extra)
+    const statusLabel=String(record.status||'').replaceAll('_',' ')
+    const modeLabel=String(record.attendanceMode||'').replaceAll('_',' ')
     sheetData.push([
-      cell(employee.employeeCode||''),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim()),cell(employee.department||''),cell(employee.designation||''),cell(organizationExcelDate(record.date),{type:Date,format:'dd-mmm-yyyy'}),
-      cell(new Intl.DateTimeFormat('en-IN',{weekday:'long',timeZone:'Asia/Kolkata'}).format(record.date)),cell(String(record.attendanceMode||'').replaceAll('_',' ')),cell(String(record.status||'').replaceAll('_',' ')),
-      record.checkIn?.time?cell(organizationExcelDate(record.checkIn.time),{type:Date,format:'hh:mm AM/PM'}):cell(''),record.checkOut?.time?cell(organizationExcelDate(record.checkOut.time),{type:Date,format:'hh:mm AM/PM'}):cell(''),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00'}),cell(record.lateMinutes||0,{type:Number}),cell(record.halfDayReason||''),
-      cell(record.checkIn?.address||''),cell(record.locationVerified?'Yes':'No'),record.biometricVerification?.faceMatchScore==null?cell(''):cell(record.biometricVerification.faceMatchScore,{type:Number,format:'0.0%'}),record.biometricVerification?.livenessScore==null?cell(''):cell(record.biometricVerification.livenessScore,{type:Number,format:'0.0%'}),
+      cell(employee.employeeCode||'',{fontWeight:'bold',textColor:theme.accent}),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim(),{fontWeight:'bold'}),cell(employee.department||''),cell(employee.designation||''),cell(organizationExcelDate(record.date),{type:Date,format:'dd-mmm-yyyy',align:'center'}),
+      cell(new Intl.DateTimeFormat('en-IN',{weekday:'long',timeZone:'Asia/Kolkata'}).format(record.date),{align:'center'}),cell(modeLabel,{backgroundColor:'#E8F1FA',textColor:'#315F91',fontWeight:'bold',align:'center'}),cell(statusLabel,statusCellStyle(record.status)),
+      record.checkIn?.time?cell(organizationExcelDate(record.checkIn.time),{type:Date,format:'hh:mm AM/PM',align:'center',fontWeight:'bold'}):cell('',{align:'center'}),record.checkOut?.time?cell(organizationExcelDate(record.checkOut.time),{type:Date,format:'hh:mm AM/PM',align:'center'}):cell('',{align:'center'}),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00',align:'right',fontWeight:'bold'}),cell(record.lateMinutes||0,{type:Number,align:'right',...(record.lateMinutes?{backgroundColor:'#FFF0CC',textColor:'#865D13',fontWeight:'bold'}:{})}),cell(record.halfDayReason||''),
+      cell(record.checkIn?.address||''),cell(record.locationVerified?'Yes':'No',{...(statusCellStyle(record.locationVerified?'verified':'rejected')),align:'center'}),record.biometricVerification?.faceMatchScore==null?cell('',{align:'right'}):cell(record.biometricVerification.faceMatchScore,{type:Number,format:'0.0%',align:'right'}),record.biometricVerification?.livenessScore==null?cell('',{align:'right'}):cell(record.biometricVerification.livenessScore,{type:Number,format:'0.0%',align:'right'}),
     ])
   })
   const columns=[14,22,18,20,14,13,18,16,14,14,15,13,24,30,18,15,15].map(width=>({width}))
-  const buffer=await writeXlsxFile(sheetData,{sheet:'Attendance Report',columns,stickyRowsCount:4},{fontFamily:'Arial',fontSize:10}).toBuffer()
+  const buffer=await writeXlsxFile(sheetData,{sheet:'Attendance Report',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.85},{fontFamily:'Calibri',fontSize:10}).toBuffer()
   const fileName=`AT_Connect_Attendance_${input.year}_${String(input.month).padStart(2,'0')}.xlsx`
   res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition',`attachment; filename="${fileName}"`)
