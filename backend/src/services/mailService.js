@@ -66,8 +66,8 @@ export function buildVerificationCodeEmail({recipient,code,expiresMinutes,contex
           <p class="otp-copy" style="margin:20px auto 0;max-width:510px;color:#202b3c;font-size:17px;line-height:1.55">Hi <a href="mailto:${safeRecipient}" style="color:#075fcb;text-decoration:underline;font-weight:700">${safeRecipient}</a>,<br>Enter the code below to confirm it’s you and continue ${safeContext}.</p>
         </td></tr>
         <tr><td class="otp-card-pad" style="padding:10px 38px 0">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#eef4ff;border:2px dashed #4786ff;border-radius:16px">
-            <tr><td align="center" class="otp-code-cell" style="padding:43px 18px 40px"><div class="otp-code" style="padding-left:10px;color:#062a57;font-family:'Courier New',Courier,monospace;font-size:46px;line-height:1;font-weight:700;letter-spacing:10px">${safeCode}</div></td></tr>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#eaf8f2;border:2px dashed #72c9aa;border-radius:16px">
+            <tr><td align="center" class="otp-code-cell" style="padding:43px 18px 40px"><div class="otp-code" style="padding-left:10px;color:#135c46;font-family:'Courier New',Courier,monospace;font-size:46px;line-height:1;font-weight:700;letter-spacing:10px">${safeCode}</div></td></tr>
           </table>
         </td></tr>
         <tr><td align="center" class="otp-security" style="padding:26px 45px 46px">
