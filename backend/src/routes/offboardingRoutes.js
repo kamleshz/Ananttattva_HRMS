@@ -11,7 +11,7 @@ import { OrganizationProfile } from '../models/Organization.js'
 import { AuditLog } from '../models/AuditLog.js'
 import { recordAudit } from '../services/auditService.js'
 import { calculateFinance, deriveExitStatus, generateExitPdf, notifyUsers, otpHash, usersByRoles } from '../services/offboardingService.js'
-import { sendGraphEmail } from '../services/mailService.js'
+import { sendOffboardingAcknowledgementOtp } from '../services/mailService.js'
 import { env } from '../config/env.js'
 
 const router=Router(),hrRoles=['hr_admin','admin','super_admin'],assetRoles=['it_admin','hr_admin','admin','super_admin']
@@ -132,7 +132,7 @@ router.patch('/cases/:id/management',authorize('super_admin'),asyncHandler(async
 router.post('/cases/:id/acknowledgement/request-otp',asyncHandler(async(req,res)=>{
   const item=await findCase(req,{secrets:true});if(String(item.employee)!==String(req.user.employee?._id))throw new HttpError(403,'Only the exiting employee can acknowledge');if(item.status!=='employee_acknowledgement_pending')throw new HttpError(409,'This exit is not ready for employee acknowledgement')
   const recipient=item.employeeSnapshot.personalEmail||item.employeeSnapshot.officialEmail,otp=String(crypto.randomInt(100000,1000000));item.acknowledgement.otpHash=otpHash(otp,item.exitId);item.acknowledgement.otpExpiresAt=new Date(Date.now()+10*60*1000);item.acknowledgement.otpAttempts=0;item.acknowledgement.email=recipient;await item.save()
-  if(env.nodeEnv!=='development'||!recipient.endsWith('.local'))await sendGraphEmail({recipient,subject:`${item.exitId} acknowledgement code`,html:`<p>Your AT Connect employee exit acknowledgement code is <strong>${otp}</strong>.</p><p>It expires in 10 minutes. Do not share this code.</p>`})
+  if(env.nodeEnv!=='development'||!recipient.endsWith('.local'))await sendOffboardingAcknowledgementOtp({recipient,code:otp,expiresMinutes:10,exitId:item.exitId})
   res.json({success:true,data:{message:`Acknowledgement code sent to ${recipient.replace(/(^.).*(@.*$)/,'$1***$2')}`,...(env.nodeEnv==='development'&&recipient.endsWith('.local')?{developmentCode:otp}:{})}})
 }))
 router.post('/cases/:id/acknowledgement/verify',asyncHandler(async(req,res)=>{

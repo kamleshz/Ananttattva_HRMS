@@ -49,53 +49,39 @@ export async function sendGraphEmail({ recipient, subject, html, attachments = [
   return response.headers.get('request-id') || response.headers.get('client-request-id') || null
 }
 
-export async function sendLoginOtp({ recipient, firstName, code, expiresMinutes }) {
-  assertMailConfiguration()
-  const accessToken = await getGraphAccessToken()
-  const safeName = escapeHtml(firstName)
-  const safeSender = escapeHtml(env.mailFromName)
-  const emailHtml = `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your AT Connect sign-in code</title></head>
-<body style="margin:0;padding:0;background:#f3f7f6;font-family:Arial,Helvetica,sans-serif;color:#182230">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f3f7f6"><tr><td align="center" style="padding:40px 16px">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e9e7;border-radius:20px;overflow:hidden;box-shadow:0 16px 40px rgba(18,62,58,.08)">
-      <tr><td style="background:#123f3b;padding:28px 34px">
-        <table role="presentation" width="100%"><tr><td style="color:#ffffff;font-size:19px;font-weight:700;letter-spacing:-.3px"><span style="display:inline-block;background:#ffffff;color:#17766d;border-radius:10px;padding:7px 9px;margin-right:10px">✦</span>AT Connect</td><td align="right" style="color:#a9cbc6;font-size:12px">Secure sign-in</td></tr></table>
-      </td></tr>
-      <tr><td style="padding:42px 40px 18px;text-align:center">
-        <div style="display:inline-block;width:54px;height:54px;line-height:54px;border-radius:16px;background:#e8f4f1;color:#17766d;font-size:25px">✉</div>
-        <h1 style="margin:24px 0 10px;font-size:27px;line-height:1.25;color:#17213a;letter-spacing:-.6px">Your sign-in code</h1>
-        <p style="margin:0;color:#667085;font-size:14px;line-height:1.7">Hi ${safeName}, use the verification code below to securely finish signing in to your workspace.</p>
-      </td></tr>
-      <tr><td style="padding:18px 40px">
-        <div style="background:#f3f9f7;border:1px solid #d9ebe7;border-radius:16px;padding:25px 16px;text-align:center">
-          <div style="font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#68847f;margin-bottom:12px">One-time verification code</div>
-          <div style="font-family:'Courier New',monospace;font-size:38px;line-height:1;font-weight:700;letter-spacing:10px;color:#126c63;padding-left:10px">${code}</div>
-        </div>
-      </td></tr>
-      <tr><td style="padding:10px 40px 36px">
-        <table role="presentation" width="100%" style="background:#fffbeb;border:1px solid #f6e8ba;border-radius:12px"><tr><td style="padding:14px 16px;color:#765b18;font-size:12px;line-height:1.55"><strong>⏱ Expires in ${expiresMinutes} minutes.</strong> For your security, never share this code with anyone.</td></tr></table>
-        <p style="margin:24px 0 0;color:#7b8494;font-size:12px;line-height:1.65;text-align:center">If you didn’t request this code, you can safely ignore this email. Your account remains secure.</p>
-      </td></tr>
-      <tr><td style="padding:22px 34px;background:#f8faf9;border-top:1px solid #e8eeec;text-align:center;color:#98a2b3;font-size:11px;line-height:1.6">Sent securely by ${safeSender}<br>People operations that feel human.</td></tr>
-    </table>
-    <p style="margin:18px 0 0;color:#98a2b3;font-size:10px">This is an automated security message. Please do not forward it.</p>
-  </td></tr></table>
+export function buildVerificationCodeEmail({recipient,code,expiresMinutes,context='signing in to AT Connect'}) {
+  const safeRecipient=escapeHtml(recipient)
+  const safeCode=escapeHtml(code)
+  const safeContext=escapeHtml(context)
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your verification code</title><style>@media only screen and (max-width:480px){.otp-card-pad{padding-left:20px!important;padding-right:20px!important}.otp-title{font-size:29px!important}.otp-copy{font-size:15px!important}.otp-code{font-size:34px!important;letter-spacing:6px!important;padding-left:6px!important}.otp-code-cell{padding-top:34px!important;padding-bottom:32px!important}.otp-security{padding-left:24px!important;padding-right:24px!important}}</style></head>
+<body style="margin:0;padding:0;background:#f1f1f6;font-family:Arial,Helvetica,sans-serif;color:#202b3c">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0">Your AT Connect verification code is ${safeCode}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#f1f1f6">
+    <tr><td align="center" style="padding:24px 14px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:626px;background:#ffffff;border-radius:20px">
+        <tr><td align="center" class="otp-card-pad" style="padding:46px 38px 18px">
+          <div style="margin:0 0 20px;color:#187b72;font-size:12px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase">AT Connect · Secure verification</div>
+          <h1 class="otp-title" style="margin:0;color:#202b3c;font-size:36px;line-height:1.2;font-weight:700;letter-spacing:-.7px">Your verification code</h1>
+          <p class="otp-copy" style="margin:20px auto 0;max-width:510px;color:#202b3c;font-size:17px;line-height:1.55">Hi <a href="mailto:${safeRecipient}" style="color:#075fcb;text-decoration:underline;font-weight:700">${safeRecipient}</a>,<br>Enter the code below to confirm it’s you and continue ${safeContext}.</p>
+        </td></tr>
+        <tr><td class="otp-card-pad" style="padding:10px 38px 0">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#eef4ff;border:2px dashed #4786ff;border-radius:16px">
+            <tr><td align="center" class="otp-code-cell" style="padding:43px 18px 40px"><div class="otp-code" style="padding-left:10px;color:#062a57;font-family:'Courier New',Courier,monospace;font-size:46px;line-height:1;font-weight:700;letter-spacing:10px">${safeCode}</div></td></tr>
+          </table>
+        </td></tr>
+        <tr><td align="center" class="otp-security" style="padding:26px 45px 46px">
+          <p style="margin:0;color:#202b3c;font-size:15px;line-height:1.6">This code expires in <strong>${Number(expiresMinutes)} minutes</strong>. For your security, never share it with anyone. If you didn’t request it, you can safely ignore this email — your account stays secure.</p>
+        </td></tr>
+      </table>
+      <p style="margin:15px 0 0;color:#8992a3;font-size:11px;line-height:1.5">Automated security message from ${escapeHtml(env.mailFromName)}.</p>
+    </td></tr>
+  </table>
 </body></html>`
-  const response = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(env.otpSenderEmail)}/sendMail`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: {
-        subject: 'Your AT Connect sign-in code',
-        body: { contentType: 'HTML', content: emailHtml },
-        toRecipients: [{ emailAddress: { address: recipient } }],
-        ...(env.mailReplyTo ? { replyTo: [{ emailAddress: { address: env.mailReplyTo } }] } : {}),
-      },
-      saveToSentItems: false,
-    }),
-  })
-  if (!response.ok) throw new HttpError(502, 'The sign-in code could not be emailed. Please try again.')
+}
+
+export async function sendLoginOtp({ recipient, code, expiresMinutes }) {
+  return sendGraphEmail({recipient,subject:'Your AT Connect verification code',html:buildVerificationCodeEmail({recipient,code,expiresMinutes,context:'signing in to AT Connect'})})
 }
 
 function modernMail({ preview, eyebrow, title, intro, content, actionLabel, actionUrl, footer }) {
@@ -114,14 +100,12 @@ function modernMail({ preview, eyebrow, title, intro, content, actionLabel, acti
   </body></html>`
 }
 
-export async function sendPasswordResetOtp({recipient,firstName,code,expiresMinutes}){
-  const html=modernMail({
-    preview:'Your AT Connect password reset code',eyebrow:'Account security',title:'Reset your password',
-    intro:`Hi ${escapeHtml(firstName)}, we received a request to reset your AT Connect password. Enter the secure code below to continue.`,
-    content:`<div style="margin-top:8px;padding:25px;border:1px solid #d8ebe6;border-radius:15px;background:#f2f9f7;text-align:center"><div style="margin-bottom:10px;color:#63827b;font-size:10px;font-weight:700;letter-spacing:1.1px;text-transform:uppercase">Password reset code</div><div style="padding-left:8px;color:#086c61;font-family:'Courier New',monospace;font-size:36px;font-weight:750;letter-spacing:8px">${code}</div></div><div style="margin-top:16px;padding:13px 15px;border:1px solid #f0dfae;border-radius:11px;background:#fffaf0;color:#775f25;font-size:12px;line-height:1.6"><strong>This code expires in ${expiresMinutes} minutes.</strong> If you did not request a reset, ignore this email and your password will remain unchanged.</div>`,
-    footer:'Protecting your account is our priority.',
-  })
-  return sendGraphEmail({recipient,subject:'Reset your AT Connect password',html})
+export async function sendPasswordResetOtp({recipient,code,expiresMinutes}){
+  return sendGraphEmail({recipient,subject:'Your AT Connect password reset code',html:buildVerificationCodeEmail({recipient,code,expiresMinutes,context:'resetting your AT Connect password'})})
+}
+
+export async function sendOffboardingAcknowledgementOtp({recipient,code,expiresMinutes=10,exitId}){
+  return sendGraphEmail({recipient,subject:`${exitId} acknowledgement verification code`,html:buildVerificationCodeEmail({recipient,code,expiresMinutes,context:`confirming your ${exitId} employee exit acknowledgement in AT Connect`})})
 }
 
 export async function sendWelcomeEmail({recipient,firstName,loginId,temporaryPassword}){
