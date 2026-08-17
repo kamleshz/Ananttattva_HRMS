@@ -84,7 +84,7 @@ router.get('/export',authorize('super_admin','admin','hr_admin'),asyncHandler(as
   })
   const columns=[18,25,30,16,20,22,18,22,28,16,18,17,28,20,18,18].map(width=>({width}))
   const buffer=await writeXlsxFile(sheetData,{sheet:'Employee Master',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.85},{fontFamily:'Calibri',fontSize:10}).toBuffer()
-  const fileName=`AT_Connect_Employees_${generatedAt.toISOString().slice(0,10)}.xlsx`
+  const fileName='Employee_Onboard_Data.xlsx'
   res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition',`attachment; filename="${fileName}"`)
   res.send(Buffer.from(buffer))
