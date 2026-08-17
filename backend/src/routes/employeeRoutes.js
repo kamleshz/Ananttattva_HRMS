@@ -25,7 +25,7 @@ const biometricEnrollmentSchema = z.object({
   ),
 })
 router.use(authenticate)
-router.get('/', authorize('super_admin','hr_admin','manager'), asyncHandler(async (req, res) => {
+router.get('/', authorize('super_admin','admin','hr_admin','manager'), asyncHandler(async (req, res) => {
   const page = Math.max(1, Number(req.query.page || 1)); const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)))
   // Employee records are retained for HR history when a login user is deleted,
   // but orphaned records must not appear in the active People directory.
@@ -76,6 +76,7 @@ const leavePlanSchema=z.object({
   accrualMode:z.enum(['monthly_1_5','grant_on_confirmation']).optional(),
 })
 const employeeUpdateSchema=z.object({
+  employeeCode:z.string().trim().min(3).optional(),
   firstName:z.string().trim().min(1).optional(),lastName:z.string().trim().min(1).optional(),
   dateOfBirth:z.coerce.date().max(new Date(),'Date of birth cannot be in the future').nullable().optional(),
   gender:z.enum(['male','female','non_binary','prefer_not_to_say','not_specified']).optional(),
@@ -101,7 +102,7 @@ function deriveProbation(input, employee) {
   }
   return result
 }
-router.put('/:id',authorize('super_admin','hr_admin'),asyncHandler(async(req,res)=>{
+router.put('/:id',authorize('super_admin','admin','hr_admin'),asyncHandler(async(req,res)=>{
   const input=employeeUpdateSchema.parse(req.body)
   const employee=await Employee.findById(req.params.id)
   if(!employee)throw new HttpError(404,'Employee not found')
@@ -114,7 +115,7 @@ router.put('/:id',authorize('super_admin','hr_admin'),asyncHandler(async(req,res
   if(employee.user&&(input.officialEmail||input.firstName||input.lastName))await User.findByIdAndUpdate(employee.user,{email:input.officialEmail||employee.officialEmail,firstName:input.firstName||employee.firstName,lastName:input.lastName||employee.lastName},{runValidators:true})
   res.json({success:true,data:employee})
 }))
-router.get('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
+router.get('/:id/biometrics', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id).select('+biometricSamples')
   if (!employee) throw new HttpError(404, 'Employee not found')
   res.json({ success:true, data:{
@@ -124,7 +125,7 @@ router.get('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(
     photos:(employee.biometricSamples || []).map(({ pose, photo }) => ({ pose, photo })),
   } })
 }))
-router.put('/:id/biometrics', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
+router.put('/:id/biometrics', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
   const input = biometricEnrollmentSchema.parse(req.body)
   const employee = await Employee.findByIdAndUpdate(req.params.id, { ...input, biometricTemplateVersion:3, biometricEnrolledAt:new Date() }, { new:true, runValidators:true })
   if (!employee) throw new HttpError(404, 'Employee not found')
@@ -198,7 +199,7 @@ const createSchema = z.object({
   shift:shiftSchema.optional(),
   ...biometricEnrollmentSchema.partial().shape,
 })
-router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
+router.post('/', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
   const input = createSchema.parse(req.body)
   if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only a Super Admin can create another Super Admin account')
   if (input.role === 'admin' && !['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only an Admin or Super Admin can create an Admin account')

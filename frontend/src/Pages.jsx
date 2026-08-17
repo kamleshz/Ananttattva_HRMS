@@ -1398,6 +1398,7 @@ export function EmployeeEditPage({ employeeId, user }) {
     setError("");
     try {
       const payload = {
+        employeeCode: form.employeeCode.trim().toUpperCase(),
         firstName: form.firstName,
         lastName: form.lastName,
         dateOfBirth: form.dateOfBirth || null,
@@ -1467,7 +1468,7 @@ export function EmployeeEditPage({ employeeId, user }) {
               <div><h2>Personal details</h2><p>Fields used in the employee profile and workforce dashboard.</p></div>
             </div>
             <div className="field-grid">
-              <label>Employee number<input value={form.employeeCode} readOnly aria-readonly="true" /></label>
+              <label>Employee number *<input required value={form.employeeCode} onChange={e => update("employeeCode", e.target.value.toUpperCase())} /></label>
               <label>Gender *
                 <select required value={form.gender} onChange={e => update("gender", e.target.value)}>
                   <option value="not_specified">Not specified</option>

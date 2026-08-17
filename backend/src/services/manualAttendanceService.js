@@ -107,7 +107,7 @@ export async function reviewManualAttendanceRequest({req,id,decision,reviewNote}
   try{
     let attendance
     if(approved){
-      const payload={attendanceMode:request.attendanceMode,locationVerified:request.locationVerified,location:request.location?.toObject?.()||request.location,source:'manual_fallback',manualRequest:request._id,proofPhotoStorageKey:request.biometricAttempt?.proofPhotoStorageKey,biometricVerification:{verified:false,method:'approved_manual_fallback',faceMatchScore:request.faceMatchScore,livenessScore:request.livenessScore,verifiedAt:new Date()}}
+      const payload={attendanceMode:request.attendanceMode,locationVerified:request.locationVerified,location:request.location?.toObject?.()||request.location,source:'manual_fallback',manualRequest:request._id,replaceSystemAutoCheckout:request.action==='check_out',proofPhotoStorageKey:request.biometricAttempt?.proofPhotoStorageKey,biometricVerification:{verified:false,method:'approved_manual_fallback',faceMatchScore:request.faceMatchScore,livenessScore:request.livenessScore,verifiedAt:new Date()}}
       const metadata={ipAddress:request.ipAddress,device:request.device}
       attendance=request.action==='check_in'?await checkIn(request.employee,payload,metadata,approvalTimestamp(request)):await checkOut(request.employee,payload,metadata,approvalTimestamp(request))
       request.attendance=attendance._id

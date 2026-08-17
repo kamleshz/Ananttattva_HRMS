@@ -28,8 +28,10 @@ export async function checkOut(employee, payload, requestMeta, checkOutTime = ne
   if (!employee) throw new HttpError(409, 'No employee profile is linked to this account')
   const record = await Attendance.findOne({ employee: employee._id, date: startOfLocalDay(checkOutTime) })
   if (!record) throw new HttpError(404, 'Check in before checking out')
-  if (record.checkOut?.time) throw new HttpError(409, 'Attendance is already completed for today')
+  const replacingSystemAutoCheckout = Boolean(payload.replaceSystemAutoCheckout && record.checkOut?.source === 'system_auto')
+  if (record.checkOut?.time && !replacingSystemAutoCheckout) throw new HttpError(409, 'Attendance is already completed for this date')
   const now = checkOutTime
+  if (replacingSystemAutoCheckout) record.status = record.autoCheckout?.previousStatus || (record.attendanceMode === 'wfh' ? 'wfh' : 'present')
   record.checkOut = { ...payload.location, photo: payload.photo, time: now, ...requestMeta, source:payload.source||'biometric',manualRequest:payload.manualRequest,proofPhotoStorageKey:payload.proofPhotoStorageKey,verification:payload.biometricVerification }
   record.workingMinutes = Math.max(0, Math.floor((now - record.checkIn.time) / 60000))
   record.biometricVerification = payload.biometricVerification
