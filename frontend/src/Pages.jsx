@@ -5,6 +5,8 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   Check,
+  ChevronDown,
+  ChevronRight,
   Clock3,
   Download,
   FileCheck2,
@@ -1706,15 +1708,29 @@ export function EmployeeEditPage({ employeeId, user }) {
 }
 
 export function OrganizationChartPage() {
-  const [employees,setEmployees]=useState([]),[search,setSearch]=useState(''),[department,setDepartment]=useState(''),[error,setError]=useState('');
-  useEffect(()=>{employeeApi.organizationChart().then(setEmployees).catch(requestError=>setError(requestError.message))},[])
-  const departments=[...new Set(employees.map(item=>item.department).filter(Boolean))].sort();
-  const filtered=employees.filter(item=>!department||item.department===department).filter(item=>`${item.firstName||''} ${item.lastName||''} ${item.employeeCode||''}`.toLowerCase().includes(search.toLowerCase()));
-  const visibleIds=new Set(filtered.map(item=>String(item._id)));
-  const children=new Map();
-  filtered.forEach(item=>{const manager=item.manager&&visibleIds.has(String(item.manager))?String(item.manager):'root';children.set(manager,[...(children.get(manager)||[]),item])});
-  const branch=(manager='root',level=0)=><div className={`org-level org-level-${Math.min(level,4)}`}>{(children.get(manager)||[]).map(employee=><article className="org-employee" key={employee._id}><div className="org-person">{employee.profilePhoto?<img src={employee.profilePhoto} alt=""/>:<span>{`${employee.firstName?.[0]||''}${employee.lastName?.[0]||''}`}</span>}<div><strong>{`${employee.firstName||''} ${employee.lastName||''}`.trim()||'Employee information unavailable'}</strong><small>{employee.designation||'Designation not assigned'} · {employee.department||'Department not assigned'}</small><p>{employee.employeeCode||'No employee ID'} · {employee.workLocation||'Location not assigned'}</p></div><i>{capitalize(employee.employeeStatus)}</i></div>{children.has(String(employee._id))&&branch(String(employee._id),level+1)}</article>)}</div>;
-  return <><PageHeader eyebrow="Team" title="Organization Chart" description="Explore reporting relationships across Ananttattva Private Limited."/><section className="card org-chart-card"><div className="org-chart-toolbar"><label><Search size={16}/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search employee or ID"/></label><select value={department} onChange={event=>setDepartment(event.target.value)}><option value="">All departments</option>{departments.map(item=><option key={item}>{item}</option>)}</select></div>{error?<StateMessage error>{error}</StateMessage>:filtered.length?branch():<div className="empty-state"><Network size={28}/><strong>No organization relationships found</strong><span>Assign reporting managers from employee profiles to build the chart.</span></div>}</section></>;
+  const [employees,setEmployees]=useState([]),[search,setSearch]=useState(''),[department,setDepartment]=useState(''),[collapsed,setCollapsed]=useState(()=>new Set()),[loading,setLoading]=useState(true),[error,setError]=useState('');
+  useEffect(()=>{let active=true;employeeApi.organizationChart().then(items=>{if(active)setEmployees(items)}).catch(requestError=>{if(active)setError(requestError.message)}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[])
+  const chart=useMemo(()=>{
+    const employeeById=new Map(employees.map(item=>[String(item._id),item]));
+    const normalizedSearch=search.trim().toLowerCase();
+    const directMatches=employees.filter(item=>(!department||item.department===department)&&(!normalizedSearch||`${item.firstName||''} ${item.lastName||''} ${item.employeeCode||''} ${item.designation||''} ${item.department||''}`.toLowerCase().includes(normalizedSearch)));
+    const visibleIds=new Set();
+    directMatches.forEach(item=>{let current=item,guard=0;while(current&&guard++<=employees.length){const id=String(current._id);if(visibleIds.has(id))break;visibleIds.add(id);current=current.manager?employeeById.get(String(current.manager)):null}});
+    const visible=employees.filter(item=>visibleIds.has(String(item._id)));
+    const children=new Map();
+    visible.forEach(item=>{const managerId=item.manager&&visibleIds.has(String(item.manager))?String(item.manager):'root';children.set(managerId,[...(children.get(managerId)||[]),item])});
+    children.forEach(items=>items.sort((left,right)=>`${left.firstName||''} ${left.lastName||''}`.localeCompare(`${right.firstName||''} ${right.lastName||''}`)));
+    let roots=children.get('root')||[];if(!roots.length&&visible.length)roots=visible;
+    return {children,roots,visible,directMatchIds:new Set(directMatches.map(item=>String(item._id)))};
+  },[employees,search,department]);
+  const departments=useMemo(()=>[...new Set(employees.map(item=>item.department).filter(Boolean))].sort(),[employees]);
+  const toggleBranch=id=>setCollapsed(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next});
+  const clearFilters=()=>{setSearch('');setDepartment('')};
+  const treeNode=(employee,level=0,trail=new Set())=>{
+    const id=String(employee._id),nextTrail=new Set(trail).add(id),reports=(chart.children.get(id)||[]).filter(item=>!nextTrail.has(String(item._id))),isCollapsed=collapsed.has(id),isMatch=chart.directMatchIds.has(id);
+    return <li key={id}><div className={`org-node${isMatch&&(search||department)?' is-match':''}`}><article className="org-person-card"><div className="org-card-top"><span className="org-level-label">Level {level+1}</span><i className={`org-status status-${employee.employeeStatus||'inactive'}`}>{capitalize(employee.employeeStatus)}</i></div><div className="org-person-main">{employee.profilePhoto?<img src={employee.profilePhoto} alt=""/>:<span className="org-avatar">{`${employee.firstName?.[0]||''}${employee.lastName?.[0]||''}`}</span>}<div><strong>{`${employee.firstName||''} ${employee.lastName||''}`.trim()||'Employee information unavailable'}</strong><small>{employee.designation||'Designation not assigned'}</small></div></div><div className="org-person-meta"><span>{employee.department||'Department not assigned'}</span><span>{employee.employeeCode||'No employee ID'}</span><span>{employee.workLocation||'Location not assigned'}</span></div><div className="org-report-count"><Network size={13}/><span>{reports.length} direct {reports.length===1?'report':'reports'}</span></div></article>{reports.length>0&&<button type="button" className="org-branch-toggle" onClick={()=>toggleBranch(id)} aria-label={`${isCollapsed?'Expand':'Collapse'} reports for ${employee.firstName||'employee'}`} aria-expanded={!isCollapsed}>{isCollapsed?<ChevronRight size={14}/>:<ChevronDown size={14}/>}</button>}</div>{reports.length>0&&!isCollapsed&&<ul>{reports.map(item=>treeNode(item,level+1,nextTrail))}</ul>}</li>;
+  };
+  return <><PageHeader eyebrow="Team · Reporting structure" title="Organization Chart" description="Explore leadership, managers and reporting relationships across Ananttattva Private Limited."/><section className="card org-chart-card"><div className="org-chart-toolbar"><label><Search size={16}/><input value={search} onChange={event=>setSearch(event.target.value)} placeholder="Search name, employee ID or role"/></label><select value={department} onChange={event=>setDepartment(event.target.value)}><option value="">All departments</option>{departments.map(item=><option key={item}>{item}</option>)}</select>{(search||department)&&<button type="button" className="org-clear-filter" onClick={clearFilters}>Clear filters</button>}</div>{!loading&&!error&&<div className="org-chart-summary"><div><strong>{chart.visible.length}</strong><span>People shown</span></div><div><strong>{chart.roots.length}</strong><span>Top-level leaders</span></div><div><strong>{new Set(chart.visible.map(item=>item.department).filter(Boolean)).size}</strong><span>Departments</span></div><p><i/> Reporting line <small>Use the arrow below a manager to collapse or expand their team.</small></p></div>}{error?<StateMessage error>{error}</StateMessage>:loading?<StateMessage>Building organization tree…</StateMessage>:chart.visible.length?<div className="org-tree-viewport"><div className="org-forest">{chart.roots.map(root=><ul className="org-tree" key={root._id}>{treeNode(root)}</ul>)}</div></div>:<div className="empty-state"><Network size={28}/><strong>No organization relationships found</strong><span>{search||department?'No employees match the current filters.':'Assign reporting managers from employee profiles to build the chart.'}</span>{(search||department)&&<button className="secondary-button" onClick={clearFilters}>Clear filters</button>}</div>}</section></>;
 }
 
 export function EmployeeOnboardingPage({ user }) {
