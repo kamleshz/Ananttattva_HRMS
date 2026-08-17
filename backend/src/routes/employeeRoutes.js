@@ -60,7 +60,10 @@ router.get('/organization-chart', authorize('super_admin','hr_admin','manager','
 }))
 router.get('/export',authorize('super_admin','admin','hr_admin'),asyncHandler(async(_req,res)=>{
   const existingUserIds=await User.distinct('_id')
-  const employees=await Employee.find({user:{$in:existingUserIds}})
+  const employees=await Employee.find({
+    user:{$in:existingUserIds},
+    employeeStatus:{$nin:['notice_period','resigned','terminated']},
+  })
     .populate('manager','employeeCode firstName lastName')
     .sort({employeeCode:1})
     .lean()
