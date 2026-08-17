@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
+import writeXlsxFile from 'write-excel-file/node'
 import { z } from 'zod'
 import { authenticate, authorize } from '../middleware/auth.js'
 import { Employee } from '../models/Employee.js'
@@ -55,6 +56,37 @@ router.get('/organization-chart', authorize('super_admin','hr_admin','manager','
   const employeeIds=new Set(employees.map(employee=>String(employee._id)))
   const items=employees.map(employee=>({...employee,manager:employee.manager&&employeeIds.has(String(employee.manager))?employee.manager:null}))
   res.json({success:true,data:items})
+}))
+router.get('/export',authorize('super_admin','admin','hr_admin'),asyncHandler(async(_req,res)=>{
+  const existingUserIds=await User.distinct('_id')
+  const employees=await Employee.find({user:{$in:existingUserIds}})
+    .populate('manager','employeeCode firstName lastName')
+    .sort({employeeCode:1})
+    .lean()
+  const headers=['Employee Number','Employee Name','Official Email','Mobile','Department','Designation','Branch','Work Location','Reporting Manager','Joining Date','Employment Type','Employee Status','Shift','Probation Status','Probation End Date','Annual Paid Leaves']
+  const emptyRow=Array(headers.length).fill(null)
+  const generatedAt=new Date()
+  const sheetData=[
+    [{value:'AT Connect – Employee Master Report',columnSpan:headers.length,fontWeight:'bold',fontSize:16,color:'#FFFFFF',backgroundColor:'#187B72',height:28},...emptyRow.slice(1)],
+    [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short'}).format(generatedAt)} · ${employees.length} employees`,columnSpan:headers.length,fontStyle:'italic',color:'#667085'},...emptyRow.slice(1)],
+    emptyRow,
+    headers.map(value=>({value,fontWeight:'bold',color:'#FFFFFF',backgroundColor:'#245D58',align:'center',wrap:true,height:30})),
+  ]
+  employees.forEach((employee,index)=>{
+    const fill=index%2===1?'#F3F8F7':undefined
+    const cell=(value,extra={})=>({value:value??'',backgroundColor:fill,wrap:true,...extra})
+    const manager=employee.manager?`${employee.manager.firstName||''} ${employee.manager.lastName||''}`.trim():''
+    sheetData.push([
+      cell(employee.employeeCode),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim()),cell(employee.officialEmail),cell(employee.mobile),cell(employee.department),cell(employee.designation),cell(employee.branch),cell(employee.workLocation),cell(manager?`${manager}${employee.manager.employeeCode?` (${employee.manager.employeeCode})`:''}`:''),
+      employee.joiningDate?cell(employee.joiningDate,{type:Date,format:'dd-mmm-yyyy'}):cell(''),cell(String(employee.employmentType||'').replaceAll('_',' ')),cell(String(employee.employeeStatus||'').replaceAll('_',' ')),cell(employee.shift?.name?`${employee.shift.name} (${employee.shift.startTime||''}–${employee.shift.endTime||''})`:''),cell(String(employee.probation?.confirmationStatus||'').replaceAll('_',' ')),employee.probation?.expectedEndDate?cell(employee.probation.expectedEndDate,{type:Date,format:'dd-mmm-yyyy'}):cell(''),cell(employee.leavePlan?.annualPaidLeaves??'',employee.leavePlan?.annualPaidLeaves==null?{}:{type:Number}),
+    ])
+  })
+  const columns=[18,25,30,16,20,22,18,22,28,16,18,17,28,20,18,18].map(width=>({width}))
+  const buffer=await writeXlsxFile(sheetData,{sheet:'Employee Master',columns,stickyRowsCount:4},{fontFamily:'Arial',fontSize:10}).toBuffer()
+  const fileName=`AT_Connect_Employees_${generatedAt.toISOString().slice(0,10)}.xlsx`
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition',`attachment; filename="${fileName}"`)
+  res.send(Buffer.from(buffer))
 }))
 router.get('/:id', asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id).populate('manager','firstName lastName employeeCode')

@@ -1251,6 +1251,7 @@ export function PeoplePage({ user }) {
   const [employees, setEmployees] = useState([]),
     [query, setQuery] = useState(""),
     [loading, setLoading] = useState(true),
+    [exporting, setExporting] = useState(false),
     [error, setError] = useState("");
   function load(search = "") {
     setLoading(true);
@@ -1271,19 +1272,41 @@ export function PeoplePage({ user }) {
     event.preventDefault();
     load(query);
   }
+  async function exportEmployees() {
+    setExporting(true);
+    setError("");
+    try {
+      const { blob, fileName } = await employeeApi.exportExcel();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+  const canManagePeople = ['super_admin','admin','hr_admin'].includes(user?.role);
   return (
     <>
       <PageHeader
         eyebrow="Team"
         title="People"
         description={`${employees.length} employees in your organization.`}
-        action={['super_admin','admin','hr_admin'].includes(user?.role) ?
-          <button
-            className="primary-button"
-            onClick={() => navigate("/people/new")}
-          >
-            <Plus size={16} /> Add employee
-          </button>
+        action={canManagePeople ?
+          <div className="attendance-page-actions">
+            <button className="secondary-button" disabled={exporting} onClick={exportEmployees}>
+              <Download size={16} /> {exporting ? "Exporting…" : "Export Excel"}
+            </button>
+            <button className="primary-button" onClick={() => navigate("/people/new")}>
+              <Plus size={16} /> Add employee
+            </button>
+          </div>
         : null}
       />
       <section className="content-card">
@@ -1333,7 +1356,7 @@ export function PeoplePage({ user }) {
                     <dd>{employee.workLocation}</dd>
                   </div>
                 </dl>
-                {['super_admin','admin','hr_admin'].includes(user?.role) && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button></div>}
+                {canManagePeople && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button></div>}
               </article>
             ))}
           </div>

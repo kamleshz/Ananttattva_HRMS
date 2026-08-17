@@ -120,6 +120,7 @@ export const workArrangementApi = {
 export const employeeApi = {
   demographics: (group) => api(`/employees/demographics/list?group=${encodeURIComponent(group)}`),
   organizationChart: () => api('/employees/organization-chart'),
+  exportExcel: () => downloadApi('/employees/export'),
   list: (search = "") =>
     api(
       `/employees?limit=50${search ? `&search=${encodeURIComponent(search)}` : ""}`,
