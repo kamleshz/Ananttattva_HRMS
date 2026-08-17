@@ -170,8 +170,8 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
               <span>{label}</span>
             </button>
           ))}
-          <p className="nav-label">Employee lifecycle</p>
-          <button onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>
+          {user.role !== "employee" && <p className="nav-label">Employee lifecycle</p>}
+          {user.role !== "employee" && <button onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>}
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>
