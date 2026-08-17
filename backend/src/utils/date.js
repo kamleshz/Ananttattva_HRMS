@@ -28,3 +28,17 @@ export function organizationMonthBounds(date = new Date()) {
     end:new Date(Date.UTC(year,month + 1,1) - offset),
   }
 }
+
+export function organizationMonthBoundsFor(year, month) {
+  const offset = ORGANIZATION_TIMEZONE_OFFSET_MINUTES * 60_000
+  return {
+    start:new Date(Date.UTC(year,month - 1,1) - offset),
+    end:new Date(Date.UTC(year,month,1) - offset),
+  }
+}
+
+// XLSX stores dates as timezone-free serial numbers. Shift an instant to the
+// organization's wall-clock value before writing it so 10:00 IST stays 10:00.
+export function organizationExcelDate(value) {
+  return new Date(new Date(value).getTime() + ORGANIZATION_TIMEZONE_OFFSET_MINUTES * 60_000)
+}

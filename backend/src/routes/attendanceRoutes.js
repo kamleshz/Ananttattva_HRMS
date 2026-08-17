@@ -4,7 +4,7 @@ import { authenticate } from '../middleware/auth.js'
 import { authorize } from '../middleware/auth.js'
 import { Attendance } from '../models/Attendance.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
-import { startOfLocalDay } from '../utils/date.js'
+import { organizationExcelDate, organizationMonthBoundsFor, startOfLocalDay } from '../utils/date.js'
 import { checkIn, checkOut } from '../services/attendanceService.js'
 import { createHash } from 'node:crypto'
 import jwt from 'jsonwebtoken'
@@ -200,11 +200,10 @@ router.get('/today', asyncHandler(async (req, res) => {
     attendanceMode:record?.attendanceMode||null,
   }})
 }))
-router.get('/all', authorize('super_admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res)=>{
+router.get('/all', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res)=>{
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
-  const start=new Date(input.year,input.month-1,1)
-  const end=new Date(input.year,input.month,1)
-  const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName department designation').sort({date:-1,employee:1}).limit(5000)
+  const {start,end}=organizationMonthBoundsFor(input.year,input.month)
+  const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName department designation').sort({date:-1,employee:1})
   res.json({success:true,data:records})
 }))
 router.get('/corrections', asyncHandler(async (req,res)=>{
@@ -213,13 +212,12 @@ router.get('/corrections', asyncHandler(async (req,res)=>{
   const requests=await AttendanceCorrectionRequest.find(filter).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
 }))
-router.get('/export', authorize('super_admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res) => {
+router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res) => {
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
-  const start=new Date(input.year,input.month-1,1)
-  const end=new Date(input.year,input.month,1)
+  const {start,end}=organizationMonthBoundsFor(input.year,input.month)
   const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName department designation').sort({date:1,employee:1})
-  const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric'}).format(start)
-  const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Location','Location Verified','Face Match %','Liveness %']
+  const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'}).format(start)
+  const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Location','Location Verified','Face Match %','Liveness %']
   const emptyRow=Array(headers.length).fill(null)
   const sheetData=[
     [{value:`AT Connect – Attendance Report – ${reportMonth}`,columnSpan:headers.length,fontWeight:'bold',fontSize:16,color:'#FFFFFF',backgroundColor:'#187B72',height:28},...emptyRow.slice(1)],
@@ -232,9 +230,9 @@ router.get('/export', authorize('super_admin','hr_admin','finance_admin','it_adm
     const fill=index%2===1?'#F3F8F7':undefined
     const cell=(value,extra={})=>({value,backgroundColor:fill,wrap:true,...extra})
     sheetData.push([
-      cell(employee.employeeCode||''),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim()),cell(employee.department||''),cell(employee.designation||''),cell(record.date,{type:Date,format:'dd-mmm-yyyy'}),
-      cell(new Intl.DateTimeFormat('en-IN',{weekday:'long'}).format(record.date)),cell(String(record.attendanceMode||'').replaceAll('_',' ')),cell(String(record.status||'').replaceAll('_',' ')),
-      record.checkIn?.time?cell(record.checkIn.time,{type:Date,format:'hh:mm AM/PM'}):cell(''),record.checkOut?.time?cell(record.checkOut.time,{type:Date,format:'hh:mm AM/PM'}):cell(''),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00'}),cell(record.lateMinutes||0,{type:Number}),cell(record.halfDayReason||''),
+      cell(employee.employeeCode||''),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim()),cell(employee.department||''),cell(employee.designation||''),cell(organizationExcelDate(record.date),{type:Date,format:'dd-mmm-yyyy'}),
+      cell(new Intl.DateTimeFormat('en-IN',{weekday:'long',timeZone:'Asia/Kolkata'}).format(record.date)),cell(String(record.attendanceMode||'').replaceAll('_',' ')),cell(String(record.status||'').replaceAll('_',' ')),
+      record.checkIn?.time?cell(organizationExcelDate(record.checkIn.time),{type:Date,format:'hh:mm AM/PM'}):cell(''),record.checkOut?.time?cell(organizationExcelDate(record.checkOut.time),{type:Date,format:'hh:mm AM/PM'}):cell(''),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00'}),cell(record.lateMinutes||0,{type:Number}),cell(record.halfDayReason||''),
       cell(record.checkIn?.address||''),cell(record.locationVerified?'Yes':'No'),record.biometricVerification?.faceMatchScore==null?cell(''):cell(record.biometricVerification.faceMatchScore,{type:Number,format:'0.0%'}),record.biometricVerification?.livenessScore==null?cell(''):cell(record.biometricVerification.livenessScore,{type:Number,format:'0.0%'}),
     ])
   })
@@ -290,7 +288,7 @@ router.patch('/corrections/:id/:decision', authorize('super_admin','hr_admin'), 
 router.get('/me', asyncHandler(async (req, res) => {
   const { month, year } = req.query
   const filter = { employee: req.user.employee._id }
-  if (month && year) { filter.date = { $gte: new Date(Number(year), Number(month)-1, 1), $lt: new Date(Number(year), Number(month), 1) } }
+  if (month && year) { const {start,end}=organizationMonthBoundsFor(Number(year),Number(month));filter.date={$gte:start,$lt:end} }
   res.json({ success: true, data: await Attendance.find(filter).sort({ date: -1 }).limit(100) })
 }))
 export default router

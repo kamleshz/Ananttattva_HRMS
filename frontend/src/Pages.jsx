@@ -205,7 +205,7 @@ export function MySpacePage() {
 export function AttendancePage({ user }) {
   const now = new Date(),
     [month, setMonth] = useState(now.getMonth() + 1),
-    [year] = useState(now.getFullYear()),
+    [year, setYear] = useState(now.getFullYear()),
     [records, setRecords] = useState([]),
     [corrections, setCorrections] = useState([]),
     [faceRequests, setFaceRequests] = useState([]),
@@ -226,6 +226,14 @@ export function AttendancePage({ user }) {
   const canReviewCorrections = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const canReviewFaceRequests = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
   const canReviewArrangements = ["super_admin", "admin", "hr_admin", "it_admin", "manager"].includes(user.role);
+  const previousMonth = () => {
+    if (month === 1) { setMonth(12); setYear(value => value - 1); }
+    else setMonth(value => value - 1);
+  };
+  const nextMonth = () => {
+    if (month === 12) { setMonth(1); setYear(value => value + 1); }
+    else setMonth(value => value + 1);
+  };
   useEffect(() => {
     (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
       .then(setRecords)
@@ -363,22 +371,18 @@ export function AttendancePage({ user }) {
           <div className="attendance-page-actions">
           <div className="month-control">
             <button
-              onClick={() =>
-                setMonth((value) => (value === 1 ? 12 : value - 1))
-              }
+              onClick={previousMonth}
             >
               ‹
             </button>
             <span>
               {new Intl.DateTimeFormat("en", { month: "long" }).format(
-                new Date(2026, month - 1),
+                new Date(year, month - 1),
               )}{" "}
               {year}
             </span>
             <button
-              onClick={() =>
-                setMonth((value) => (value === 12 ? 1 : value + 1))
-              }
+              onClick={nextMonth}
             >
               ›
             </button>
