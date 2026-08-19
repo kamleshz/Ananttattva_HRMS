@@ -12,7 +12,6 @@ import { uploadAttendanceProof } from './privateStorageService.js'
 import { recordAudit } from './auditService.js'
 
 export const MANUAL_REASONS={CAMERA_PERMISSION_DENIED:'Camera permission denied',CAMERA_NOT_AVAILABLE:'Camera not available',CAMERA_INITIALIZATION_FAILED:'Camera initialization failed',CAMERA_CAPTURE_FAILED:'Camera capture failed',NO_FACE_DETECTED:'No face detected',FACE_NOT_DETECTED:'Face not detected',MULTIPLE_FACES:'Multiple faces detected',POOR_IMAGE_QUALITY:'Poor image quality',LIVENESS_FAILED:'Liveness verification failed',FACE_MATCH_FAILED:'Face match failed',FACE_MISMATCH:'Face mismatch',LOCATION_PERMISSION_DENIED:'Location permission denied',LOCATION_FAILED:'Location failed',NETWORK_FAILED:'Network failed',NETWORK_OR_DEVICE_ERROR:'Network or device error',BIOMETRIC_SERVICE_UNAVAILABLE:'Biometric service unavailable',BROWSER_NOT_SUPPORTED:'Browser not supported',UNKNOWN_ERROR:'Unknown technical error',OTHER:'Other'}
-export const TECHNICAL_ERRORS=new Set(['CAMERA_NOT_AVAILABLE','CAMERA_PERMISSION_DENIED','CAMERA_INITIALIZATION_FAILED','CAMERA_CAPTURE_FAILED','NETWORK_FAILED','NETWORK_OR_DEVICE_ERROR','BIOMETRIC_SERVICE_UNAVAILABLE','BROWSER_UNSUPPORTED','BROWSER_NOT_SUPPORTED','LOCATION_PERMISSION_DENIED','LOCATION_FAILED','UNKNOWN_ERROR'])
 
 export function normalizeDeviceDetails(details={}){
   return Object.fromEntries(['browser','os','deviceType'].flatMap(key=>typeof details?.[key]==='string'&&details[key].trim()?[[key,details[key].trim().slice(0,80)]]:[]))
@@ -24,12 +23,13 @@ export function distanceMeters(from,to){
   return Math.round(R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)))
 }
 export function approvalTimestamp(request){return new Date(request.requestedAt||request.attemptedAt)}
-export function validateFallbackEligibility({reasonCode,attempts=0,technicalErrorCode,mismatchTrusted=false}){
+export function validateFallbackEligibility({reasonCode}){
   if(!MANUAL_REASONS[reasonCode])throw new HttpError(422,'Select a valid manual attendance reason')
-  if(TECHNICAL_ERRORS.has(technicalErrorCode)||TECHNICAL_ERRORS.has(reasonCode))return true
-  if(['FACE_MISMATCH','FACE_MATCH_FAILED'].includes(reasonCode)&&mismatchTrusted&&attempts>=env.manualAttendanceFaceRetryLimit)return true
-  if(['FACE_NOT_DETECTED','NO_FACE_DETECTED','MULTIPLE_FACES','POOR_IMAGE_QUALITY','LIVENESS_FAILED'].includes(reasonCode)&&attempts>=env.manualAttendanceFaceRetryLimit)return true
-  throw new HttpError(422,`Retry biometric attendance ${env.manualAttendanceFaceRetryLimit} times before using manual fallback`)
+  // A manual request never records attendance by itself; it only enters the
+  // reviewer queue.  Retry counts and trusted mismatch evidence remain useful
+  // audit/risk signals, but they must not make reasons shown in the manual form
+  // impossible to submit (notably OTHER and a directly reported face failure).
+  return true
 }
 
 async function assessLocation(input,employeeId,at){
@@ -69,7 +69,7 @@ async function notifyOnce(notification){
 export async function createManualAttendanceRequest({req,input,mismatchProof}){
   const requestedAt=new Date(),employee=req.user.employee
   if(!employee||employee.employeeStatus!=='active')throw new HttpError(409,'An active employee profile is required')
-  validateFallbackEligibility({reasonCode:input.reasonCode,attempts:input.biometricAttempt?.attempts,technicalErrorCode:input.biometricAttempt?.technicalErrorCode,mismatchTrusted:Boolean(mismatchProof)})
+  validateFallbackEligibility({reasonCode:input.reasonCode})
   if(input.reasonCode==='OTHER'&&input.remarks.trim().length<5)throw new HttpError(422,'Remarks are required when reason is Other')
   const date=startOfLocalDay(requestedAt),existingAttendance=await Attendance.findOne({employee:employee._id,date})
   if(input.action==='check_in'&&existingAttendance)throw new HttpError(409,'Attendance is already recorded for today')
