@@ -223,7 +223,13 @@ router.get('/corrections', asyncHandler(async (req,res)=>{
 router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res) => {
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
   const {start,end}=organizationMonthBoundsFor(input.year,input.month)
-  const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName department designation').sort({date:1,employee:1})
+  let records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:1,employee:1})
+  if(['super_admin','admin','hr_admin'].includes(req.user.role)){
+    const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
+    const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
+    const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({firstName:1,lastName:1}).lean()
+    records=buildAttendanceRoster({employees,records,start,end:rosterEnd}).sort((left,right)=>new Date(left.date)-new Date(right.date)||`${left.employee?.firstName||''} ${left.employee?.lastName||''}`.localeCompare(`${right.employee?.firstName||''} ${right.employee?.lastName||''}`))
+  }
   const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'}).format(start)
   const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Location','Location Verified','Face Match %','Liveness %']
   const emptyRow=Array(headers.length).fill(null)
