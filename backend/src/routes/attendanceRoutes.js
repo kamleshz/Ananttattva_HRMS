@@ -21,6 +21,8 @@ import { FaceAttendanceRequest } from '../models/FaceAttendanceRequest.js'
 import { sendFaceCheckInApprovalRequest, sendFaceCheckInDecision } from '../services/mailService.js'
 import manualAttendanceRoutes from './manualAttendanceRoutes.js'
 import { BiometricVerificationUse } from '../models/BiometricVerificationUse.js'
+import { Employee } from '../models/Employee.js'
+import { buildAttendanceRoster } from '../services/attendanceRosterService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -202,10 +204,15 @@ router.get('/today', asyncHandler(async (req, res) => {
   }})
 }))
 router.get('/all', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res)=>{
-  const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
+  const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100),complete:z.enum(['true','false']).default('false')}).parse(req.query)
   const {start,end}=organizationMonthBoundsFor(input.year,input.month)
-  const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName department designation').sort({date:-1,employee:1})
-  res.json({success:true,data:records})
+  const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:-1,employee:1})
+  const canViewCompleteRoster=['super_admin','admin','hr_admin'].includes(req.user.role)
+  if(input.complete!=='true'||!canViewCompleteRoster)return res.json({success:true,data:records})
+  const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
+  const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
+  const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({firstName:1,lastName:1}).lean()
+  res.json({success:true,data:buildAttendanceRoster({employees,records,start,end:rosterEnd})})
 }))
 router.get('/corrections', asyncHandler(async (req,res)=>{
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)

@@ -215,6 +215,7 @@ export function AttendancePage({ user }) {
     [correctionForm, setCorrectionForm] = useState({ requestedCheckoutTime: "", reason: "" }),
     [selected, setSelected] = useState(null),
     [viewingPhoto, setViewingPhoto] = useState(null),
+    [employeeFilter, setEmployeeFilter] = useState(""),
     [loading, setLoading] = useState(true),
     [exporting, setExporting] = useState(false),
     [correctionBusy, setCorrectionBusy] = useState(false),
@@ -225,6 +226,7 @@ export function AttendancePage({ user }) {
     [error, setError] = useState("");
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
+  const canViewCompleteRoster = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const canReviewCorrections = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const canReviewFaceRequests = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
   const canReviewArrangements = ["super_admin", "admin", "hr_admin", "it_admin", "manager"].includes(user.role);
@@ -237,11 +239,11 @@ export function AttendancePage({ user }) {
     else setMonth(value => value + 1);
   };
   useEffect(() => {
-    (canViewAllAttendance ? attendanceApi.allHistory(month, year) : attendanceApi.history(month, year))
+    (canViewAllAttendance ? attendanceApi.allHistory(month, year, canViewCompleteRoster) : attendanceApi.history(month, year))
       .then(setRecords)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [month, year, canViewAllAttendance]);
+  }, [month, year, canViewAllAttendance, canViewCompleteRoster]);
   useEffect(() => {
     attendanceApi
       .corrections(canReviewCorrections ? "all" : "mine")
@@ -333,7 +335,7 @@ export function AttendancePage({ user }) {
       const updated = await attendanceApi.reviewManualRequest(request._id, decision, reviewNote);
       setFaceRequests((items) => items.map((item) => item._id === updated._id ? updated : item));
       if (updated.attendance && decision === "approve") {
-        const refreshed = canViewAllAttendance ? await attendanceApi.allHistory(month, year) : await attendanceApi.history(month, year);
+        const refreshed = canViewAllAttendance ? await attendanceApi.allHistory(month, year, canViewCompleteRoster) : await attendanceApi.history(month, year);
         setRecords(refreshed);
       }
     } catch (e) {
@@ -361,6 +363,11 @@ export function AttendancePage({ user }) {
     setArrangementBusy(true);setError("");try{const updated=await workArrangementApi.review(request._id,decision,reviewNote);setArrangements(items=>items.map(item=>item._id===updated._id?{...item,...updated}:item))}catch(e){setError(e.message)}finally{setArrangementBusy(false)}
   }
   const pendingCorrectionIds = new Set(corrections.filter((item) => item.status === "pending").map((item) => String(item.attendance?._id || item.attendance)));
+  const visibleRecords = useMemo(() => {
+    const query=employeeFilter.trim().toLowerCase();
+    if(!canViewCompleteRoster||!query)return records;
+    return records.filter(item=>`${item.employee?.firstName||""} ${item.employee?.lastName||""} ${item.employee?.employeeCode||""} ${item.employee?.officialEmail||""}`.toLowerCase().includes(query));
+  },[records,employeeFilter,canViewCompleteRoster]);
   const pendingArrangements = arrangements.filter((item) => item.status === "pending");
   const pendingFaceRequests = faceRequests.filter((item) => item.status === "pending");
   const orderedArrangements = [...arrangements].sort((left,right) => Number(right.status === "pending") - Number(left.status === "pending"));
@@ -424,16 +431,14 @@ export function AttendancePage({ user }) {
             <p className="eyebrow">Attendance log</p>
             <h2>Daily records</h2>
           </div>
-          <button className="secondary-button">
-            <Filter size={15} /> Filter
-          </button>
+          {canViewCompleteRoster && <label className="attendance-employee-filter"><Search size={15}/><input value={employeeFilter} onChange={event=>setEmployeeFilter(event.target.value)} placeholder="Filter by employee name or ID" aria-label="Filter attendance by employee"/>{employeeFilter&&<button type="button" onClick={()=>setEmployeeFilter("")} aria-label="Clear employee filter"><X size={14}/></button>}</label>}
         </div>
         {loading ? (
           <StateMessage>Loading attendance…</StateMessage>
         ) : error ? (
           <StateMessage error>{error}</StateMessage>
-        ) : records.length === 0 ? (
-          <StateMessage>No attendance records for this month.</StateMessage>
+        ) : visibleRecords.length === 0 ? (
+          <StateMessage>{employeeFilter ? "No employees match this filter." : "No attendance records for this month."}</StateMessage>
         ) : (
           <div className="data-table-wrap">
             <table className="data-table">
@@ -452,13 +457,13 @@ export function AttendancePage({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {records.map((item) => (
+                {visibleRecords.map((item) => (
                   <tr key={item._id}>
                     {canViewAllAttendance && <td className="attendance-employee-cell"><strong>{item.employee ? `${item.employee.firstName || ""} ${item.employee.lastName || ""}`.trim() : "Deleted employee"}</strong>{item.employee?.employeeCode && <small>{item.employee.employeeCode}</small>}</td>}
                     <td>
                       <strong>{formatDate(item.date)}</strong>
                     </td>
-                    <td>General shift</td>
+                    <td>{item.shift?.name || item.employee?.shift?.name || "General shift"}</td>
                     <td>{formatTime(item.checkIn?.time)}</td>
                     <td>{formatTime(item.checkOut?.time)}</td>
                     <td>
@@ -508,7 +513,7 @@ export function AttendancePage({ user }) {
                     <td>{punctualityFor(item) ? <StatusBadge status={punctualityFor(item)} label={punctualityLabel(item)} /> : <span>—</span>}</td>
                     <td>
                       <div className="attendance-row-actions">
-                        <button className="table-action" onClick={() => setSelected(item)}>View</button>
+                        {!item.isRosterPlaceholder && <button className="table-action" onClick={() => setSelected(item)}>View</button>}
                         {item.status === "missing_checkout" && item.checkOut?.source === "system_auto" && !canReviewCorrections && !pendingCorrectionIds.has(String(item._id)) && (
                           <button className="correction-button" onClick={() => openCorrection(item)}>Correct checkout</button>
                         )}

@@ -91,7 +91,7 @@ export const dashboardApi = { employee: () => api("/dashboard/employee") };
 export const attendanceApi = {
   today: () => api('/attendance/today'),
   history: (month, year) => api(`/attendance/me?month=${month}&year=${year}`),
-  allHistory: (month, year) => api(`/attendance/all?month=${month}&year=${year}`),
+  allHistory: (month, year, complete = false) => api(`/attendance/all?month=${month}&year=${year}&complete=${complete}`),
   exportExcel: (month, year) => downloadApi(`/attendance/export?month=${month}&year=${year}`),
   corrections: (scope = "mine") => api(`/attendance/corrections${scope === "all" ? "?scope=all" : ""}`),
   requestCorrection: (id, data) => api(`/attendance/${id}/correction`, { method: "POST", body: JSON.stringify(data) }),
