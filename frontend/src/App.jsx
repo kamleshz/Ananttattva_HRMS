@@ -842,6 +842,9 @@ function WorkforceDemographicsCard({ demographics }) {
 function HomePage({ user, dashboard }) {
   const navigate = useNavigate();
   const quickAction=['super_admin','admin'].includes(user.role)?{label:'Review offer approvals',route:'/recruitment/approvals'}:user.role==='hr_admin'?{label:'Add candidate',route:'/recruitment/candidates'}:{label:dashboard?.today?.checkIn?.time?'View attendance':'Check in',route:'/attendance'};
+  const isCheckedIn=Boolean(dashboard?.today?.checkIn?.time&&!dashboard?.today?.checkOut?.time);
+  const attendanceLabel=dashboard?.today?.checkOut?.time?'Day completed':isCheckedIn?'Currently checked in':'Not checked in';
+  const roleLabel=(user.role||'employee').replaceAll('_',' ');
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
     return hour < 12
@@ -856,23 +859,21 @@ function HomePage({ user, dashboard }) {
     month: "long",
   }).format(new Date());
   return (
-    <>
-      <div className="welcome">
-        <div>
-          <p className="breadcrumb">
-            Home <ChevronRight size={13} /> My dashboard
-          </p>
-          <h1>
-            {greeting}, {user.firstName} <span>👋</span>
-          </h1>
-          <p>
-            {date} <i /> Here’s what’s happening today.
-          </p>
+    <div className="home-dashboard">
+      <section className="dashboard-welcome-panel">
+        <div className="dashboard-welcome-copy">
+          <p className="breadcrumb">Workspace <ChevronRight size={13}/> Dashboard</p>
+          <span className="dashboard-live-label"><i/>Your workspace is up to date</span>
+          <h1>{greeting}, {user.firstName} <span aria-hidden="true">👋</span></h1>
+          <p>{date} · Here is a focused view of your workday.</p>
+          <button className="quick-action" onClick={() => navigate(quickAction.route)}><Sparkles size={15}/>{quickAction.label}<ChevronRight size={15}/></button>
         </div>
-        <button className="quick-action" onClick={() => navigate(quickAction.route)}>
-          <span>+</span> {quickAction.label} <ChevronRight size={15} />
-        </button>
-      </div>
+        <div className="dashboard-snapshot" aria-label="Today at a glance">
+          <div><span><Clock3 size={16}/></span><small>Attendance</small><strong>{attendanceLabel}</strong></div>
+          <div><span><UserRound size={16}/></span><small>Workspace role</small><strong>{roleLabel}</strong></div>
+          <div><span><CalendarDays size={16}/></span><small>Today</small><strong>{new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</strong></div>
+        </div>
+      </section>
       <div className="dashboard-grid">
         <div className="main-column">
           <ModernAttendanceCard />
@@ -884,9 +885,8 @@ function HomePage({ user, dashboard }) {
           <CelebrationCard birthdays={dashboard?.birthdays} />
         </aside>
       </div>
-      <RecruitmentHomeWidgets user={user} />
-      <CompanyHomeSection />
-    </>
+      <div className="home-dashboard-secondary"><RecruitmentHomeWidgets user={user}/><CompanyHomeSection/></div>
+    </div>
   );
 }
 
