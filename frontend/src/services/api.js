@@ -100,7 +100,12 @@ export const attendanceApi = {
   requestFaceMatchApproval: (data) => api("/attendance/face-match-requests", { method:"POST", body:JSON.stringify(data) }),
   reviewFaceMatchRequest: (id, decision, reviewNote = "") => api(`/attendance/face-match-requests/${id}/${decision}`, { method:"PATCH", body:JSON.stringify({reviewNote}) }),
   manualRequests: (scope = "mine") => api(`/attendance/manual${scope === "all" ? "?scope=all" : ""}`),
-  createManualRequest: (data) => api('/attendance/manual', { method:'POST', body:JSON.stringify(data) }),
+  createManualRequest: (data) => {
+    if(!data.photo)return api('/attendance/manual',{method:'POST',body:JSON.stringify(data)});
+    const form=new FormData();
+    Object.entries(data).forEach(([key,value])=>{if(key==='photo')form.append('photo',value,value.name||'live-checkout.jpg');else if(value!==undefined&&value!==null)form.append(key,typeof value==='object'?JSON.stringify(value):String(value))});
+    return uploadApi('/attendance/manual',form);
+  },
   reviewManualRequest: (id, decision, reviewNote = "") => api(`/attendance/manual/${id}/${decision}`, { method:'PATCH', body:JSON.stringify({reviewNote}) }),
   manualMetrics: () => api('/attendance/manual/metrics'),
   checkIn: (data) =>

@@ -13,7 +13,10 @@ function configure(){
 export async function uploadAttendanceProof(dataUri,employeeId,action){
   if(!dataUri)return null
   configure()
-  const result=await cloudinary.uploader.upload(dataUri,{resource_type:'image',type:'authenticated',folder:`at-connect/attendance-proof/${employeeId}`,public_id:`${Date.now()}-${action}`,overwrite:false,unique_filename:true})
+  const options={resource_type:'image',type:'authenticated',folder:`at-connect/attendance-proof/${employeeId}`,public_id:`${Date.now()}-${action}`,overwrite:false,unique_filename:true}
+  const result=Buffer.isBuffer(dataUri)
+    ? await new Promise((resolve,reject)=>cloudinary.uploader.upload_stream(options,(error,value)=>error?reject(error):resolve(value)).end(dataUri))
+    : await cloudinary.uploader.upload(dataUri,options)
   return {storageKey:result.public_id,format:result.format,version:result.version,bytes:result.bytes,hash:createHash('sha256').update(dataUri).digest('hex')}
 }
 
