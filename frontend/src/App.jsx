@@ -226,7 +226,7 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
   );
 }
 
-function Header({ openMenu, user, logout, navigate, organization }) {
+function Header({ openMenu, user, logout, navigate }) {
   const [profile, setProfile] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -241,11 +241,10 @@ function Header({ openMenu, user, logout, navigate, organization }) {
       <button className="menu-button" onClick={openMenu}>
         <Menu size={21} />
       </button>
-      <div className="header-company-brand">{organization?.logo?<img src={organization.logo} alt={organization.companyName||"Ananttattva"}/>:<span className="header-logo-mark">A</span>}<div><strong>{organization?.shortName||"ANANTTATTVA"}</strong><small>e-Connect HR</small></div></div>
       <div className="search-box">
         <Search size={17} />
         <input
-          placeholder="Search employees, requests, attendance..."
+          placeholder="Search people, pages or actions..."
           onKeyDown={(event) => event.key === "Enter" && navigate(`/people`)}
         />
         <span>⌘ K</span>
@@ -863,10 +862,11 @@ function HomePage({ user, dashboard }) {
     <div className="home-dashboard">
       <section className="dashboard-welcome-panel">
         <div className="dashboard-welcome-copy">
-          <p className="breadcrumb">{date.toUpperCase()}</p>
+          <p className="breadcrumb">Workspace <ChevronRight size={13}/> Dashboard</p>
+          <span className="dashboard-live-label"><i/>Your workspace is up to date</span>
           <h1>{greeting}, {user.firstName} <span aria-hidden="true">👋</span></h1>
           <p>{date} · Here is a focused view of your workday.</p>
-          <div className="hero-actions"><button className="quick-action" onClick={() => navigate(quickAction.route)}>{quickAction.label}<ChevronRight size={15}/></button><button className="hero-secondary-action" onClick={()=>navigate('/attendance')}><CalendarDays size={15}/>View My Week</button></div>
+          <button className="quick-action" onClick={() => navigate(quickAction.route)}><Sparkles size={15}/>{quickAction.label}<ChevronRight size={15}/></button>
         </div>
         <div className="dashboard-snapshot" aria-label="Today at a glance">
           <div><span><Clock3 size={16}/></span><small>Attendance</small><strong>{attendanceLabel}</strong></div>
@@ -886,8 +886,6 @@ function HomePage({ user, dashboard }) {
         </aside>
       </div>
       <div className="home-dashboard-secondary"><RecruitmentHomeWidgets user={user}/><CompanyHomeSection/></div>
-      <section className="dashboard-quick-actions"><h2>Quick Actions</h2><div><button onClick={()=>navigate('/leave')}><Plane size={19}/><span>Apply Leave</span></button><button onClick={()=>navigate('/reports')}><Clock3 size={19}/><span>Attendance Report</span></button><button onClick={()=>navigate('/my-space')}><FileText size={19}/><span>My Space</span></button><button onClick={()=>navigate('/people')}><UsersRound size={19}/><span>Directory</span></button></div></section>
-      <footer className="dashboard-footer"><span>© {new Date().getFullYear()} Ananttattva e-Connect HR. All rights reserved.</span><span>Made with ❤️ for a better workplace</span></footer>
     </div>
   );
 }
@@ -984,7 +982,6 @@ export default function App() {
           user={user}
           logout={logout}
           navigate={navigate}
-          organization={dashboard?.organization}
         />
         <main className={location.pathname === "/" ? "" : "page-content"}>
           {activePage}
