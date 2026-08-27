@@ -156,6 +156,20 @@ export async function sendFaceCheckInDecision({recipient,firstName,decision,atte
   return sendGraphEmail({recipient,subject:`Manual check-in ${decision}`,html})
 }
 
+export async function sendManualAttendanceDecision({recipient,firstName,decision,action,attemptedAt,reviewerName,reviewNote}){
+  const approved=decision==='approved'
+  const actionLabel=action==='check_out'?'check-out':'check-in'
+  const attemptLabel=new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(attemptedAt))
+  const html=modernMail({
+    preview:`Your manual ${actionLabel} request was ${decision}`,eyebrow:'Attendance decision',title:`Manual ${actionLabel} ${decision}`,
+    intro:`Hi ${escapeHtml(firstName)}, your manual ${actionLabel} request for ${escapeHtml(attemptLabel)} has been ${escapeHtml(decision)} by ${escapeHtml(reviewerName||'your reviewer')}.`,
+    content:`<div style="margin-top:8px;padding:20px;border:1px solid ${approved?'#bfe4d5':'#efd5da'};border-radius:15px;background:${approved?'#effaf5':'#fff4f5'};color:${approved?'#176847':'#934557'};font-size:13px;line-height:1.75"><div style="margin-bottom:5px;font-size:18px;font-weight:750">${approved?'Approved successfully':'Request rejected'}</div>${approved?`Your attendance has been recorded using the original request time (${escapeHtml(attemptLabel)}).`:'Your attendance was not changed. Please contact HR if you need clarification.'}</div>${reviewNote?`<div style="margin-top:15px;padding:14px 16px;border-radius:10px;background:#f6f8f8;color:#56636a;font-size:12px;line-height:1.65"><strong>Reviewer note</strong><br>${escapeHtml(reviewNote)}</div>`:''}`,
+    actionLabel:'View my attendance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,
+    footer:'This decision is saved in your attendance history and audit trail.',
+  })
+  return sendGraphEmail({recipient,subject:`Your manual ${actionLabel} has been ${decision}`,html})
+}
+
 function companyEmailTemplate({ greeting, summary, details = [], actionLabel, actionUrl, footer }) {
   const rows = details.map(({ label, value }) => `<tr><td style="font-size:13px;color:#64748b;padding:6px 10px 6px 0;vertical-align:top;width:170px">${escapeHtml(label)}</td><td style="font-size:14px;color:#0f172a;padding:6px 0;vertical-align:top">${escapeHtml(String(value))}</td></tr>`).join('')
   const button = actionUrl ? `<a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#0f766e;color:#fff;text-decoration:none;font-weight:600;letter-spacing:-0.01em">${escapeHtml(actionLabel)}</a>` : ''

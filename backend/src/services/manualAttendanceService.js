@@ -10,6 +10,7 @@ import { startOfLocalDay } from '../utils/date.js'
 import { checkIn, checkOut } from './attendanceService.js'
 import { uploadAttendanceProof } from './privateStorageService.js'
 import { recordAudit } from './auditService.js'
+import { sendManualAttendanceDecision } from './mailService.js'
 
 export const MANUAL_REASONS={LIVE_CAMERA_VERIFICATION:'Live camera verification',CAMERA_PERMISSION_DENIED:'Camera permission denied',CAMERA_NOT_AVAILABLE:'Camera not available',CAMERA_INITIALIZATION_FAILED:'Camera initialization failed',CAMERA_CAPTURE_FAILED:'Camera capture failed',NO_FACE_DETECTED:'No face detected',FACE_NOT_DETECTED:'Face not detected',MULTIPLE_FACES:'Multiple faces detected',POOR_IMAGE_QUALITY:'Poor image quality',LIVENESS_FAILED:'Liveness verification failed',FACE_MATCH_FAILED:'Face match failed',FACE_MISMATCH:'Face mismatch',LOCATION_PERMISSION_DENIED:'Location permission denied',LOCATION_FAILED:'Location failed',NETWORK_FAILED:'Network failed',NETWORK_OR_DEVICE_ERROR:'Network or device error',BIOMETRIC_SERVICE_UNAVAILABLE:'Biometric service unavailable',BROWSER_NOT_SUPPORTED:'Browser not supported',UNKNOWN_ERROR:'Unknown technical error',OTHER:'Other'}
 
@@ -115,8 +116,15 @@ export async function reviewManualAttendanceRequest({req,id,decision,reviewNote}
     }
     request.status=approved?'approved':'rejected';request.reviewedBy=req.user._id;request.reviewedAt=new Date();request.reviewNote=reviewNote;await request.save()
   }catch(error){await FaceAttendanceRequest.updateOne({_id:id,status:'processing'},{$set:{status:'pending'}});throw error}
-  const employeeUser=await User.findOne({employee:request.employee._id,isActive:true}).select('_id').lean()
-  if(employeeUser)await notifyOnce({recipient:employeeUser._id,dedupeKey:`manual-attendance:${request._id}:${request.status}`,type:`Manual Attendance ${approved?'Approved':'Rejected'}`,title:`Manual ${request.action.replace('_','-')} ${request.status}`,message:reviewNote||(approved?'Your attendance was recorded at the original server request time.':'Your request was rejected.'),employee:request.employee._id})
+  const employeeUser=await User.findOne({employee:request.employee._id,isActive:true}).select('_id email firstName').lean()
+  if(employeeUser){
+    await notifyOnce({recipient:employeeUser._id,dedupeKey:`manual-attendance:${request._id}:${request.status}`,type:`Manual Attendance ${approved?'Approved':'Rejected'}`,title:`Manual ${request.action.replace('_','-')} ${request.status}`,message:reviewNote||(approved?'Your attendance was recorded at the original server request time.':'Your request was rejected.'),employee:request.employee._id})
+    if(employeeUser.email&&!employeeUser.email.endsWith('.local')){
+      try{
+        await sendManualAttendanceDecision({recipient:employeeUser.email,firstName:employeeUser.firstName||request.employee.firstName,decision:request.status,action:request.action,attemptedAt:approvalTimestamp(request),reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote})
+      }catch(error){console.error('Manual attendance decision email failed:',error?.message||error)}
+    }
+  }
   await recordAudit({req,action:`MANUAL_ATTENDANCE_${request.status.toUpperCase()}`,entityType:'FaceAttendanceRequest',entityId:request._id,employeeId:request.employee._id,before,after:request.toObject(),metadata:{decision,reviewNote}})
   return request
 }

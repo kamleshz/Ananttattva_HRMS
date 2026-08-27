@@ -222,6 +222,7 @@ export function AttendancePage({ user }) {
     [arrangements, setArrangements] = useState([]),
     [arrangementOpen, setArrangementOpen] = useState(false),
     [arrangementBusy, setArrangementBusy] = useState(false),
+    [approvalNotice, setApprovalNotice] = useState(null),
     [arrangementForm, setArrangementForm] = useState(() => { const date=new Date().toISOString().slice(0,10); return {type:"wfh",startDate:date,endDate:date,startTime:"09:00",endTime:"18:30",reason:"",clientName:"",destination:{name:"",address:"",latitude:"",longitude:"",allowedRadiusMeters:250}} }),
     [error, setError] = useState("");
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
@@ -331,9 +332,12 @@ export function AttendancePage({ user }) {
     if (decision === "reject" && !reviewNote) return;
     setCorrectionBusy(true);
     setError("");
+    setApprovalNotice(null);
     try {
       const updated = await attendanceApi.reviewManualRequest(request._id, decision, reviewNote);
       setFaceRequests((items) => items.map((item) => item._id === updated._id ? updated : item));
+      const employeeName=request.employee?.firstName?`${request.employee.firstName} ${request.employee.lastName||""}`.trim():"Employee";
+      setApprovalNotice({decision,employeeName,action:(request.action||"check_in").replace('_','-')});
       if (updated.attendance && decision === "approve") {
         const refreshed = canViewAllAttendance ? await attendanceApi.allHistory(month, year, canViewCompleteRoster) : await attendanceApi.history(month, year);
         setRecords(refreshed);
@@ -403,6 +407,7 @@ export function AttendancePage({ user }) {
           </div>
         }
       />
+      {approvalNotice && <div className={`attendance-decision-notice ${approvalNotice.decision}`} role="status"><span><Check size={20}/></span><div><strong>{approvalNotice.decision==="approve"?"Attendance approved successfully":"Attendance request rejected"}</strong><p>{approvalNotice.employeeName}&apos;s manual {approvalNotice.action} was {approvalNotice.decision==="approve"?"recorded successfully. The employee has been notified in AT Connect and an email has been sent.":"rejected. The employee has been notified in AT Connect and by email."}</p></div><button type="button" aria-label="Dismiss confirmation" onClick={()=>setApprovalNotice(null)}>×</button></div>}
       <div className="summary-strip">
         <div>
           <span>Present</span>
