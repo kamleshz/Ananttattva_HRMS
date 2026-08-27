@@ -5,6 +5,7 @@ import { Employee } from '../models/Employee.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { startOfLocalDay } from '../utils/date.js'
 import { Holiday } from '../models/Holiday.js'
+import { OrganizationProfile } from '../models/Organization.js'
 
 const router = Router()
 router.use(authenticate)
@@ -31,11 +32,12 @@ router.get('/employee', asyncHandler(async (req, res) => {
   weekStart.setDate(weekStart.getDate()-(day===0?6:day-1))
   const weekEnd=new Date(weekStart);weekEnd.setDate(weekEnd.getDate()+7)
   const holidayEnd=new Date(today);holidayEnd.setDate(holidayEnd.getDate()+90)
-  const [attendance,birthdayEmployees,weekRecords,holidays] = await Promise.all([
+  const [attendance,birthdayEmployees,weekRecords,holidays,organization] = await Promise.all([
     employee ? Attendance.findOne({employee:employee._id,date:today}) : null,
     Employee.find({employeeStatus:'active',dateOfBirth:{$ne:null}}).select('firstName lastName profilePhoto dateOfBirth'),
     employee?Attendance.find({employee:employee._id,date:{$gte:weekStart,$lt:weekEnd}}).sort({date:1}).lean():[],
     Holiday.find({date:{$gte:today,$lte:holidayEnd}}).sort({date:1}).limit(5).lean(),
+    OrganizationProfile.findOne({singletonKey:'organization'}).select('companyName shortName logo').lean(),
   ])
   const birthdays = birthdayEmployees.map(item=>upcomingBirthday(item,today)).filter(item=>item.daysUntil<=30).sort((a,b)=>a.daysUntil-b.daysUntil).slice(0,5)
   const week=Array.from({length:5},(_,index)=>{
@@ -46,7 +48,7 @@ router.get('/employee', asyncHandler(async (req, res) => {
   const effectiveMinutes=weekRecords.reduce((sum,item)=>sum+(item.workingMinutes||0),0)
   const completedDays=weekRecords.filter(item=>item.checkOut?.time).length
   const demographics=['super_admin','admin','hr_admin','it_admin'].includes(req.user.role)?await workforceDemographics():null
-  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, today:attendance, birthdays, holidays, week, demographics, weekSummary:{effectiveMinutes,averageMinutes:completedDays?Math.round(effectiveMinutes/completedDays):0,onTimeDays:weekRecords.filter(item=>!item.lateMinutes).length,completedDays,monthlyLateCount:attendance?.lateOccurrenceInMonth||0}, tasks:[], away:[] } })
+  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, organization, today:attendance, birthdays, holidays, week, demographics, weekSummary:{effectiveMinutes,averageMinutes:completedDays?Math.round(effectiveMinutes/completedDays):0,onTimeDays:weekRecords.filter(item=>!item.lateMinutes).length,completedDays,monthlyLateCount:attendance?.lateOccurrenceInMonth||0}, tasks:[], away:[] } })
 }))
 router.get('/admin', authorize('super_admin','hr_admin','it_admin'), asyncHandler(async (_req, res) => {
   const date = startOfLocalDay()

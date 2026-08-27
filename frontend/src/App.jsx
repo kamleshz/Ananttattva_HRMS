@@ -713,20 +713,20 @@ function HolidaysCard() {
     </section>
   );
 }
-function CelebrationCard({ birthdays = [] }) {
+function CelebrationCard({ birthdays = [], organization }) {
   const birthday = birthdays[0];
   const name = birthday ? `${birthday.firstName} ${birthday.lastName}` : "";
   const birthdayDate = birthday ? new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "long" }).format(new Date(birthday.date)) : "";
   const timing = birthday?.daysUntil === 0 ? "today" : birthday?.daysUntil === 1 ? "tomorrow" : `on ${birthdayDate}`;
   return (
-    <section className="card side-card celebration">
-      <div className="celebration-icon">
-        <Cake size={20} />
-      </div>
-      <div>
+    <section className={`card side-card celebration ${birthday?.daysUntil===0?'birthday-today':''}`}>
+      <i className="celebration-spark spark-one">✦</i><i className="celebration-spark spark-two">●</i><i className="celebration-spark spark-three">✦</i>
+      <div className="celebration-brand">{organization?.logo?<img src={organization.logo} alt={organization.companyName||"Company logo"}/>:<span>{organization?.shortName||"AT"}</span>}</div>
+      <div className="celebration-icon">{birthday?.profilePhoto?<img src={birthday.profilePhoto} alt=""/>:<Cake size={20} />}</div>
+      <div className="celebration-copy">
         <p className="eyebrow">Celebrations</p>
-        <h2>{birthday ? `${name}'s birthday is ${timing}` : "No birthdays in the next 30 days"}</h2>
-        <span>{birthday ? birthday.daysUntil === 0 ? "Send your teammate some good wishes." : `${birthday.daysUntil} days to go.` : "Birthdays will appear after HR adds employee dates of birth."}</span>
+        <h2>{birthday?.daysUntil===0?`Happy Birthday, ${name}! 🎉`:birthday ? `${name}'s birthday is ${timing}` : "No birthdays in the next 30 days"}</h2>
+        <span>{birthday ? birthday.daysUntil === 0 ? `Wishing you a wonderful day and an amazing year ahead. Warm wishes from ${organization?.companyName||'the entire team'}!` : `${birthday.daysUntil} days to go · Get ready to celebrate!` : "Birthdays will appear after HR adds employee dates of birth."}</span>
         {birthdays.length > 1 && <small>+{birthdays.length-1} more upcoming birthday{birthdays.length>2?'s':''}</small>}
       </div>
     </section>
@@ -882,7 +882,7 @@ function HomePage({ user, dashboard }) {
         <aside className="right-column">
           <WorkforceDemographicsCard demographics={dashboard?.demographics}/>
           <RealHolidaysCard holidays={dashboard?.holidays}/>
-          <CelebrationCard birthdays={dashboard?.birthdays} />
+          <CelebrationCard birthdays={dashboard?.birthdays} organization={dashboard?.organization} />
         </aside>
       </div>
       <div className="home-dashboard-secondary"><RecruitmentHomeWidgets user={user}/><CompanyHomeSection/></div>
