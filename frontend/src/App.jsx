@@ -722,7 +722,7 @@ function CelebrationCard({ birthdays = [], organization }) {
     <section className={`card side-card celebration ${birthday?.daysUntil===0?'birthday-today':''}`}>
       <i className="celebration-spark spark-one">✦</i><i className="celebration-spark spark-two">●</i><i className="celebration-spark spark-three">✦</i>
       <div className="celebration-brand">{organization?.logo?<img src={organization.logo} alt={organization.companyName||"Company logo"}/>:<span>{organization?.shortName||"AT"}</span>}</div>
-      <div className="celebration-icon">{birthday?.profilePhoto?<img src={birthday.profilePhoto} alt=""/>:<Cake size={20} />}</div>
+      <div className="celebration-icon" aria-hidden="true"><Cake size={22} /></div>
       <div className="celebration-copy">
         <p className="eyebrow">Celebrations</p>
         <h2>{birthday?.daysUntil===0?`Happy Birthday, ${name}! 🎉`:birthday ? `${name}'s birthday is ${timing}` : "No birthdays in the next 30 days"}</h2>
