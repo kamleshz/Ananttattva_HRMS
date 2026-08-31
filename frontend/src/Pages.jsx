@@ -91,6 +91,12 @@ function PageHeader({ eyebrow = "My Space", title, description, action }) {
     </div>
   );
 }
+
+function Pagination({ page, totalItems, pageSize, onChange }) {
+  const pages = Math.ceil(totalItems / pageSize);
+  if (pages <= 1) return null;
+  return <nav className="table-pagination" aria-label="Table pagination"><span>Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalItems)} of {totalItems}</span><div><button type="button" disabled={page === 1} onClick={() => onChange(page - 1)}>‹ Previous</button>{Array.from({ length: pages }, (_, index) => index + 1).map(number => <button type="button" key={number} className={number === page ? "active" : ""} aria-current={number === page ? "page" : undefined} onClick={() => onChange(number)}>{number}</button>)}<button type="button" disabled={page === pages} onClick={() => onChange(page + 1)}>Next ›</button></div></nav>;
+}
 function StateMessage({ children, error = false }) {
   return (
     <div className={`state-message ${error ? "error" : ""}`}>{children}</div>
@@ -225,6 +231,8 @@ export function AttendancePage({ user }) {
     [approvalNotice, setApprovalNotice] = useState(null),
     [arrangementForm, setArrangementForm] = useState(() => { const date=new Date().toISOString().slice(0,10); return {type:"wfh",startDate:date,endDate:date,startTime:"09:00",endTime:"18:30",reason:"",clientName:"",destination:{name:"",address:"",latitude:"",longitude:"",allowedRadiusMeters:250}} }),
     [error, setError] = useState("");
+  const [recordsPage, setRecordsPage] = useState(1);
+  const [manualPage, setManualPage] = useState(1);
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewAllAttendance = canExport;
   const canViewCompleteRoster = ["super_admin", "admin", "hr_admin"].includes(user.role);
@@ -374,7 +382,12 @@ export function AttendancePage({ user }) {
   },[records,employeeFilter,canViewCompleteRoster]);
   const pendingArrangements = arrangements.filter((item) => item.status === "pending");
   const pendingFaceRequests = faceRequests.filter((item) => item.status === "pending");
+  const pagedRecords = visibleRecords.slice((recordsPage - 1) * 7, recordsPage * 7);
+  const pagedFaceRequests = faceRequests.slice((manualPage - 1) * 7, manualPage * 7);
   const orderedArrangements = [...arrangements].sort((left,right) => Number(right.status === "pending") - Number(left.status === "pending"));
+  useEffect(() => setRecordsPage(1), [month, year, employeeFilter]);
+  useEffect(() => { if ((recordsPage - 1) * 7 >= visibleRecords.length) setRecordsPage(Math.max(1, Math.ceil(visibleRecords.length / 7))); }, [visibleRecords.length, recordsPage]);
+  useEffect(() => { if ((manualPage - 1) * 7 >= faceRequests.length) setManualPage(Math.max(1, Math.ceil(faceRequests.length / 7))); }, [faceRequests.length, manualPage]);
   return (
     <>
       <PageHeader
@@ -462,7 +475,7 @@ export function AttendancePage({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {visibleRecords.map((item) => (
+                {pagedRecords.map((item) => (
                   <tr key={item._id}>
                     {canViewAllAttendance && <td className="attendance-employee-cell"><strong>{item.employee ? `${item.employee.firstName || ""} ${item.employee.lastName || ""}`.trim() : "Deleted employee"}</strong>{item.employee?.employeeCode && <small>{item.employee.employeeCode}</small>}</td>}
                     <td>
@@ -529,6 +542,7 @@ export function AttendancePage({ user }) {
                 ))}
               </tbody>
             </table>
+            <Pagination page={recordsPage} totalItems={visibleRecords.length} pageSize={7} onChange={setRecordsPage} />
           </div>
         )}
       </section>
@@ -542,7 +556,7 @@ export function AttendancePage({ user }) {
           </div>
           {faceRequests.length === 0 ? <StateMessage>No manual attendance requests.</StateMessage> : (
             <div className="attendance-correction-list face-request-list">
-              {faceRequests.map((request) => (
+              {pagedFaceRequests.map((request) => (
                 <article key={request._id}>
                   <span className="approval-avatar face-request-photo" title={request.biometricAttempt?.photoAvailable ? "Private proof available" : "No proof photo attached"}>
                     <ShieldCheck size={18} />
@@ -560,6 +574,7 @@ export function AttendancePage({ user }) {
                   </div>}
                 </article>
               ))}
+              <Pagination page={manualPage} totalItems={faceRequests.length} pageSize={7} onChange={setManualPage} />
             </div>
           )}
         </section>
@@ -2680,7 +2695,10 @@ export function AllowancesPage({ user }) {
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [proof, setProof] = useState(null);
+    [proof, setProof] = useState(null),
+    [selectedClaim, setSelectedClaim] = useState(null),
+    [claimPage, setClaimPage] = useState(1),
+    [exporting, setExporting] = useState(false);
   const [monthlyUsage, setMonthlyUsage] = useState({
     limit: 2000,
     used: 0,
@@ -2753,6 +2771,14 @@ export function AllowancesPage({ user }) {
       setError(e.message);
     }
   }
+  async function downloadAllowances() {
+    setExporting(true); setError("");
+    try {
+      const { blob, fileName } = await allowanceApi.exportExcel();
+      const url = URL.createObjectURL(blob), link = document.createElement("a");
+      link.href = url; link.download = fileName; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    } catch (e) { setError(e.message); } finally { setExporting(false); }
+  }
   function replaceClaim(updated) {
     setClaims((items) => items.map((item) => item._id === updated._id ? { ...item, ...updated, employee: item.employee } : item));
   }
@@ -2809,6 +2835,8 @@ export function AllowancesPage({ user }) {
   const draftTotal = Number(form.travelAllowance || 0) + Number(form.extraAllowance || 0);
   const draftAcceptable = Math.min(draftTotal, monthlyUsage.remaining);
   const draftNonAcceptable = Math.max(0, draftTotal - draftAcceptable);
+  const pagedClaims = claims.slice((claimPage - 1) * 10, claimPage * 10);
+  useEffect(() => { if ((claimPage - 1) * 10 >= claims.length) setClaimPage(Math.max(1, Math.ceil(claims.length / 10))); }, [claims.length, claimPage]);
   return (
     <>
       <PageHeader
@@ -2860,6 +2888,7 @@ export function AllowancesPage({ user }) {
               {canViewAll ? "All employee allowances" : "My allowance history"}
             </h2>
           </div>
+          {canViewAll && <button className="secondary-button allowance-export-button" disabled={exporting} onClick={downloadAllowances}><Download size={15}/>{exporting ? "Preparing…" : "Download Excel"}</button>}
         </div>
         {loading ? (
           <StateMessage>Loading allowance claims…</StateMessage>
@@ -2884,10 +2913,10 @@ export function AllowancesPage({ user }) {
                 </tr>
               </thead>
               <tbody>
-                {claims.map((claim) => (
+                {pagedClaims.map((claim) => (
                   <tr key={claim._id}>
                     {canViewAll && (
-                      <td>
+                      <td><button type="button" className="allowance-employee-button" onClick={() => setSelectedClaim(claim)}>
                         <strong>
                           {claim.employee?.firstName || claim.employee?.lastName
                             ? `${claim.employee.firstName || ""} ${claim.employee.lastName || ""}`.trim()
@@ -2895,7 +2924,7 @@ export function AllowancesPage({ user }) {
                         </strong>
                         {claim.employee?.employeeCode && (
                           <small>{claim.employee.employeeCode}</small>
-                        )}
+                        )}</button>
                       </td>
                     )}
                     <td>{formatDate(claim.travelDate)}</td>
@@ -2947,20 +2976,21 @@ export function AllowancesPage({ user }) {
                 ))}
               </tbody>
             </table>
+            <Pagination page={claimPage} totalItems={claims.length} pageSize={10} onChange={setClaimPage} />
           </div>
         )}
       </section>
       {drawer && (
-        <div className="drawer-layer">
+        <div className="drawer-layer allowance-modal-layer">
           <button
             className="drawer-backdrop"
             onClick={() => setDrawer(false)}
           />
-          <aside className="form-drawer allowance-drawer">
+          <section className="form-drawer allowance-drawer allowance-modal" role="dialog" aria-modal="true" aria-labelledby="add-allowance-title">
             <div className="drawer-heading">
               <div>
                 <p className="eyebrow">New claim</p>
-                <h2>Add allowance</h2>
+                <h2 id="add-allowance-title">Add allowance</h2>
               </div>
               <button onClick={() => setDrawer(false)}>
                 <X size={20} />
@@ -3068,9 +3098,15 @@ export function AllowancesPage({ user }) {
                 </button>
               </div>
             </form>
-          </aside>
+          </section>
         </div>
       )}
+      {selectedClaim && <div className="drawer-layer allowance-modal-layer"><button className="drawer-backdrop" onClick={() => setSelectedClaim(null)}/><section className="allowance-detail-modal" role="dialog" aria-modal="true" aria-labelledby="allowance-detail-title">
+        <div className="drawer-heading"><div><p className="eyebrow">Employee allowance</p><h2 id="allowance-detail-title">{selectedClaim.employee ? `${selectedClaim.employee.firstName || ""} ${selectedClaim.employee.lastName || ""}`.trim() : "Allowance details"}</h2><small>{selectedClaim.employee?.employeeCode || "Employee claim"}</small></div><button onClick={() => setSelectedClaim(null)}><X size={20}/></button></div>
+        <div className="allowance-detail-grid"><div><span>Travel date</span><strong>{formatDate(selectedClaim.travelDate)}</strong></div><div><span>Location</span><strong>{selectedClaim.travelLocation}</strong></div><div><span>Travel allowance</span><strong>₹{selectedClaim.travelAllowance.toLocaleString("en-IN")}</strong></div><div><span>Extra allowance</span><strong>₹{selectedClaim.extraAllowance.toLocaleString("en-IN")}</strong></div><div><span>Total</span><strong>₹{selectedClaim.totalAmount.toLocaleString("en-IN")}</strong></div><div><span>Claim status</span><StatusBadge status={selectedClaim.status}/></div><div><span>Acceptable</span><strong className="acceptable-value">₹{(selectedClaim.acceptableAmount ?? selectedClaim.totalAmount).toLocaleString("en-IN")}</strong></div><div><span>Not acceptable</span><strong className="non-acceptable-value">₹{(selectedClaim.nonAcceptableAmount ?? 0).toLocaleString("en-IN")}</strong></div></div>
+        <div className="allowance-detail-reason"><span>Extra allowance details</span><p>{selectedClaim.extraAllowanceReason || "No extra allowance details provided."}</p></div>{selectedClaim.specialApproval?.status && selectedClaim.specialApproval.status !== "not_requested" && <div className="allowance-detail-reason"><span>Special approval</span><p>{selectedClaim.specialApproval.explanation || "No explanation provided."}</p><StatusBadge status={selectedClaim.specialApproval.status}/></div>}
+        <div className="allowance-modal-actions"><button className="secondary-button" onClick={() => viewProof(selectedClaim._id)}><FileText size={14}/> View proof</button><button className="primary-button" onClick={() => setSelectedClaim(null)}>Done</button></div>
+      </section></div>}
       {specialClaim && (
         <div className="drawer-layer">
           <button className="drawer-backdrop" onClick={() => setSpecialClaim(null)} />

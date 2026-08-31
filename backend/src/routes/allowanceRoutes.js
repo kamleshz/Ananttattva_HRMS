@@ -7,6 +7,8 @@ import { User } from '../models/User.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
 import { allocateMonthlyAllowance, allowanceMonthKey, allowanceMonthRange, allowanceSubmissionDeadline, currency } from '../services/allowancePolicyService.js'
+import writeXlsxFile from 'write-excel-file/node'
+import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
 
 const router=Router()
 router.use(authenticate)
@@ -42,6 +44,15 @@ router.get('/monthly-usage', asyncHandler(async (req,res) => {
   const date=z.coerce.date().parse(req.query.date)
   const used=await getMonthlyUsage(date,req.user.employee._id)
   res.json({success:true,data:{limit:2000,used,remaining:currency(Math.max(0,2000-used))}})
+}))
+router.get('/export', authorize('super_admin','admin','hr_admin'), asyncHandler(async (_req,res) => {
+  const claims=await AllowanceClaim.find({}).populate('employee','firstName lastName employeeCode department').sort({travelDate:-1,createdAt:-1}).lean()
+  const headers=['Employee ID','Employee Name','Department','Travel Date','Travel Location','Travel Allowance','Extra Allowance','Extra Details','Total','Acceptable','Not Acceptable','Claim Status','Special Approval']
+  const theme=ATTENDANCE_REPORT_THEME,empty=Array(headers.length).fill(null)
+  const data=[[{value:'AT Connect – All Employee Allowances',columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...empty.slice(1)],[{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date())} · ${claims.length} records`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...empty.slice(1)],reportSectionRow([{label:'EMPLOYEE',span:3},{label:'CLAIM DETAILS',span:6},{label:'ALLOWANCE DECISION',span:4}],theme),reportHeaderRow(headers,[3,6,4],theme)]
+  claims.forEach((claim,index)=>{const employee=claim.employee||{},cell=(value,extra={})=>reportCell(value,index,theme,extra);data.push([cell(employee.employeeCode||'',{fontWeight:'bold',textColor:theme.accent}),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim(),{fontWeight:'bold'}),cell(employee.department||''),cell(claim.travelDate,{type:Date,format:'dd-mmm-yyyy',align:'center'}),cell(claim.travelLocation),cell(claim.travelAllowance,{type:Number,format:'₹#,##0.00',align:'right'}),cell(claim.extraAllowance,{type:Number,format:'₹#,##0.00',align:'right'}),cell(claim.extraAllowanceReason||''),cell(claim.totalAmount,{type:Number,format:'₹#,##0.00',align:'right',fontWeight:'bold'}),cell(claim.acceptableAmount??claim.totalAmount,{type:Number,format:'₹#,##0.00',align:'right',backgroundColor:'#E2F3E8',textColor:'#25633F'}),cell(claim.nonAcceptableAmount||0,{type:Number,format:'₹#,##0.00',align:'right',...((claim.nonAcceptableAmount||0)>0?{backgroundColor:'#FBE1E5',textColor:'#96394B'}:{})}),cell(claim.status,statusCellStyle(claim.status)),cell(claim.specialApproval?.status||'not requested',statusCellStyle(claim.specialApproval?.status))])})
+  const columns=[14,23,18,15,30,17,17,32,16,16,18,16,18].map(width=>({width})),buffer=await writeXlsxFile(data,{sheet:'Employee Allowances',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.85},{fontFamily:'Calibri',fontSize:10}).toBuffer()
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition','attachment; filename="AT_Connect_All_Employee_Allowances.xlsx"');res.send(Buffer.from(buffer))
 }))
 router.post('/', asyncHandler(async (req,res) => {
   if(!req.user.employee)throw new HttpError(409,'No employee profile is linked to this account')

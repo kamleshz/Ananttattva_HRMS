@@ -199,6 +199,7 @@ export const allowanceApi = {
     api(`/allowances${scope === "all" ? "?scope=all" : ""}`),
   create: (data) =>
     api("/allowances", { method: "POST", body: JSON.stringify(data) }),
+  exportExcel: () => downloadApi("/allowances/export"),
   monthlyUsage: (date) =>
     api(`/allowances/monthly-usage?date=${encodeURIComponent(date)}`),
   proof: (id) => api(`/allowances/${id}/proof`),
