@@ -7,7 +7,13 @@
 .allowance-split-preview > div { display: flex; flex-direction: column; gap: 5px; }
 .allowance-split-preview > div + div { padding-left: 10px; border-left: 1px solid #dce8e4; }
 .allowance-split-preview strong { font-size: 13px; }
-.allowance-table { min-width: 1360px; }
+.allowance-table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-gutter: stable; overscroll-behavior-x: contain; }
+.allowance-table { width: max-content; min-width: 1520px; }
+.allowance-review-actions { display:flex; min-width:145px; flex-direction:column; align-items:flex-start; gap:7px; }
+.allowance-review-actions > div { display:flex; gap:5px; }
+.allowance-review-actions button { padding:5px 7px; border:1px solid #dfe4e7; border-radius:6px; background:#fff; font-size:7.5px; font-weight:700; }
+.allowance-review-actions button.approve { border-color:#b9ddce; background:#edf8f3; color:#24764e; }
+.allowance-review-actions button.reject { border-color:#ebcbd2; background:#fff3f5; color:#a53c52; }
 .special-approval-button { display: inline-flex; align-items: center; gap: 5px; padding: 7px 9px; border: 1px solid #d7b66b; border-radius: 7px; background: #fffaf0; color: #80601f; font-size: 8px; font-weight: 700; white-space: nowrap; }
 .special-approval-actions { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; min-width: 210px; }
 .special-approval-reason { flex-basis: 100%; color: #657084; font-size: 7.5px; line-height: 1.4; }

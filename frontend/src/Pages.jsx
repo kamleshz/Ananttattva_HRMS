@@ -2813,6 +2813,19 @@ export function AllowancesPage({ user }) {
       setBusy(false);
     }
   }
+  async function reviewClaim(claim, decision) {
+    const reviewNote = decision === "reject" ? window.prompt("Please enter the rejection reason") : "";
+    if (decision === "reject" && !reviewNote) return;
+    setBusy(true);
+    setError("");
+    try {
+      replaceClaim(await allowanceApi.review(claim._id, decision, reviewNote));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function viewSpecialProof(id) {
     try {
       setProof(await allowanceApi.specialApprovalProof(id));
@@ -2908,6 +2921,7 @@ export function AllowancesPage({ user }) {
                   <th>Total</th>
                   <th>Acceptable</th>
                   <th>Not acceptable</th>
+                  <th>Claim status</th>
                   <th>Special approval</th>
                   <th>Proof</th>
                 </tr>
@@ -2945,6 +2959,15 @@ export function AllowancesPage({ user }) {
                     </td>
                     <td><strong className="acceptable-value">₹{(claim.acceptableAmount ?? claim.totalAmount).toLocaleString("en-IN")}</strong></td>
                     <td><strong className={(claim.nonAcceptableAmount ?? 0) > 0 ? "non-acceptable-value" : "muted-value"}>₹{(claim.nonAcceptableAmount ?? 0).toLocaleString("en-IN")}</strong></td>
+                    <td>
+                      <div className="allowance-review-actions">
+                        <StatusBadge status={claim.status} />
+                        {canViewAll && claim.status === "pending" && <div>
+                          <button className="approve" disabled={busy} onClick={() => reviewClaim(claim, "approve")}>Approve</button>
+                          <button className="reject" disabled={busy} onClick={() => reviewClaim(claim, "reject")}>Reject</button>
+                        </div>}
+                      </div>
+                    </td>
                     <td>
                       {claim.status !== "rejected" && (claim.nonAcceptableAmount ?? 0) > 0 && (!claim.specialApproval?.status || ["not_requested", "rejected"].includes(claim.specialApproval.status)) && (
                         <button className="special-approval-button" onClick={() => setSpecialClaim(claim)}>

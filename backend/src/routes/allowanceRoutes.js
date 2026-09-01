@@ -9,6 +9,7 @@ import { HttpError } from '../utils/httpError.js'
 import { allocateMonthlyAllowance, allowanceMonthKey, allowanceMonthRange, allowanceSubmissionDeadline, currency } from '../services/allowancePolicyService.js'
 import writeXlsxFile from 'write-excel-file/node'
 import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
+import { sendAllowanceDecision } from '../services/mailService.js'
 
 const router=Router()
 router.use(authenticate)
@@ -96,10 +97,10 @@ router.get('/:id/special-approval/proof', asyncHandler(async (req,res) => {
   if(!claim.specialApproval?.proof?.data)throw new HttpError(404,'Special approval proof not found')
   res.json({success:true,data:claim.specialApproval.proof})
 }))
-router.patch('/:id/special-approval/:decision', authorize('super_admin','hr_admin'), asyncHandler(async (req,res) => {
+router.patch('/:id/special-approval/:decision', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req,res) => {
   if(!['approve','reject'].includes(req.params.decision))throw new HttpError(400,'Invalid special approval decision')
   const input=z.object({reviewNote:z.string().trim().max(500).default('')}).parse(req.body)
-  const claim=await AllowanceClaim.findById(req.params.id)
+  const claim=await AllowanceClaim.findById(req.params.id).populate('employee','firstName lastName officialEmail')
   if(!claim)throw new HttpError(404,'Allowance claim not found')
   if(claim.specialApproval?.status!=='pending')throw new HttpError(409,'This special approval request is no longer pending')
   if(req.params.decision==='reject'&&input.reviewNote.length<3)throw new HttpError(422,'A rejection reason is required')
@@ -115,15 +116,24 @@ router.patch('/:id/special-approval/:decision', authorize('super_admin','hr_admi
   }
   await claim.save()
   if(claim.specialApproval.requestedBy)await Notification.create({recipient:claim.specialApproval.requestedBy,type:`Allowance Special Approval ${approved?'Approved':'Rejected'}`,title:`Special allowance ${approved?'approved':'rejected'}`,message:input.reviewNote||`₹${amount.toLocaleString('en-IN')} was approved as acceptable.`,employee:claim.employee})
+  if(claim.employee?.officialEmail&&!claim.employee.officialEmail.endsWith('.local')){
+    const [mailResult]=await Promise.allSettled([sendAllowanceDecision({recipient:claim.employee.officialEmail,firstName:claim.employee.firstName,decision:approved?'approved':'rejected',travelDate:claim.travelDate,totalAmount:amount,reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote:input.reviewNote,specialApproval:true})])
+    if(mailResult.status==='rejected')console.error('Allowance special approval email failed:',mailResult.reason?.message||mailResult.reason)
+  }
   const result=claim.toObject();if(result.specialApproval?.proof)delete result.specialApproval.proof.data
   res.json({success:true,data:result})
 }))
-router.patch('/:id/:decision', authorize('super_admin','hr_admin','manager'), asyncHandler(async (req,res) => {
+router.patch('/:id/:decision', authorize('super_admin','admin','hr_admin','manager'), asyncHandler(async (req,res) => {
   if(!['approve','reject'].includes(req.params.decision))throw new HttpError(400,'Invalid review decision')
-  const claim=await AllowanceClaim.findById(req.params.id)
+  const claim=await AllowanceClaim.findById(req.params.id).populate('employee','firstName lastName officialEmail')
   if(!claim)throw new HttpError(404,'Allowance claim not found')
   if(claim.status!=='pending')throw new HttpError(409,'This claim has already been reviewed')
   claim.status=req.params.decision==='approve'?'approved':'rejected';claim.reviewedBy=req.user._id;claim.reviewedAt=new Date();claim.reviewNote=String(req.body.reviewNote||'')
-  await claim.save();res.json({success:true,data:claim})
+  await claim.save()
+  if(claim.employee?.officialEmail&&!claim.employee.officialEmail.endsWith('.local')){
+    const [mailResult]=await Promise.allSettled([sendAllowanceDecision({recipient:claim.employee.officialEmail,firstName:claim.employee.firstName,decision:claim.status,travelDate:claim.travelDate,totalAmount:claim.totalAmount,reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote:claim.reviewNote})])
+    if(mailResult.status==='rejected')console.error('Allowance decision email failed:',mailResult.reason?.message||mailResult.reason)
+  }
+  res.json({success:true,data:claim})
 }))
 export default router

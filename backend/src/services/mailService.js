@@ -156,6 +156,21 @@ export async function sendFaceCheckInDecision({recipient,firstName,decision,atte
   return sendGraphEmail({recipient,subject:`Manual check-in ${decision}`,html})
 }
 
+export async function sendAllowanceDecision({recipient,firstName,decision,travelDate,totalAmount,reviewerName,reviewNote,specialApproval=false}){
+  const approved=decision==='approved'
+  const dateLabel=new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeZone:'Asia/Kolkata'}).format(new Date(travelDate))
+  const amountLabel=Number(totalAmount||0).toLocaleString('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2})
+  const requestLabel=specialApproval?'special allowance request':'allowance claim'
+  const html=modernMail({
+    preview:`Your ${requestLabel} was ${decision}`,eyebrow:'Allowance update',title:`${specialApproval?'Special allowance':'Allowance claim'} ${decision}`,
+    intro:`Hi ${escapeHtml(firstName)}, your ${escapeHtml(requestLabel)} for ${escapeHtml(dateLabel)} was ${escapeHtml(decision)} by ${escapeHtml(reviewerName)}.`,
+    content:`<div style="margin-top:8px;padding:19px;border:1px solid ${approved?'#cfe7dd':'#efd5da'};border-radius:14px;background:${approved?'#f1f9f5':'#fff4f5'};color:${approved?'#27694e':'#934557'};font-size:13px;line-height:1.7"><strong>${approved?'Approved amount':'Claim not approved'}: ${escapeHtml(amountLabel)}</strong><br>${approved?'The approval is now recorded in AT Connect.':'Open AT Connect to review the claim status and contact HR if clarification is required.'}</div>${reviewNote?`<div style="margin-top:15px;padding:14px 16px;border-radius:10px;background:#f6f8f8;color:#56636a;font-size:12px;line-height:1.65"><strong>Reviewer note</strong><br>${escapeHtml(reviewNote)}</div>`:''}`,
+    actionLabel:'View allowances',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/allowances`,
+    footer:'This decision is recorded in your allowance history.',
+  })
+  return sendGraphEmail({recipient,subject:`${specialApproval?'Special allowance request':'Allowance claim'} ${decision}`,html})
+}
+
 export async function sendBirthdayGreeting({recipient,firstName,companyName='Ananttattva Private Limited',logo}){
   const safeName=escapeHtml(firstName),safeCompany=escapeHtml(companyName)
   const logoBlock=logo?`<img src="${escapeHtml(logo)}" alt="${safeCompany}" width="150" style="display:block;max-width:150px;max-height:66px;margin:0 auto;object-fit:contain">`:`<div style="color:#f47b20;font-size:19px;font-weight:800;letter-spacing:2px">ANANTTATTVA</div>`
