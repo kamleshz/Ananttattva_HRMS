@@ -26,14 +26,16 @@ async function getGraphAccessToken() {
   return payload.access_token
 }
 
-export async function sendGraphEmail({ recipient, subject, html, attachments = [] }) {
+export async function sendGraphEmail({ recipient, subject, html, attachments = [], ccRecipients = [] }) {
   assertMailConfiguration()
   const accessToken = await getGraphAccessToken()
+  const normalizedRecipient=String(recipient).trim().toLowerCase()
+  const uniqueCc=[...new Set(ccRecipients.map(address=>String(address).trim().toLowerCase()).filter(address=>address&&address!==normalizedRecipient))]
   let response
   try {
     response = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(env.otpSenderEmail)}/sendMail`, {
       method:'POST', headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' },
-      body:JSON.stringify({ message:{ subject, body:{ contentType:'HTML', content:html }, toRecipients:[{emailAddress:{address:recipient}}], attachments:attachments.map(file => ({ '@odata.type':'#microsoft.graph.fileAttachment', name:file.name, contentType:file.contentType || 'application/octet-stream', contentBytes:Buffer.from(file.content).toString('base64') })), ...(env.mailReplyTo ? {replyTo:[{emailAddress:{address:env.mailReplyTo}}]} : {}) }, saveToSentItems:true }),
+      body:JSON.stringify({ message:{ subject, body:{ contentType:'HTML', content:html }, toRecipients:[{emailAddress:{address:recipient}}], ...(uniqueCc.length?{ccRecipients:uniqueCc.map(address=>({emailAddress:{address}}))}:{}), attachments:attachments.map(file => ({ '@odata.type':'#microsoft.graph.fileAttachment', name:file.name, contentType:file.contentType || 'application/octet-stream', contentBytes:Buffer.from(file.content).toString('base64') })), ...(env.mailReplyTo ? {replyTo:[{emailAddress:{address:env.mailReplyTo}}]} : {}) }, saveToSentItems:true }),
     })
   } catch (error) {
     console.error('Microsoft Graph sendMail connection failed:', error?.message || error, error?.cause?.code || '', error?.cause?.message || '')
@@ -168,7 +170,12 @@ export async function sendAllowanceDecision({recipient,firstName,decision,travel
     actionLabel:'View allowances',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/allowances`,
     footer:'This decision is recorded in your allowance history.',
   })
-  return sendGraphEmail({recipient,subject:`${specialApproval?'Special allowance request':'Allowance claim'} ${decision}`,html})
+  return sendGraphEmail({
+    recipient,
+    ccRecipients:['it_admin@ananttattva.com','hr@ananttattva.com','krunal.goda@ananttattva.com'],
+    subject:`${specialApproval?'Special allowance request':'Allowance claim'} ${decision}`,
+    html,
+  })
 }
 
 export async function sendBirthdayGreeting({recipient,firstName,companyName='Ananttattva Private Limited',logo}){
