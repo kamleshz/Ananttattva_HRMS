@@ -172,7 +172,7 @@ export async function sendAllowanceDecision({recipient,firstName,decision,travel
   })
   return sendGraphEmail({
     recipient,
-    ccRecipients:['it_admin@ananttattva.com','hr@ananttattva.com','krunal.goda@ananttattva.com'],
+    ccRecipients:['hr@ananttattva.com','krunal.goda@ananttattva.com'],
     subject:`${specialApproval?'Special allowance request':'Allowance claim'} ${decision}`,
     html,
   })
