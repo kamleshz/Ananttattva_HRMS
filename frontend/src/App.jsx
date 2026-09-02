@@ -184,7 +184,7 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>
-              <button type="button" onClick={()=>setRecruitmentOpen(value=>!value)} className={`nav-item recruitment-parent ${path.startsWith('/recruitment')?'active':''}`} aria-expanded={recruitmentExpanded}>
+              <button type="button" title={collapsed?'Candidate Recruitment':undefined} aria-label="Candidate Recruitment" onClick={()=>collapsed?toggleCollapsed():setRecruitmentOpen(value=>!value)} className={`nav-item recruitment-parent ${path.startsWith('/recruitment')?'active':''}`} aria-expanded={recruitmentExpanded}>
                 <BriefcaseBusiness size={18}/><span>Candidate Recruitment</span><ChevronDown className={recruitmentExpanded?'':'rotated'} size={16}/>
               </button>
               {recruitmentExpanded&&<div className="subnav recruitment-subnav">{recruitmentNavigation[user.role].map(([label, route]) => (
