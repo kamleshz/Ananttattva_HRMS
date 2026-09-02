@@ -150,6 +150,8 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
           {primaryNavigation.map(([label, Icon, route]) => (
             <button
               key={label}
+              title={collapsed?label:undefined}
+              aria-label={label}
               onClick={() => {
                 navigate(route);
                 close();
@@ -165,6 +167,8 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
           {user.role !== "employee" && teamNavigation.map(([label, Icon, route]) => (
             <button
               key={label}
+              title={collapsed?label:undefined}
+              aria-label={label}
               onClick={() => {
                 navigate(route);
                 close();
@@ -176,7 +180,7 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
             </button>
           ))}
           {user.role !== "employee" && <p className="nav-label">Employee lifecycle</p>}
-          {user.role !== "employee" && <button onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>}
+          {user.role !== "employee" && <button title={collapsed?'Offboarding':undefined} aria-label="Offboarding" onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>}
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>

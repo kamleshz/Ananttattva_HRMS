@@ -114,6 +114,12 @@
 .acceptable-value{color:#16805b!important}.non-acceptable-value{color:#b54156!important}.allowance-detail-modal{border-radius:18px!important;box-shadow:0 25px 70px rgba(15,35,32,.2)!important}.allowance-detail-grid>div{border-radius:11px!important;background:#f7faf9!important}.allowance-modal{border-radius:20px 0 0 20px!important}
 @media(max-width:950px){.allowance-summary{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:520px){.allowance-summary{grid-template-columns:1fr;gap:11px}.allowance-summary>div{min-height:70px;padding:15px}.allowance-workspace-card>.section-heading{align-items:flex-start;flex-direction:column;gap:12px}.allowance-export-button{width:100%;justify-content:center}}
+
+/* Keep the allowance KPI row stable despite shared legacy dashboard rules. */
+.page-content .allowance-summary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;width:100%}
+.page-content .allowance-summary>div{min-width:0;box-sizing:border-box}
+@media(max-width:1100px){.page-content .allowance-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:560px){.page-content .allowance-summary{grid-template-columns:1fr!important}}
 .auto-checkout-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid #ecd9ae; border-radius: 8px; background: #fffaf0; color: #80601f; }
 .auto-checkout-note > div { display: flex; flex-direction: column; gap: 4px; }
 .auto-checkout-note strong { font-size: 9.5px; }
