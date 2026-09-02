@@ -117,7 +117,7 @@ router.patch('/:id/special-approval/:decision', authorize('super_admin','admin',
   await claim.save()
   if(claim.specialApproval.requestedBy)await Notification.create({recipient:claim.specialApproval.requestedBy,type:`Allowance Special Approval ${approved?'Approved':'Rejected'}`,title:`Special allowance ${approved?'approved':'rejected'}`,message:input.reviewNote||`₹${amount.toLocaleString('en-IN')} was approved as acceptable.`,employee:claim.employee})
   if(claim.employee?.officialEmail&&!claim.employee.officialEmail.endsWith('.local')){
-    const [mailResult]=await Promise.allSettled([sendAllowanceDecision({recipient:claim.employee.officialEmail,firstName:claim.employee.firstName,decision:approved?'approved':'rejected',travelDate:claim.travelDate,totalAmount:amount,reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote:input.reviewNote,specialApproval:true})])
+    const [mailResult]=await Promise.allSettled([sendAllowanceDecision({recipient:claim.employee.officialEmail,firstName:claim.employee.firstName,decision:approved?'approved':'rejected',travelDate:claim.travelDate,totalAmount:claim.totalAmount,acceptableAmount:claim.acceptableAmount,nonAcceptableAmount:claim.nonAcceptableAmount,reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote:input.reviewNote,specialApproval:true})])
     if(mailResult.status==='rejected')console.error('Allowance special approval email failed:',mailResult.reason?.message||mailResult.reason)
   }
   const result=claim.toObject();if(result.specialApproval?.proof)delete result.specialApproval.proof.data
@@ -131,7 +131,7 @@ router.patch('/:id/:decision', authorize('super_admin','admin','hr_admin','manag
   claim.status=req.params.decision==='approve'?'approved':'rejected';claim.reviewedBy=req.user._id;claim.reviewedAt=new Date();claim.reviewNote=String(req.body.reviewNote||'')
   await claim.save()
   if(claim.employee?.officialEmail&&!claim.employee.officialEmail.endsWith('.local')){
-    const [mailResult]=await Promise.allSettled([sendAllowanceDecision({recipient:claim.employee.officialEmail,firstName:claim.employee.firstName,decision:claim.status,travelDate:claim.travelDate,totalAmount:claim.totalAmount,reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote:claim.reviewNote})])
+    const [mailResult]=await Promise.allSettled([sendAllowanceDecision({recipient:claim.employee.officialEmail,firstName:claim.employee.firstName,decision:claim.status,travelDate:claim.travelDate,totalAmount:claim.totalAmount,acceptableAmount:claim.acceptableAmount,nonAcceptableAmount:claim.nonAcceptableAmount,reviewerName:`${req.user.firstName||''} ${req.user.lastName||''}`.trim(),reviewNote:claim.reviewNote})])
     if(mailResult.status==='rejected')console.error('Allowance decision email failed:',mailResult.reason?.message||mailResult.reason)
   }
   res.json({success:true,data:claim})

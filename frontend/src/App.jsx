@@ -9,6 +9,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock3,
   FileText,
@@ -119,7 +120,7 @@ function Avatar({ children, tone = "teal" }) {
   return <span className={`avatar avatar-${tone} avatar-md`}>{children}</span>;
 }
 
-function Sidebar({ open, close, user, employee, path, navigate }) {
+function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path, navigate }) {
   const [recruitmentOpen,setRecruitmentOpen]=useState(path.startsWith('/recruitment'));
   const recruitmentExpanded=recruitmentOpen||path.startsWith('/recruitment');
   const primaryNavigation = user.role === "employee"
@@ -132,12 +133,15 @@ function Sidebar({ open, close, user, employee, path, navigate }) {
         aria-label="Close menu"
         onClick={close}
       />
-      <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
+      <aside className={`sidebar ${open ? "sidebar-open" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}>
         <div className="brand">
           <span className="brand-mark">
             <Sparkles size={18} />
           </span>
           <span>AT Connect</span>
+          <button className="sidebar-collapse-toggle" onClick={toggleCollapsed} aria-label={collapsed?"Expand sidebar":"Collapse sidebar"} title={collapsed?"Expand sidebar":"Collapse sidebar"}>
+            <ChevronLeft size={17}/>
+          </button>
           <button className="mobile-close" onClick={close}>
             <X size={20} />
           </button>
@@ -894,9 +898,11 @@ export default function App() {
   const [user, setUser] = useState(null),
     [dashboard, setDashboard] = useState(null),
     [loading, setLoading] = useState(Boolean(session.getToken())),
-    [menu, setMenu] = useState(false);
+    [menu, setMenu] = useState(false),
+    [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem('at-sidebar-collapsed')==='true');
   const navigate = useNavigate(),
     location = useLocation();
+  const toggleSidebar=()=>setSidebarCollapsed(value=>{const next=!value;localStorage.setItem('at-sidebar-collapsed',String(next));return next});
   useEffect(() => {
     if (!session.getToken()) return;
     dashboardApi
@@ -967,10 +973,12 @@ export default function App() {
       pages[location.pathname] || pages["/"]
     );
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed?'app-sidebar-collapsed':''}`}>
       <Sidebar
         open={menu}
         close={() => setMenu(false)}
+        collapsed={sidebarCollapsed}
+        toggleCollapsed={toggleSidebar}
         user={user}
         employee={dashboard?.employee}
         path={location.pathname}

@@ -2893,7 +2893,7 @@ export function AllowancesPage({ user }) {
         </div>
       </div>
       {error && <StateMessage error>{error}</StateMessage>}
-      <section className="content-card">
+      <section className="content-card allowance-workspace-card">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Claims</p>
