@@ -987,6 +987,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   );
   const [note, setNote] = useState("");
   const [reviewBusy, setReviewBusy] = useState(null);
+  const [decisionFlash, setDecisionFlash] = useState("");
   async function review(decision) {
     if (decision === "reject" && note.trim().length < 3) {
       alert("A rejection reason is required.");
@@ -996,6 +997,8 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
     try {
       await onReview(item._id, decision, note);
       setNote("");
+      setDecisionFlash(decision);
+      setTimeout(() => setDecisionFlash(""), 1400);
     } finally {
       setReviewBusy(null);
     }
@@ -1006,7 +1009,8 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   const requiredSteps = item.workflow?.requiredSteps || [];
   const employeeName = item.employee ? `${item.employee.firstName} ${item.employee.lastName}` : "";
   return (
-    <article className="leave-request-card">
+    <article className={`leave-request-card ${isMyTurn ? "review-ready" : ""} ${decisionFlash ? `decision-${decisionFlash}` : ""}`}>
+      {decisionFlash && <div className="decision-flash" role="status"><span>{decisionFlash === "approve" ? <Check size={20} /> : <X size={20} />}</span>{decisionFlash === "approve" ? "Stage approved" : "Request rejected"}</div>}
       <header className="leave-card-header">
         <div className="leave-card-left">
           <span className={`request-icon ${item.leaveType === "unpaid_leave" ? "unpaid" : ""}`}>
@@ -1063,20 +1067,25 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
 
       </div>
 
-      {canReview && isMyTurn && (
-        <footer className="leave-card-actions">
+      {canReview && pending && (
+        <footer className={`leave-card-actions ${isMyTurn ? "active-review" : "waiting-review"}`}>
+          <div className="review-action-heading">
+            <div><strong>{isMyTurn ? "Your decision is required" : "Waiting for previous approval"}</strong><span>{isMyTurn ? "Approve to move this request to the next stage, or reject it completely." : `This becomes actionable after ${nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR" : "Admin / Super Admin"} review.`}</span></div>
+            <span className={isMyTurn ? "ready-pill" : "waiting-pill"}>{isMyTurn ? "Ready for review" : "Locked"}</span>
+          </div>
           <textarea
             rows="2"
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            disabled={!isMyTurn || Boolean(reviewBusy)}
             placeholder="Add a comment (required when rejecting)"
           />
           <div className="action-buttons-row">
-            <button className="reject-button" disabled={Boolean(reviewBusy)} onClick={() => review("reject")}>
-              {reviewBusy === "reject" ? "Rejecting…" : "Reject"}
+            <button className="reject-button" disabled={!isMyTurn || Boolean(reviewBusy)} onClick={() => review("reject")}>
+              <X size={14} /> {reviewBusy === "reject" ? "Rejecting…" : "Reject request"}
             </button>
-            <button className="approve-button" disabled={Boolean(reviewBusy)} onClick={() => review("approve")}>
-              <Check size={14} /> {reviewBusy === "approve" ? "Approving…" : "Approve"}
+            <button className="approve-button" disabled={!isMyTurn || Boolean(reviewBusy)} onClick={() => review("approve")}>
+              <Check size={14} /> {reviewBusy === "approve" ? "Approving…" : "Approve & continue"}
             </button>
           </div>
         </footer>
@@ -1123,6 +1132,7 @@ export function LeavePage({ user }) {
       setRequests(value => value.map(item => item._id === id ? { ...item, ...updated } : item));
     } catch (e) {
       setError(e.message);
+      throw e;
     }
   }
   const paidPct = balance && balance.paidEntitled > 0 ? Math.min(100, Math.round((balance.paidUsed / balance.paidEntitled) * 100)) : 0;
@@ -1258,6 +1268,7 @@ export function RequestsPage({ user, onPendingCountChange }) {
       }
     } catch (e) {
       setError(e.message);
+      throw e;
     }
   }
   return (
