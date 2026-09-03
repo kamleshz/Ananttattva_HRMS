@@ -1002,6 +1002,8 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
       setNote("");
       setDecisionFlash(decision);
       setTimeout(() => setDecisionFlash(""), 1400);
+    } catch {
+      // The parent displays the API error; keep this event handler settled.
     } finally {
       setReviewBusy(null);
     }

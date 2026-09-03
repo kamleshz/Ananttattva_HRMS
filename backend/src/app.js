@@ -21,7 +21,8 @@ import offboardingRoutes from './routes/offboardingRoutes.js'
 import { errorHandler, notFound } from './middleware/error.js'
 
 export const app = express()
-const allowedClientOrigins = [...new Set(env.clientUrls.flatMap((value) => {
+const productionClientOrigins = ['https://ananttattva-hrms.vercel.app']
+const allowedClientOrigins = [...new Set([...env.clientUrls, ...productionClientOrigins].flatMap((value) => {
   const url = new URL(value)
   if (env.nodeEnv !== 'development') return [url.origin]
   if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return [url.origin]
@@ -36,6 +37,16 @@ app.use(helmet())
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedClientOrigins.includes(origin)) return callback(null, true)
+    if (env.nodeEnv === 'development') {
+      try {
+        const url = new URL(origin)
+        if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.protocol === 'http:') {
+          return callback(null, true)
+        }
+      } catch {
+        return callback(new Error(`Origin ${origin} is not allowed by CORS`))
+      }
+    }
     return callback(new Error(`Origin ${origin} is not allowed by CORS`))
   },
   credentials: true,

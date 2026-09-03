@@ -338,14 +338,12 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     if (activeRole && Array.isArray(workflow.steps)) {
       const stepIdx = workflow.steps.findIndex(step => step.role === activeRole && step.status === 'pending')
       if (stepIdx >= 0) {
-        workflow.steps[stepIdx] = {
-          ...workflow.steps[stepIdx],
-          status: 'rejected',
-          actor: req.user._id,
-          actorEmployee: currentEmployee?._id || null,
-          comment: input.reviewNote,
-          actedAt: new Date(),
-        }
+        const step = workflow.steps[stepIdx]
+        step.status = 'rejected'
+        step.actor = req.user._id
+        step.actorEmployee = currentEmployee?._id || null
+        step.comment = input.reviewNote
+        step.actedAt = new Date()
       }
     }
     workflow.nextRole = null
@@ -357,14 +355,12 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     if (Array.isArray(workflow.steps)) {
       const idx = workflow.steps.findIndex(step => step.role === currentRole && step.status === 'pending')
       if (idx >= 0) {
-        workflow.steps[idx] = {
-          ...workflow.steps[idx],
-          status: 'approved',
-          actor: req.user._id,
-          actorEmployee: currentEmployee?._id || null,
-          comment: input.reviewNote,
-          actedAt: new Date(),
-        }
+        const step = workflow.steps[idx]
+        step.status = 'approved'
+        step.actor = req.user._id
+        step.actorEmployee = currentEmployee?._id || null
+        step.comment = input.reviewNote
+        step.actedAt = new Date()
       }
     }
     const required = workflow.requiredSteps || []
@@ -389,9 +385,11 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     ? await User.findOne({ employee: employee._id, isActive: true }).select('_id email firstName')
     : null
   const isFinalDecision = !approved || request.status === 'approved'
-  if (isFinalDecision && employeeUser?.email) {
-    const decision = approved ? 'approved' : 'rejected'
-    const finalApprover = approved ? (req.user.firstName ? `${req.user.firstName} ${req.user.lastName || ''}`.trim() : '') : ''
+  if (employeeUser?.email) {
+    const roleLabel = { manager: 'Manager', hr_admin: 'HR', super_admin: 'Admin / Super Admin' }[activeRole] || 'Reviewer'
+    const nextRoleLabel = { manager: 'Manager', hr_admin: 'HR', super_admin: 'Admin / Super Admin' }[request.workflow?.nextRole] || ''
+    const decision = !approved ? 'rejected' : isFinalDecision ? 'approved' : `approved by ${roleLabel}`
+    const finalApprover = req.user.firstName ? `${req.user.firstName} ${req.user.lastName || ''}`.trim() : ''
     const [mailResult] = await Promise.allSettled([sendLeaveDecision({
       recipient: employeeUser.email,
       firstName: employeeUser.firstName || employee?.firstName || 'Team member',
@@ -401,6 +399,7 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
       endDate: formatDate(request.endDate),
       reviewerName: finalApprover || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'Reviewer',
       reviewNote: input.reviewNote || request.reviewNote || '',
+      nextApprover: !isFinalDecision ? nextRoleLabel : '',
     })])
     if (mailResult.status === 'rejected') console.error('Leave decision email failed:', mailResult.reason?.message || mailResult.reason)
   }

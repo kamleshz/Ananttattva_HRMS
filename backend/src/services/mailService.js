@@ -242,13 +242,14 @@ export async function sendLeaveApprovalRequest({ recipient, reviewerName, employ
   return sendGraphEmail({ recipient, subject: `Leave approval: ${employeeName} (${days}d)`, html })
 }
 
-export async function sendLeaveDecision({ recipient, firstName, decision, leaveType, startDate, endDate, reviewerName, reviewNote }) {
+export async function sendLeaveDecision({ recipient, firstName, decision, leaveType, startDate, endDate, reviewerName, reviewNote, nextApprover = '' }) {
   const base = env.clientUrl.replace(/\/$/, '')
   const details = [
     { label: 'Decision', value: decision },
     { label: 'Leave type', value: leaveType },
     { label: 'Dates', value: `${startDate} – ${endDate}` },
     { label: 'Reviewed by', value: reviewerName || 'AT Connect reviewer' },
+    ...(nextApprover ? [{ label: 'Next approval', value: nextApprover }] : []),
     ...(reviewNote ? [{ label: 'Review note', value: reviewNote }] : []),
   ]
   const html = companyEmailTemplate({
@@ -257,7 +258,7 @@ export async function sendLeaveDecision({ recipient, firstName, decision, leaveT
     details,
     actionLabel: 'View leave details',
     actionUrl: `${base}/leave`,
-    footer: 'Reach out to your manager or HR if you have questions about this decision.',
+    footer: nextApprover ? `Your request is still pending and has moved to ${nextApprover} for review.` : 'Reach out to your manager or HR if you have questions about this decision.',
   })
   return sendGraphEmail({ recipient, subject: `Leave ${decision} for ${startDate} to ${endDate}`, html })
 }
