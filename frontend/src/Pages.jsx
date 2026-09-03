@@ -978,9 +978,12 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(currentUser?.role);
   const pending = item.status === "pending";
   const nextRole = item.workflow?.nextRole;
+  const reportingManagerId = item.reportingManager?._id || item.reportingManager;
+  const employeeId = item.employee?._id || item.employee;
+  const isAssignedManager = Boolean(currentUser?.employeeId && String(reportingManagerId) === String(currentUser.employeeId) && String(employeeId) !== String(currentUser.employeeId));
   const isMyTurn = (
     pending && (
-      (currentUser?.role === "manager" && nextRole === "manager") ||
+      (nextRole === "manager" && isAssignedManager) ||
       (currentUser?.role === "hr_admin" && nextRole === "hr_admin") ||
       (["super_admin", "admin"].includes(currentUser?.role) && nextRole === "super_admin")
     )
@@ -1094,7 +1097,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   );
 }
 
-export function LeavePage({ user }) {
+export function LeavePage({ user, currentEmployeeId }) {
   const [requests, setRequests] = useState([]),
     [balance, setBalance] = useState(null),
     [drawer, setDrawer] = useState(false),
@@ -1220,7 +1223,7 @@ export function LeavePage({ user }) {
               <LeaveRequestCard
                 key={item._id}
                 item={item}
-                currentUser={user}
+                currentUser={{ ...user, employeeId: currentEmployeeId }}
                 onReview={review}
               />
             ))}
@@ -1242,7 +1245,7 @@ export function LeavePage({ user }) {
   );
 }
 
-export function RequestsPage({ user, onPendingCountChange }) {
+export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) {
   const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
@@ -1296,7 +1299,7 @@ export function RequestsPage({ user, onPendingCountChange }) {
               <LeaveRequestCard
                 key={item._id}
                 item={item}
-                currentUser={user}
+                currentUser={{ ...user, employeeId: currentEmployeeId }}
                 onReview={review}
               />
             ))}

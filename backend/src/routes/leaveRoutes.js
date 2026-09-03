@@ -307,14 +307,15 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
   }
   let canAct = false
   let activeRole = null
-  if (req.user.role === 'manager') {
-    const reportingManagerId = String(request.reportingManager?._id || request.employee?.manager?._id || '')
-    if (currentEmployee && reportingManagerId === String(currentEmployee._id)) {
-      if (nextRole === 'manager' || !workflow.requiredSteps.includes('hr_admin')) {
-        canAct = true
-        activeRole = 'manager'
-      }
-    }
+  const reportingManagerId = String(request.reportingManager?._id || request.employee?.manager?._id || '')
+  const employeeId = String(request.employee?._id || '')
+  const isAssignedManager = Boolean(currentEmployee && reportingManagerId === String(currentEmployee._id) && employeeId !== String(currentEmployee._id))
+  // A user may hold an elevated application role and still be this employee's
+  // assigned reporting manager. Resolve the active workflow stage by identity
+  // first so an Admin/HR account can complete its Manager responsibility.
+  if (nextRole === 'manager' && isAssignedManager) {
+    canAct = true
+    activeRole = 'manager'
   } else if (req.user.role === 'hr_admin') {
     if (nextRole === 'hr_admin' || !nextRole) {
       canAct = true
@@ -324,7 +325,7 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     canAct = true
     activeRole = 'super_admin'
   }
-  if (!canAct) throw new HttpError(403, 'This request is not currently yours to review.')
+  if (!canAct) throw new HttpError(403, 'This request is not currently yours to review, or it is waiting for an earlier approval stage.')
   const chainMap = await loadReviewerFilters(currentEmployee, req.user.role)
   chainMap.manager = request.reportingManager
     ? await User.findOne({ employee: request.reportingManager._id, isActive: true }).select('_id email firstName').populate('employee', 'firstName lastName employeeCode')
