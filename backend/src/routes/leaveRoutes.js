@@ -185,10 +185,12 @@ router.get('/', asyncHandler(async (req, res) => {
 
 const createSchema = z.object({
   leaveType: z.enum(['paid_leave', 'unpaid_leave', 'casual', 'sick', 'earned', 'unpaid']),
+  dayType: z.enum(['full_day', 'half_day']).default('full_day'),
   startDate: z.string().min(8).or(z.coerce.date()),
   endDate: z.string().min(8).or(z.coerce.date()),
   reason: z.string().trim().min(5).max(500),
 }).refine(value => new Date(value.endDate) >= new Date(value.startDate), { message: 'End date must be on or after start date', path: ['endDate'] })
+  .refine(value => value.dayType !== 'half_day' || new Date(value.startDate).toDateString() === new Date(value.endDate).toDateString(), { message: 'Half-day leave must start and end on the same date', path: ['endDate'] })
 
 router.post('/', asyncHandler(async (req, res) => {
   const currentEmployee = await resolveEmployee(req)
@@ -198,7 +200,8 @@ router.post('/', asyncHandler(async (req, res) => {
   if (!employee) throw new HttpError(404, 'Employee profile not found')
   const normalizedLeaveType = normalizeLeaveType(input.leaveType)
   const { workingDays, fyStart, fyEnd, fyLabel } = await computeLeaveDays({ startDate: input.startDate, endDate: input.endDate })
-  const days = Math.max(1, workingDays)
+  if (input.dayType === 'half_day' && workingDays !== 1) throw new HttpError(422, 'Half-day leave must be selected on a working day.')
+  const days = input.dayType === 'half_day' ? 0.5 : Math.max(1, workingDays)
   const { plan, longLeavePolicy, isPaid } = validateLeaveRequest({
     employee,
     leaveType: normalizedLeaveType,
@@ -250,10 +253,11 @@ router.post('/', asyncHandler(async (req, res) => {
     employee: employee._id,
     reportingManager,
     leaveType: normalizedLeaveType,
+    dayType: input.dayType,
     startDate: new Date(input.startDate),
     endDate: new Date(input.endDate),
-    days: Math.max(1, workingDays),
-    workingDays: Math.max(0, workingDays),
+    days,
+    workingDays: days,
     reason: input.reason,
     fyLabel,
     policySnapshot: {

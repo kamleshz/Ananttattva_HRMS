@@ -35,6 +35,7 @@ import {
   attendanceApi,
   dashboardApi,
   employeeApi,
+  leaveApi,
   recruitmentApi,
   session,
   workArrangementApi,
@@ -120,7 +121,7 @@ function Avatar({ children, tone = "teal" }) {
   return <span className={`avatar avatar-${tone} avatar-md`}>{children}</span>;
 }
 
-function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path, navigate }) {
+function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path, navigate, pendingRequestCount }) {
   const [recruitmentOpen,setRecruitmentOpen]=useState(path.startsWith('/recruitment'));
   const recruitmentExpanded=recruitmentOpen||path.startsWith('/recruitment');
   const primaryNavigation = user.role === "employee"
@@ -160,7 +161,7 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
             >
               <Icon size={18} />
               <span>{label}</span>
-              {label === "Requests" && <span className="nav-badge">2</span>}
+              {label === "Requests" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
             </button>
           ))}
           {user.role !== "employee" && <p className="nav-label">Team</p>}
@@ -234,7 +235,7 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
   );
 }
 
-function Header({ openMenu, user, logout, navigate }) {
+function Header({ openMenu, user, logout, navigate, pendingRequestCount }) {
   const [profile, setProfile] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -261,7 +262,7 @@ function Header({ openMenu, user, logout, navigate }) {
         <button className="inbox-button" onClick={() => navigate("/requests")}>
           <Inbox size={18} />
           <span>Inbox</span>
-          <b>2</b>
+          {pendingRequestCount > 0 && <b>{pendingRequestCount}</b>}
         </button>
         <div className="notification-wrap">
           <button className="icon-button notification" aria-label={`${notifications.filter((item) => !item.readAt).length} unread notifications`} onClick={() => setNotificationOpen(!notificationOpen)}>
@@ -903,6 +904,7 @@ export default function App() {
     [dashboard, setDashboard] = useState(null),
     [loading, setLoading] = useState(Boolean(session.getToken())),
     [menu, setMenu] = useState(false),
+    [pendingRequestCount, setPendingRequestCount] = useState(0),
     [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem('at-sidebar-collapsed')==='true');
   const navigate = useNavigate(),
     location = useLocation();
@@ -921,6 +923,13 @@ export default function App() {
   useEffect(() => {
     if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
   }, [user, location.pathname, navigate]);
+  useEffect(() => {
+    if (!user) return;
+    const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
+    leaveApi.list(canReview ? "all" : "mine")
+      .then((items) => setPendingRequestCount(items.filter((item) => item.status === "pending").length))
+      .catch(() => setPendingRequestCount(0));
+  }, [user, location.pathname]);
   if (location.pathname.startsWith("/public/offers/"))
     return <PublicOfferPage />;
   async function authenticated(authUser) {
@@ -952,7 +961,7 @@ export default function App() {
     "/my-space": <MySpacePage />,
     "/attendance": <AttendancePage user={user} />,
     "/leave": <LeavePage user={user} />,
-    "/requests": <RequestsPage user={user} />,
+    "/requests": <RequestsPage user={user} onPendingCountChange={setPendingRequestCount} />,
     "/people": <PeoplePage user={user} />,
     "/organization-chart": <OrganizationChartPage />,
     "/people/new": <EmployeeOnboardingPage user={user} />,
@@ -987,6 +996,7 @@ export default function App() {
         employee={dashboard?.employee}
         path={location.pathname}
         navigate={navigate}
+        pendingRequestCount={pendingRequestCount}
       />
       <div className="app-main">
         <Header
@@ -994,6 +1004,7 @@ export default function App() {
           user={user}
           logout={logout}
           navigate={navigate}
+          pendingRequestCount={pendingRequestCount}
         />
         <main className={location.pathname === "/" ? "" : "page-content"}>
           {activePage}

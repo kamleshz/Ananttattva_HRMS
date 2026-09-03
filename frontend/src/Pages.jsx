@@ -793,6 +793,7 @@ function LeaveDrawer({ close, saved, balance }) {
   const defaultLeaveType = balance?.plan?.canApplyPaidLeave ? "paid_leave" : "unpaid_leave";
   const [form, setForm] = useState({
       leaveType: defaultLeaveType,
+      dayType: "full_day",
       startDate: "",
       endDate: "",
       reason: "",
@@ -806,8 +807,8 @@ function LeaveDrawer({ close, saved, balance }) {
     if (e < s) return 0;
     let count = 0; const cur = new Date(s);
     while (cur <= e) { const d = cur.getDay(); if (d !== 0 && d !== 6) count += 1; cur.setDate(cur.getDate() + 1); }
-    return count;
-  }, [form.startDate, form.endDate]);
+    return form.dayType === "half_day" && count > 0 ? 0.5 : count;
+  }, [form.startDate, form.endDate, form.dayType]);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const startDateObj = form.startDate ? new Date(form.startDate) : null;
   const calendarNoticeDays = startDateObj ? Math.max(0, Math.ceil((startDateObj - today) / (1000 * 60 * 60 * 24))) : 0;
@@ -876,6 +877,17 @@ function LeaveDrawer({ close, saved, balance }) {
               <option value="unpaid_leave">Unpaid leave</option>
             </select>
           </label>
+          <fieldset className="leave-day-type">
+            <legend>Duration</legend>
+            <div>
+              <button type="button" className={form.dayType === "full_day" ? "active" : ""} aria-pressed={form.dayType === "full_day"} onClick={() => setForm({ ...form, dayType: "full_day" })}>
+                <strong>Full day</strong><span>1 complete working day</span>
+              </button>
+              <button type="button" className={form.dayType === "half_day" ? "active" : ""} aria-pressed={form.dayType === "half_day"} onClick={() => setForm({ ...form, dayType: "half_day", endDate: form.startDate || form.endDate })}>
+                <strong>Half day</strong><span>0.5 working day</span>
+              </button>
+            </div>
+          </fieldset>
           <div className="form-row">
             <label>
               From
@@ -884,7 +896,7 @@ function LeaveDrawer({ close, saved, balance }) {
                 required
                 value={form.startDate}
                 min={new Date().toISOString().slice(0, 10)}
-                onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                onChange={(e) => setForm({ ...form, startDate: e.target.value, ...(form.dayType === "half_day" && { endDate: e.target.value }) })}
               />
             </label>
             <label>
@@ -892,6 +904,7 @@ function LeaveDrawer({ close, saved, balance }) {
               <input
                 type="date"
                 required
+                disabled={form.dayType === "half_day"}
                 value={form.endDate}
                 min={form.startDate || new Date().toISOString().slice(0, 10)}
                 onChange={(e) => setForm({ ...form, endDate: e.target.value })}
@@ -1003,7 +1016,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
             <strong>{leaveTypeLabel}</strong>
             {employeeName && <small>by {employeeName}</small>}
             <span>
-              {formatDate(item.startDate)} – {formatDate(item.endDate)} · {item.workingDays || item.days} working day{(item.workingDays || item.days) === 1 ? "" : "s"}
+              {formatDate(item.startDate)} – {formatDate(item.endDate)} · {item.workingDays || item.days} working day{(item.workingDays || item.days) === 1 ? "" : "s"} · {item.dayType === "half_day" ? "Half day" : "Full day"}
             </span>
           </div>
         </div>
@@ -1219,7 +1232,7 @@ export function LeavePage({ user }) {
   );
 }
 
-export function RequestsPage({ user }) {
+export function RequestsPage({ user, onPendingCountChange }) {
   const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
@@ -1227,16 +1240,22 @@ export function RequestsPage({ user }) {
   useEffect(() => {
     leaveApi
       .list(canReview ? "all" : "mine")
-      .then(setRequests)
+      .then((items) => {
+        setRequests(items);
+        onPendingCountChange?.(items.filter((item) => item.status === "pending").length);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [canReview]);
+  }, [canReview, onPendingCountChange]);
   async function review(id, decision, note = "") {
     try {
       const updated = await leaveApi.review(id, decision, note);
       setRequests((value) =>
         value.map((item) => (item._id === id ? { ...item, ...updated } : item)),
       );
+      if (updated.status !== "pending") {
+        onPendingCountChange?.(requests.filter((item) => item.status === "pending" && item._id !== id).length);
+      }
     } catch (e) {
       setError(e.message);
     }
