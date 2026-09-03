@@ -16,11 +16,12 @@ const SIDE_FACE_FALLBACK_THRESHOLD = .64
 const MINIMUM_IDENTITY_TEMPLATE_VERSION = 2
 
 router.post('/challenge', asyncHandler(async (req, res) => {
-  if (!req.user.employee) throw new HttpError(409, 'No employee profile is linked to this account')
+  if (!req.user.employee) throw new HttpError(409, 'No active employee profile is linked to this login account. Ask HR to verify the official email and account link.')
   const employee = await Employee.findById(req.user.employee._id).select('+biometricTemplate +biometricSamples biometricTemplateVersion')
   const templates = employee?.biometricSamples?.map(sample => sample.template).filter(template => template?.length >= 128) || []
   if (!templates.length && employee?.biometricTemplate?.length >= 128) templates.push(employee.biometricTemplate)
   if (!templates.length || employee.biometricTemplateVersion < MINIMUM_IDENTITY_TEMPLATE_VERSION) {
+    console.warn('[biometrics] attendance challenge blocked: enrollment unavailable', { userId:req.user.id, employeeCode:employee?.employeeCode, templateVersion:employee?.biometricTemplateVersion, sampleCount:templates.length })
     throw new HttpError(409, 'Secure face re-enrollment is required. Ask an administrator to capture this employee’s face again.')
   }
   const mode = z.enum(['check-in','check-out']).default('check-in').parse(req.body.mode)
@@ -63,6 +64,7 @@ router.post('/verify', asyncHandler(async (req, res) => {
   const faceMatchScore=Math.max(frontScore,bestScore)
   const photoHash = createHash('sha256').update(input.photo).digest('hex')
   if (frontScore < FRONT_FACE_MATCH_THRESHOLD && bestScore < SIDE_FACE_FALLBACK_THRESHOLD) {
+    console.warn('[biometrics] face mismatch', { employeeCode:employee.employeeCode, frontScore, bestScore, sampleCount:samples.length })
     const attemptedAt = new Date()
     const mismatchToken = jwt.sign({ purpose:'biometric_mismatch', mode:challengePayload.mode, challenge:input.challenge, livenessScore:input.livenessScore, faceMatchScore, identityTemplateVersion:employee.biometricTemplateVersion, photoHash, attemptedAt:attemptedAt.toISOString() }, env.jwtSecret, { subject:req.user.id, expiresIn:'10m', jwtid:randomUUID() })
     return res.json({ success:true, data:{ matched:false, mismatchToken, attemptedAt, faceMatchScore, livenessScore:input.livenessScore } })

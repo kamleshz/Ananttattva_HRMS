@@ -165,6 +165,13 @@ router.put('/:id/biometrics', authorize('super_admin','admin','hr_admin'), async
   const input = biometricEnrollmentSchema.parse(req.body)
   const employee = await Employee.findByIdAndUpdate(req.params.id, { ...input, biometricTemplateVersion:3, biometricEnrolledAt:new Date() }, { new:true, runValidators:true })
   if (!employee) throw new HttpError(404, 'Employee not found')
+  const loginUser = await User.findOne({ $or: [{ _id: employee.user }, { email: employee.officialEmail }] })
+  if (loginUser) {
+    const accountNeedsLink = String(loginUser.employee || '') !== String(employee._id)
+    const employeeNeedsLink = String(employee.user || '') !== String(loginUser._id)
+    if (accountNeedsLink) await User.updateOne({ _id: loginUser._id }, { $set: { employee: employee._id } })
+    if (employeeNeedsLink) await Employee.updateOne({ _id: employee._id }, { $set: { user: loginUser._id } })
+  }
   res.json({ success:true, data:{ id:employee.id, employeeCode:employee.employeeCode, biometricEnrolledAt:employee.biometricEnrolledAt, biometricTemplateVersion:employee.biometricTemplateVersion } })
 }))
 router.patch('/:id/confirm-probation', authorize('super_admin','hr_admin'), asyncHandler(async (req, res) => {
