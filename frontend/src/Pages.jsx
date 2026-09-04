@@ -2733,7 +2733,10 @@ export function AllowancesPage({ user }) {
     [proof, setProof] = useState(null),
     [selectedClaim, setSelectedClaim] = useState(null),
     [claimPage, setClaimPage] = useState(1),
-    [exporting, setExporting] = useState(false);
+    [exporting, setExporting] = useState(false),
+    [claimSearch, setClaimSearch] = useState(""),
+    [claimStatus, setClaimStatus] = useState("all"),
+    [claimMonth, setClaimMonth] = useState("all");
   const [monthlyUsage, setMonthlyUsage] = useState({
     limit: 2000,
     used: 0,
@@ -2883,8 +2886,32 @@ export function AllowancesPage({ user }) {
   const draftTotal = Number(form.travelAllowance || 0) + Number(form.extraAllowance || 0);
   const draftAcceptable = Math.min(draftTotal, monthlyUsage.remaining);
   const draftNonAcceptable = Math.max(0, draftTotal - draftAcceptable);
-  const pagedClaims = claims.slice((claimPage - 1) * 10, claimPage * 10);
-  useEffect(() => { if ((claimPage - 1) * 10 >= claims.length) setClaimPage(Math.max(1, Math.ceil(claims.length / 10))); }, [claims.length, claimPage]);
+  const claimMonths = useMemo(() => [...new Set(claims.map((claim) => String(claim.travelDate || "").slice(0, 7)).filter(Boolean))].sort().reverse(), [claims]);
+  const filteredClaims = useMemo(() => {
+    const query = claimSearch.trim().toLowerCase();
+    return claims.filter((claim) => {
+      const searchableText = [
+        `${claim.employee?.firstName || ""} ${claim.employee?.lastName || ""}`.trim(),
+        claim.employee?.employeeCode,
+        claim.employee?.department,
+        claim.travelLocation,
+        claim.extraAllowanceReason,
+        claim.status,
+        claim.specialApproval?.status,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return (!query || searchableText.includes(query))
+        && (claimStatus === "all" || claim.status === claimStatus)
+        && (claimMonth === "all" || String(claim.travelDate || "").slice(0, 7) === claimMonth);
+    });
+  }, [claims, claimSearch, claimStatus, claimMonth]);
+  const pagedClaims = filteredClaims.slice((claimPage - 1) * 10, claimPage * 10);
+  const hasClaimFilters = Boolean(claimSearch.trim() || claimStatus !== "all" || claimMonth !== "all");
+  function clearClaimFilters() {
+    setClaimSearch("");
+    setClaimStatus("all");
+    setClaimMonth("all");
+    setClaimPage(1);
+  }
   return (
     <>
       <PageHeader
@@ -2938,10 +2965,32 @@ export function AllowancesPage({ user }) {
           </div>
           {canViewAll && <button className="secondary-button allowance-export-button" disabled={exporting} onClick={downloadAllowances}><Download size={15}/>{exporting ? "Preparing…" : "Download Excel"}</button>}
         </div>
+        {!loading && claims.length > 0 && <div className="allowance-filter-bar">
+          <label className="allowance-search-field">
+            <Search size={16}/>
+            <input type="search" value={claimSearch} onChange={(event) => { setClaimSearch(event.target.value); setClaimPage(1); }} placeholder={canViewAll ? "Search employee, ID, location or details" : "Search location, details or status"} aria-label="Search allowance claims"/>
+            {claimSearch && <button type="button" onClick={() => { setClaimSearch(""); setClaimPage(1); }} aria-label="Clear search"><X size={14}/></button>}
+          </label>
+          <label className="allowance-select-field"><Filter size={14}/><span>Status</span>
+            <select value={claimStatus} onChange={(event) => { setClaimStatus(event.target.value); setClaimPage(1); }} aria-label="Filter by claim status">
+              <option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option>
+            </select>
+          </label>
+          <label className="allowance-select-field"><CalendarDays size={14}/><span>Month</span>
+            <select value={claimMonth} onChange={(event) => { setClaimMonth(event.target.value); setClaimPage(1); }} aria-label="Filter by travel month">
+              <option value="all">All months</option>
+              {claimMonths.map((month) => <option key={month} value={month}>{new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`))}</option>)}
+            </select>
+          </label>
+          <span className="allowance-filter-result">{filteredClaims.length} of {claims.length} claims</span>
+          {hasClaimFilters && <button type="button" className="allowance-clear-filters" onClick={clearClaimFilters}>Clear filters</button>}
+        </div>}
         {loading ? (
           <StateMessage>Loading allowance claims…</StateMessage>
         ) : claims.length === 0 ? (
           <StateMessage>No allowance claims submitted yet.</StateMessage>
+        ) : filteredClaims.length === 0 ? (
+          <div className="allowance-filter-empty"><Search size={24}/><strong>No matching allowances</strong><span>Try a different search term or clear the selected filters.</span><button type="button" className="secondary-button" onClick={clearClaimFilters}>Clear filters</button></div>
         ) : (
           <div className="data-table-wrap allowance-table-wrap">
             <table className="data-table allowance-table">
@@ -3034,7 +3083,7 @@ export function AllowancesPage({ user }) {
                 ))}
               </tbody>
             </table>
-            <Pagination page={claimPage} totalItems={claims.length} pageSize={10} onChange={setClaimPage} />
+            <Pagination page={claimPage} totalItems={filteredClaims.length} pageSize={10} onChange={setClaimPage} />
           </div>
         )}
       </section>
