@@ -4,20 +4,39 @@ import { LeaveRequest } from '../models/LeaveRequest.js'
 import { ScheduledEmail } from '../models/ScheduledEmail.js'
 import { User } from '../models/User.js'
 import { endOfLocalDay, startOfLocalDay } from '../utils/date.js'
-import { sendAttendanceEscalation, sendAttendanceMissNotice, sendCheckoutReminder } from './mailService.js'
+import { sendAttendanceEscalation, sendAttendanceMissNotice, sendCheckoutReminder, sendWeeklyHoursShortfall } from './mailService.js'
 import { holidayKeysBetween, isScheduledWorkingDay, organizationDateKey, organizationTimeForKey } from './workingDayService.js'
 
 const CHECK_INTERVAL_MS=60_000
 const DAY_MS=86_400_000
 let lastReminderKey=''
 let lastDailyAuditKey=''
+let lastWeeklyAuditKey=''
+
+export function hoursAndMinutes(totalMinutes){const safe=Math.max(0,Math.round(Number(totalMinutes)||0));return `${Math.floor(safe/60)}h ${String(safe%60).padStart(2,'0')}m`}
+
+export function previousClosedWeek(now=new Date()){
+  const today=startOfLocalDay(now),weekday=new Date(today.getTime()+330*60_000).getUTCDay(),daysSinceMonday=weekday===0?6:weekday-1,currentMonday=new Date(today.getTime()-daysSinceMonday*DAY_MS)
+  return {start:new Date(currentMonday.getTime()-7*DAY_MS),end:currentMonday}
+}
+
+export function splitPeriodByMonth(start,end){
+  const periods=[]
+  for(let cursor=new Date(start);cursor<end;){
+    const key=organizationDateKey(cursor),[year,month]=key.split('-').map(Number),nextMonth=dateFromMonth(year,month+1),periodEnd=nextMonth<end?nextMonth:end
+    periods.push({start:new Date(cursor),end:new Date(periodEnd)});cursor=periodEnd
+  }
+  return periods
+}
+
+function dateFromMonth(year,month){const normalizedYear=year+Math.floor((month-1)/12),normalizedMonth=((month-1)%12+12)%12+1;return new Date(Date.UTC(normalizedYear,normalizedMonth-1,1)-330*60_000)}
 
 export function scheduledShiftCheckout(attendanceDate,checkInTime,endTime='18:30'){
   const [hours,minutes]=String(endTime).split(':').map(Number),scheduled=organizationTimeForKey(organizationDateKey(attendanceDate),Number.isFinite(hours)?hours:18,Number.isFinite(minutes)?minutes:30)
   return scheduled<checkInTime?new Date(checkInTime):scheduled
 }
 
-async function claimEmail({key,type,period,user}){try{return await ScheduledEmail.create({key,type,period,recipient:user._id,email:user.email,attempts:1})}catch(error){if(error?.code===11000)return null;throw error}}
+async function claimEmail({key,type,period,user}){try{return await ScheduledEmail.create({key,type,period,recipient:user._id,email:user.email,attempts:1})}catch(error){if(error?.code!==11000)throw error;return ScheduledEmail.findOneAndUpdate({key,status:'failed'},{$set:{status:'processing',lastError:'',email:user.email},$inc:{attempts:1}},{new:true})}}
 async function deliver(claim,send){if(!claim)return false;try{await send();claim.status='sent';claim.sentAt=new Date();await claim.save();return true}catch(error){claim.status='failed';claim.lastError=String(error?.message||error).slice(0,500);await claim.save();return false}}
 async function approvedLeave(employeeId,dayStart,dayEnd,dayType){return LeaveRequest.exists({employee:employeeId,status:'approved',...(dayType&&{dayType}),startDate:{$lte:dayEnd},endDate:{$gte:dayStart}})}
 
@@ -75,4 +94,37 @@ export async function processMissingCheckInsAndEscalations(now=new Date()){
   lastDailyAuditKey=auditKey
 }
 
-export function startMissingCheckoutScheduler(){const run=async()=>{await processCheckoutReminders();await processMissingCheckouts();await processMissingCheckInsAndEscalations()};run().catch(error=>console.error('Attendance scheduler failed:',error?.message||error));const timer=setInterval(()=>run().catch(error=>console.error('Attendance scheduler failed:',error?.message||error)),CHECK_INTERVAL_MS);timer.unref();return timer}
+export async function processWeeklyHoursCompliance(now=new Date()){
+  const auditKey=organizationDateKey(now)
+  if(lastWeeklyAuditKey===auditKey)return 0
+  const {start,end}=previousClosedWeek(now),periods=splitPeriodByMonth(start,end)
+  const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},joiningDate:{$lt:end}}).select('_id firstName lastName employeeCode joiningDate user').lean()
+  const attendance=await Attendance.find({date:{$gte:start,$lt:end}}).select('employee date workingMinutes').lean()
+  const leaves=await LeaveRequest.find({status:'approved',startDate:{$lt:end},endDate:{$gte:start}}).select('employee startDate endDate dayType').lean()
+  const adminEmails=[...new Set((await User.find({isActive:true,role:{$in:['hr_admin','admin','super_admin']}}).select('email').lean()).map(item=>item.email?.trim().toLowerCase()).filter(Boolean))]
+  let sent=0
+  for(const period of periods){
+    const holidays=await holidayKeysBetween(period.start,new Date(period.end.getTime()-1)),periodStartKey=organizationDateKey(period.start),periodEndKey=organizationDateKey(new Date(period.end.getTime()-1)),periodLabel=`${periodStartKey} to ${periodEndKey}`
+    for(const employee of employees){
+      let expectedMinutes=0,scheduledDays=0
+      for(let day=new Date(period.start);day<period.end;day=new Date(day.getTime()+DAY_MS)){
+        if(day<startOfLocalDay(employee.joiningDate)||!isScheduledWorkingDay(day,holidays))continue
+        const dayStart=startOfLocalDay(day),dayEnd=endOfLocalDay(day),leave=leaves.find(item=>String(item.employee)===String(employee._id)&&item.startDate<=dayEnd&&item.endDate>=dayStart)
+        if(leave?.dayType==='full_day')continue
+        const target=leave?.dayType==='half_day'?270:510
+        expectedMinutes+=target;scheduledDays+=target/510
+      }
+      if(!expectedMinutes||!employee.user)continue
+      const actualMinutes=attendance.filter(item=>String(item.employee)===String(employee._id)&&item.date>=period.start&&item.date<period.end).reduce((total,item)=>total+Math.max(0,Number(item.workingMinutes)||0),0)
+      if(actualMinutes>=expectedMinutes)continue
+      const user=await User.findOne({_id:employee.user,isActive:true}).select('_id email firstName').lean()
+      if(!user?.email)continue
+      const claim=await claimEmail({key:`weekly-hours-shortfall:${periodStartKey}:${periodEndKey}:${user._id}`,type:'weekly_hours_shortfall',period:periodLabel,user})
+      if(await deliver(claim,()=>sendWeeklyHoursShortfall({recipient:user.email,ccRecipients:adminEmails,firstName:user.firstName||employee.firstName,employeeName:`${employee.firstName} ${employee.lastName}`.trim(),employeeCode:employee.employeeCode,period:periodLabel,scheduledDays:Number(scheduledDays.toFixed(1)),expectedHours:hoursAndMinutes(expectedMinutes),recordedHours:hoursAndMinutes(actualMinutes),shortfallHours:hoursAndMinutes(expectedMinutes-actualMinutes)})))sent++
+    }
+  }
+  lastWeeklyAuditKey=auditKey
+  return sent
+}
+
+export function startMissingCheckoutScheduler(){const run=async()=>{await processCheckoutReminders();await processMissingCheckouts();await processMissingCheckInsAndEscalations();await processWeeklyHoursCompliance()};run().catch(error=>console.error('Attendance scheduler failed:',error?.message||error));const timer=setInterval(()=>run().catch(error=>console.error('Attendance scheduler failed:',error?.message||error)),CHECK_INTERVAL_MS);timer.unref();return timer}

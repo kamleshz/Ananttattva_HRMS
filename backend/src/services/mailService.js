@@ -322,6 +322,25 @@ export async function sendAttendanceEscalation({ recipient, ccRecipients = [], e
   return sendGraphEmail({recipient,ccRecipients,subject:`Attendance escalation: ${employeeName} (${misses.length} misses)`,html})
 }
 
+export async function sendWeeklyHoursShortfall({ recipient, ccRecipients = [], firstName, employeeName, employeeCode, period, scheduledDays, expectedHours, recordedHours, shortfallHours }) {
+  const base=env.clientUrl.replace(/\/$/,'')
+  const html=companyEmailTemplate({
+    greeting:'Weekly working-hours summary',
+    summary:`Hi ${escapeHtml(firstName)}, your recorded working hours for ${escapeHtml(period)} are below the scheduled weekly target.`,
+    details:[
+      {label:'Employee',value:`${employeeName} (${employeeCode})`},
+      {label:'Attendance period',value:period},
+      {label:'Scheduled working days',value:String(scheduledDays)},
+      {label:'Required working hours',value:expectedHours},
+      {label:'Recorded working hours',value:recordedHours},
+      {label:'Hours to regularize',value:shortfallHours},
+    ],
+    actionLabel:'Review attendance',actionUrl:`${base}/attendance`,
+    footer:'HR, Admin and Super Admin have been copied for visibility. Please submit an attendance correction if any punch or approved leave is missing.',
+  })
+  return sendGraphEmail({recipient,ccRecipients,subject:`Weekly attendance shortfall: ${period}`,html})
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[character])
 }
