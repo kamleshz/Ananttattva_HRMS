@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { fileURLToPath } from 'node:url'
 import PDFDocument from 'pdfkit'
 import { z } from 'zod'
 import { authenticate, authorize } from '../middleware/auth.js'
@@ -12,6 +13,7 @@ router.use(authenticate)
 
 const MIS_ROLES=['super_admin','admin','hr_admin','finance_admin']
 const TARGET_MINUTES=8*60+30
+const COMPANY_LOGO=fileURLToPath(new URL('../../../frontend/public/Screenshot 2026-09-08 121937.png',import.meta.url))
 
 function monthRange(value){
   const match=String(value||'').match(/^(\d{4})-(0[1-9]|1[0-2])$/)
@@ -45,17 +47,16 @@ router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)
 router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>{
   const report=await attendanceMis(req.query.month),doc=new PDFDocument({size:'A4',layout:'landscape',margin:30})
   res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="attendance-mis-${report.month}.pdf"`);doc.pipe(res)
-  doc.save().translate(35,31).lineWidth(5).strokeColor('#f97316').moveTo(0,20).bezierCurveTo(24,20,28,0,46,0).bezierCurveTo(60,0,60,40,46,40).bezierCurveTo(28,40,24,20,0,20).stroke().circle(35,20,4).fill('#f97316').restore()
-  doc.fillColor('#f97316').font('Helvetica').fontSize(25).text('ANANT',90,25,{continued:true}).fillColor('#111827').text(' TATTVA')
+  doc.image(COMPANY_LOGO,30,22,{width:165})
   doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD',30,72)
   doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label}  |  Shift benchmark: 10:00 - 18:30 (8h 30m)`,30,96)
-  const columns=[['Employee',30,135],['ID',165,52],['Department',217,112],['10:15',329,38],['10:30',367,38],['Days',405,42],['Hours',447,62],['< 8:30',509,55],['= 8:30',564,55],['> 8:30',619,55]]
+  const columns=[['Employee',30,155],['ID',185,60],['Department',245,150],['10:15',395,45],['10:30',440,45],['Days',485,60],['Hours',545,70],['< 8:30',615,65],['= 8:30',680,65],['> 8:30',745,65]]
   let y=125
-  doc.rect(30,y,644,34).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width],index)=>doc.text(index===3||index===4?label:index===5?'Completed':label,x+5,y+(index===3||index===4?19:12),{width:width-8}));doc.text('LATE ARRIVAL',329,y+5,{width:76,align:'center'})
+  doc.rect(30,y,780,34).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width],index)=>doc.text(index===3||index===4?label:index===5?'Completed':label,x+5,y+(index===3||index===4?19:12),{width:width-8}));doc.text('LATE ARRIVAL',395,y+5,{width:90,align:'center'})
   y+=34
   for(const [index,row] of report.rows.entries()){
-    if(y>535){doc.addPage();y=35;doc.rect(30,y,644,34).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width],columnIndex)=>doc.text(columnIndex===3||columnIndex===4?label:columnIndex===5?'Completed':label,x+5,y+(columnIndex===3||columnIndex===4?19:12),{width:width-8}));doc.text('LATE ARRIVAL',329,y+5,{width:76,align:'center'});y+=34}
-    doc.rect(30,y,644,22).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(7.5)
+    if(y>535){doc.addPage();y=35;doc.rect(30,y,780,34).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width],columnIndex)=>doc.text(columnIndex===3||columnIndex===4?label:columnIndex===5?'Completed':label,x+5,y+(columnIndex===3||columnIndex===4?19:12),{width:width-8}));doc.text('LATE ARRIVAL',395,y+5,{width:90,align:'center'});y+=34}
+    doc.rect(30,y,780,22).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(7.5)
     const values=[row.name,row.employeeCode,row.department,String(row.lateAt1015),String(row.lateAt1030),String(row.completedDays),`${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)]
     columns.forEach(([,x,width],i)=>doc.text(values[i],x+5,y+7,{width:width-8,ellipsis:true}));y+=22
   }

@@ -2443,7 +2443,7 @@ export function ReportsPage() {
   }
   return <div className="mis-dashboard">
     <header className="mis-header">
-      <div className="mis-brand"><img src="/ananttattva-logo.svg" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Monthly employee working-hours MIS</p></div></div>
+      <div className="mis-brand"><img src="/Screenshot%202026-09-08%20121937.png" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Monthly employee working-hours MIS</p></div></div>
       <div className="mis-controls"><label>Report month<input type="month" value={month} max={new Date().toISOString().slice(0,7)} onChange={(event)=>setMonth(event.target.value)}/></label><button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
     </header>
     {error?<StateMessage error>{error}</StateMessage>:!data?<StateMessage>Loading attendance MIS…</StateMessage>:<>
