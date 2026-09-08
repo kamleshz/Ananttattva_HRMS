@@ -1486,6 +1486,7 @@ export function EmployeeEditPage({ employeeId, user }) {
           shift: employee.shift || { name: "General Shift", startTime: "10:00", endTime: "18:30", graceMinutes: 15 },
           probation: { ...probationBase, expectedEndDate: autoExpected || probationBase.expectedEndDate },
           leavePlan: employee.leavePlan || { annualPaidLeaves: 18, cycleStartMonth: 4, accrualMode: "grant_on_confirmation" },
+          role: employee.role || "employee",
           manager: employee.manager ? (typeof employee.manager === "object" ? employee.manager._id : employee.manager) : "",
         });
         setManagers(list.filter(item => String(item._id) !== String(employeeId)));
@@ -1531,6 +1532,7 @@ export function EmployeeEditPage({ employeeId, user }) {
         joiningDate: form.joiningDate,
         employmentType: form.employmentType,
         employeeStatus: form.employeeStatus,
+        role: form.role,
         manager: form.manager || null,
         probation: form.probation,
         leavePlan: form.leavePlan,
@@ -1563,6 +1565,8 @@ export function EmployeeEditPage({ employeeId, user }) {
   const confirmed = probationStatus === "confirmed";
   const canConfirm = ["super_admin", "hr_admin"].includes(user?.role) && !confirmed && confirmProbationStatus;
   const selectedManager = typeof form.manager === "object" ? form.manager?._id : form.manager;
+  const canAssignAdminRoles = ["super_admin", "admin"].includes(user?.role);
+  const protectedRole = ["super_admin", "admin"].includes(form.role);
   return (
     <>
       <button className="back-link" onClick={() => navigate("/people")}>
@@ -1633,6 +1637,19 @@ export function EmployeeEditPage({ employeeId, user }) {
                   <option value="resigned">Resigned</option>
                   <option value="terminated">Terminated</option>
                 </select>
+              </label>
+              <label>Application role *
+                <select required value={form.role} disabled={protectedRole && !canAssignAdminRoles} onChange={e => update("role", e.target.value)}>
+                  <option value="employee">Employee</option>
+                  <option value="manager">Manager</option>
+                  <option value="hr_admin">HR Admin</option>
+                  <option value="finance_admin">Finance Admin</option>
+                  <option value="it_admin">IT Admin</option>
+                  {canAssignAdminRoles && <option value="admin">Admin</option>}
+                  {canAssignAdminRoles && <option value="super_admin">Super Admin</option>}
+                  {!canAssignAdminRoles && protectedRole && <option value={form.role}>{form.role === "super_admin" ? "Super Admin" : "Admin"}</option>}
+                </select>
+                {protectedRole && !canAssignAdminRoles && <small>Only an Admin or Super Admin can change this role.</small>}
               </label>
               <label>Reporting manager
                 <select value={selectedManager || ""} onChange={e => update("manager", e.target.value || null)}>

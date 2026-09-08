@@ -95,7 +95,8 @@ router.get('/export',authorize('super_admin','admin','hr_admin'),asyncHandler(as
 router.get('/:id', asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id).populate('manager','firstName lastName employeeCode')
   if (!employee) throw new HttpError(404, 'Employee not found')
-  res.json({ success: true, data: employee })
+  const loginUser = employee.user ? await User.findById(employee.user).select('role') : null
+  res.json({ success: true, data: { ...employee.toObject(), role: loginUser?.role || 'employee' } })
 }))
 const shiftSchema=z.object({name:z.string().trim().min(1),startTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),endTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),graceMinutes:z.coerce.number().int().min(0).max(180)})
 const probationSchema=z.object({
@@ -120,6 +121,7 @@ const employeeUpdateSchema=z.object({
   department:z.string().trim().max(100).optional(),designation:z.string().trim().max(100).optional(),branch:z.string().trim().max(100).optional(),workLocation:z.string().trim().max(150).optional(),
   joiningDate:z.coerce.date().optional(),employmentType:z.enum(['permanent','probation','contract','intern','consultant']).optional(),employeeStatus:z.enum(['active','inactive','notice_period','resigned','terminated']).optional(),
   manager:z.string().nullable().optional(),
+  role:z.enum(['super_admin','admin','hr_admin','manager','finance_admin','it_admin','employee']).optional(),
   shift:shiftSchema.optional(),
   probation:probationSchema.optional(),
   leavePlan:leavePlanSchema.optional(),
@@ -142,13 +144,18 @@ router.put('/:id',authorize('super_admin','admin','hr_admin'),asyncHandler(async
   const input=employeeUpdateSchema.parse(req.body)
   const employee=await Employee.findById(req.params.id)
   if(!employee)throw new HttpError(404,'Employee not found')
+  const loginUser = employee.user ? await User.findById(employee.user) : null
+  if (input.role && !loginUser) throw new HttpError(409, 'This employee does not have a login account to update.')
+  if (input.role && ['super_admin','admin'].includes(input.role) && !['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only an Admin or Super Admin can assign this application role')
+  if (input.role && ['super_admin','admin'].includes(loginUser?.role) && !['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only an Admin or Super Admin can change this application role')
   if(input.officialEmail&&await User.exists({email:input.officialEmail,_id:{$ne:employee.user}}))throw new HttpError(409,'Another login account already uses this official email')
   const patch = { ...input }
+  delete patch.role
   if (input.probation || input.joiningDate) patch.probation = deriveProbation({ ...(input.probation || {}), ...(input.joiningDate ? { joiningDate: input.joiningDate } : {}) }, employee)
   if (patch.manager === '') patch.manager = null
   Object.assign(employee, patch)
   await employee.save()
-  if(employee.user&&(input.officialEmail||input.firstName||input.lastName))await User.findByIdAndUpdate(employee.user,{email:input.officialEmail||employee.officialEmail,firstName:input.firstName||employee.firstName,lastName:input.lastName||employee.lastName},{runValidators:true})
+  if(loginUser&&(input.officialEmail||input.firstName||input.lastName||input.role))await User.findByIdAndUpdate(loginUser._id,{email:input.officialEmail||employee.officialEmail,firstName:input.firstName||employee.firstName,lastName:input.lastName||employee.lastName,role:input.role||loginUser.role},{runValidators:true})
   res.json({success:true,data:employee})
 }))
 router.get('/:id/biometrics', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
