@@ -37,6 +37,7 @@ import {
   employeeApi,
   holidayApi,
   leaveApi,
+  reportsApi,
   workArrangementApi,
   SERVER_FACE_ENABLED,
 } from "./services/api.js";
@@ -2213,7 +2214,7 @@ export function EmployeeOnboardingPage({ user }) {
                   )}
                   <option value="finance_admin">Finance Admin</option>
                   <option value="it_admin">IT Admin</option>
-                  {user.role === "super_admin" && (
+                  {["super_admin", "admin"].includes(user.role) && (
                     <option value="super_admin">Super Admin</option>
                   )}
                 </select>
@@ -2334,7 +2335,7 @@ export function EmployeeBiometricPage({ employeeId }) {
   </>;
 }
 
-export function ReportsPage() {
+export function LegacyReportsPage() {
   const [data, setData] = useState(null),
     [error, setError] = useState(""),
     [biometricReport, setBiometricReport] = useState(null);
@@ -2419,6 +2420,38 @@ export function ReportsPage() {
       )}
     </>
   );
+}
+
+export function ReportsPage() {
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  useEffect(() => {
+    setData(null); setError("");
+    reportsApi.attendanceMis(month).then(setData).catch((requestError) => setError(requestError.message));
+  }, [month]);
+  const hours = (minutes) => `${Math.floor((minutes || 0) / 60)}h ${String((minutes || 0) % 60).padStart(2, "0")}m`;
+  async function exportPdf() {
+    setExporting(true); setError("");
+    try {
+      const { blob, fileName } = await reportsApi.attendanceMisPdf(month);
+      const url = URL.createObjectURL(blob), link = document.createElement("a");
+      link.href = url; link.download = fileName; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    } catch (requestError) { setError(requestError.message); } finally { setExporting(false); }
+  }
+  return <div className="mis-dashboard">
+    <header className="mis-header">
+      <div className="mis-brand"><img src="/ananttattva-logo.svg" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Monthly employee working-hours MIS</p></div></div>
+      <div className="mis-controls"><label>Report month<input type="month" value={month} max={new Date().toISOString().slice(0,7)} onChange={(event)=>setMonth(event.target.value)}/></label><button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
+    </header>
+    {error?<StateMessage error>{error}</StateMessage>:!data?<StateMessage>Loading attendance MIS…</StateMessage>:<>
+      <section className="mis-summary">
+        {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Total working hours',hours(data.summary.totalMinutes),'hours'],['Less than 8:30',data.summary.lessThanTarget,'less'],['Equal to 8:30',data.summary.equalToTarget,'equal'],['More than 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
+      </section>
+      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>Standard shift: <strong>10:00–18:30</strong> · Daily target: <strong>8h 30m</strong></p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th>Employee</th><th>Employee ID</th><th>Department</th><th>Late arrivals</th><th>Completed days</th><th>Working hours</th><th>&lt; 8:30</th><th>= 8:30</th><th>&gt; 8:30</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateArrivals}</b></td><td>{row.completedDays}</td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
+    </>}
+  </div>;
 }
 
 export function HolidaysPage({ user }) {

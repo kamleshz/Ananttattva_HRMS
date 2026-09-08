@@ -88,6 +88,10 @@ export const authApi = {
   me: () => api("/auth/me"),
 };
 export const dashboardApi = { employee: () => api("/dashboard/employee") };
+export const reportsApi = {
+  attendanceMis: (month) => api(`/reports/attendance-mis?month=${encodeURIComponent(month)}`),
+  attendanceMisPdf: (month) => downloadApi(`/reports/attendance-mis.pdf?month=${encodeURIComponent(month)}`),
+};
 export const attendanceApi = {
   today: () => api('/attendance/today'),
   history: (month, year) => api(`/attendance/me?month=${month}&year=${year}`),

@@ -244,7 +244,7 @@ const createSchema = z.object({
 })
 router.post('/', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
   const input = createSchema.parse(req.body)
-  if (input.role === 'super_admin' && req.user.role !== 'super_admin') throw new HttpError(403, 'Only a Super Admin can create another Super Admin account')
+  if (input.role === 'super_admin' && !['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only an Admin or Super Admin can create a Super Admin account')
   if (input.role === 'admin' && !['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only an Admin or Super Admin can create an Admin account')
   if (input.manager && !await Employee.exists({ _id: input.manager })) throw new HttpError(422, 'Reporting manager not found')
   const passwordHash = await bcrypt.hash(input.temporaryPassword, 12)
