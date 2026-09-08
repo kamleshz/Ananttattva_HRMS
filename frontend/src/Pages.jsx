@@ -1007,11 +1007,13 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   const reportingManagerId = item.reportingManager?._id || item.reportingManager;
   const employeeId = item.employee?._id || item.employee;
   const isAssignedManager = Boolean(currentUser?.employeeId && String(reportingManagerId) === String(currentUser.employeeId) && String(employeeId) !== String(currentUser.employeeId));
+  const isSuperAdminOverride = pending && currentUser?.role === "super_admin" && nextRole !== "super_admin";
   const isMyTurn = (
     pending && (
       (nextRole === "manager" && isAssignedManager) ||
       (currentUser?.role === "hr_admin" && nextRole === "hr_admin") ||
-      (["super_admin", "admin"].includes(currentUser?.role) && nextRole === "super_admin")
+      currentUser?.role === "super_admin" ||
+      (currentUser?.role === "admin" && nextRole === "super_admin")
     )
   );
   const [note, setNote] = useState("");
@@ -1041,7 +1043,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   const employeeName = item.employee ? `${item.employee.firstName} ${item.employee.lastName}` : "";
   return (
     <article className={`leave-request-card ${isMyTurn ? "review-ready" : ""} ${decisionFlash ? `decision-${decisionFlash}` : ""}`}>
-      {decisionFlash && <div className="decision-flash" role="status"><span>{decisionFlash === "approve" ? <Check size={20} /> : <X size={20} />}</span>{decisionFlash === "approve" ? "Stage approved" : "Request rejected"}</div>}
+      {decisionFlash && <div className="decision-flash" role="status"><span>{decisionFlash === "approve" ? <Check size={20} /> : <X size={20} />}</span>{decisionFlash === "approve" ? (isSuperAdminOverride ? "Leave fully approved" : "Stage approved") : "Request rejected"}</div>}
       <header className="leave-card-header">
         <div className="leave-card-left">
           <span className={`request-icon ${item.leaveType === "unpaid_leave" ? "unpaid" : ""}`}>
@@ -1101,8 +1103,8 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
       {canReview && pending && (
         <footer className={`leave-card-actions ${isMyTurn ? "active-review" : "waiting-review"}`}>
           <div className="review-action-heading">
-            <div><strong>{isMyTurn ? "Your decision is required" : "Waiting for previous approval"}</strong><span>{isMyTurn ? "Approve to move this request to the next stage, or reject it completely." : `This becomes actionable after ${nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR" : "Admin / Super Admin"} review.`}</span></div>
-            <span className={isMyTurn ? "ready-pill" : "waiting-pill"}>{isMyTurn ? "Ready for review" : "Locked"}</span>
+            <div><strong>{isSuperAdminOverride ? "Final approval available" : isMyTurn ? "Your decision is required" : "Waiting for previous approval"}</strong><span>{isSuperAdminOverride ? "Approve to complete this request immediately. Manager and HR stages will be bypassed and notified." : isMyTurn ? "Approve to move this request to the next stage, or reject it completely." : `This becomes actionable after ${nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR" : "Admin / Super Admin"} review.`}</span></div>
+            <span className={isMyTurn ? "ready-pill" : "waiting-pill"}>{isSuperAdminOverride ? "Final override" : isMyTurn ? "Ready for review" : "Locked"}</span>
           </div>
           <textarea
             rows="2"
@@ -1116,7 +1118,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
               <X size={14} /> {reviewBusy === "reject" ? "Rejecting…" : "Reject request"}
             </button>
             <button className="approve-button" disabled={!isMyTurn || Boolean(reviewBusy)} onClick={() => review("approve")}>
-              <Check size={14} /> {reviewBusy === "approve" ? "Approving…" : "Approve & continue"}
+              <Check size={14} /> {reviewBusy === "approve" ? "Approving…" : isSuperAdminOverride ? "Approve leave fully" : "Approve & continue"}
             </button>
           </div>
         </footer>

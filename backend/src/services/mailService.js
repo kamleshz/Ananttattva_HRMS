@@ -263,6 +263,26 @@ export async function sendLeaveDecision({ recipient, firstName, decision, leaveT
   return sendGraphEmail({ recipient, subject: `Leave ${decision} for ${startDate} to ${endDate}`, html })
 }
 
+export async function sendLeaveOverrideNotice({ recipient, recipientName, employeeName, employeeCode, leaveType, startDate, endDate, reviewerName, reviewNote }) {
+  const base = env.clientUrl.replace(/\/$/, '')
+  const details = [
+    { label: 'Employee', value: `${employeeName} (${employeeCode})` },
+    { label: 'Leave type', value: leaveType },
+    { label: 'Dates', value: `${startDate} – ${endDate}` },
+    { label: 'Final approval', value: `Approved directly by ${reviewerName || 'Super Admin'}` },
+    ...(reviewNote ? [{ label: 'Review note', value: reviewNote }] : []),
+  ]
+  const html = companyEmailTemplate({
+    greeting: 'Leave request fully approved',
+    summary: `${escapeHtml(recipientName || 'Reviewer')}, ${escapeHtml(employeeName)}'s leave has received final approval from Super Admin. No further Manager or HR action is required.`,
+    details,
+    actionLabel: 'View leave details',
+    actionUrl: `${base}/requests`,
+    footer: 'This is a final workflow decision. The remaining approval stages were bypassed by Super Admin authority.',
+  })
+  return sendGraphEmail({ recipient, subject: `Final leave approval: ${employeeName}`, html })
+}
+
 export async function sendProbationConfirmation({ recipient, firstName, employeeCode, confirmedAt, reviewNote }) {
   const base = env.clientUrl.replace(/\/$/, '')
   const details = [

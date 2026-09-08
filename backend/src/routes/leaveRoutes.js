@@ -16,7 +16,7 @@ import {
   proratedAnnualPaidLeaves,
   validateLeaveRequest,
 } from '../services/leavePolicyService.js'
-import { sendLeaveApprovalRequest, sendLeaveDecision } from '../services/mailService.js'
+import { sendLeaveApprovalRequest, sendLeaveDecision, sendLeaveOverrideNotice } from '../services/mailService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -302,6 +302,7 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
   const workflow = request.workflow || { requiredSteps: [], steps: [], currentStepIndex: 0, nextRole: null }
   const nextRole = workflow.nextRole
   const approved = req.params.decision === 'approve'
+  const isSuperAdminOverride = req.user.role === 'super_admin' && nextRole !== 'super_admin'
   if (req.params.decision === 'reject' && input.reviewNote.trim().length < 3) {
     throw new HttpError(422, 'A rejection reason is required.')
   }
@@ -321,7 +322,10 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
       canAct = true
       activeRole = 'hr_admin'
     }
-  } else if (['super_admin', 'admin'].includes(req.user.role) && nextRole === 'super_admin') {
+  } else if (req.user.role === 'super_admin') {
+    canAct = true
+    activeRole = 'super_admin'
+  } else if (req.user.role === 'admin' && nextRole === 'super_admin') {
     canAct = true
     activeRole = 'super_admin'
   }
@@ -350,35 +354,57 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     request.workflow = workflow
     await request.save()
   } else {
-    let currentStepIndex = workflow.currentStepIndex || 0
-    const currentRole = activeRole || workflow.requiredSteps[currentStepIndex] || workflow.requiredSteps[Math.max(0, currentStepIndex - 1)]
-    if (Array.isArray(workflow.steps)) {
-      const idx = workflow.steps.findIndex(step => step.role === currentRole && step.status === 'pending')
-      if (idx >= 0) {
-        const step = workflow.steps[idx]
-        step.status = 'approved'
-        step.actor = req.user._id
-        step.actorEmployee = currentEmployee?._id || null
-        step.comment = input.reviewNote
-        step.actedAt = new Date()
+    if (isSuperAdminOverride) {
+      const actedAt = new Date()
+      if (Array.isArray(workflow.steps)) {
+        workflow.steps.forEach(step => {
+          if (step.status !== 'pending') return
+          step.status = step.role === 'super_admin' ? 'approved' : 'skipped'
+          step.actor = req.user._id
+          step.actorEmployee = currentEmployee?._id || null
+          step.comment = input.reviewNote || 'Bypassed by final Super Admin approval.'
+          step.actedAt = actedAt
+        })
       }
-    }
-    const required = workflow.requiredSteps || []
-    currentStepIndex = (currentRole && required.includes(currentRole))
-      ? Math.max(currentStepIndex + 1, required.findIndex(role => role === currentRole) + 1)
-      : currentStepIndex
-    if (currentStepIndex >= required.length) {
       request.status = 'approved'
       request.reviewedBy = req.user._id
-      request.reviewedAt = new Date()
-      request.reviewNote = input.reviewNote || request.reviewNote
+      request.reviewedAt = actedAt
+      request.reviewNote = input.reviewNote || 'Final approval granted by Super Admin.'
+      workflow.currentStepIndex = (workflow.requiredSteps || []).length
       workflow.nextRole = null
+      request.workflow = workflow
+      await request.save()
     } else {
-      workflow.currentStepIndex = currentStepIndex
-      workflow.nextRole = required[currentStepIndex]
+      let currentStepIndex = workflow.currentStepIndex || 0
+      const currentRole = activeRole || workflow.requiredSteps[currentStepIndex] || workflow.requiredSteps[Math.max(0, currentStepIndex - 1)]
+      if (Array.isArray(workflow.steps)) {
+        const idx = workflow.steps.findIndex(step => step.role === currentRole && step.status === 'pending')
+        if (idx >= 0) {
+          const step = workflow.steps[idx]
+          step.status = 'approved'
+          step.actor = req.user._id
+          step.actorEmployee = currentEmployee?._id || null
+          step.comment = input.reviewNote
+          step.actedAt = new Date()
+        }
+      }
+      const required = workflow.requiredSteps || []
+      currentStepIndex = (currentRole && required.includes(currentRole))
+        ? Math.max(currentStepIndex + 1, required.findIndex(role => role === currentRole) + 1)
+        : currentStepIndex
+      if (currentStepIndex >= required.length) {
+        request.status = 'approved'
+        request.reviewedBy = req.user._id
+        request.reviewedAt = new Date()
+        request.reviewNote = input.reviewNote || request.reviewNote
+        workflow.nextRole = null
+      } else {
+        workflow.currentStepIndex = currentStepIndex
+        workflow.nextRole = required[currentStepIndex]
+      }
+      request.workflow = workflow
+      await request.save()
     }
-    request.workflow = workflow
-    await request.save()
   }
   const employee = request.employee
   const employeeUser = employee
@@ -411,6 +437,18 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
       message: input.reviewNote || `Your leave request for ${formatDate(request.startDate)} to ${formatDate(request.endDate)} was ${approved ? 'approved.' : 'rejected.'}`,
       employee: employee._id,
     })
+  }
+  if (approved && isSuperAdminOverride) {
+    const employeeName = `${employee?.firstName || ''} ${employee?.lastName || ''}`.trim()
+    const reviewerName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'Super Admin'
+    const recipients = [chainMap.manager, ...(chainMap.hr || [])].filter(Boolean)
+    const uniqueRecipients = [...new Map(recipients.map(recipient => [String(recipient._id), recipient])).values()]
+    await Promise.all(uniqueRecipients.map(async recipient => {
+      await Notification.create({ recipient: recipient._id, type: 'Leave Final Approval', title: 'Leave fully approved by Super Admin', message: `${employeeName}'s leave was approved directly by ${reviewerName}. No further action is required.`, employee: employee._id })
+      if (!recipient.email) return
+      const [mailResult] = await Promise.allSettled([sendLeaveOverrideNotice({ recipient: recipient.email, recipientName: recipient.firstName || recipient.employee?.firstName || 'Reviewer', employeeName, employeeCode: employee?.employeeCode || '', leaveType: formatLeaveType(request.leaveType), startDate: formatDate(request.startDate), endDate: formatDate(request.endDate), reviewerName, reviewNote: input.reviewNote || '' })])
+      if (mailResult.status === 'rejected') console.error('Leave override notice email failed:', mailResult.reason?.message || mailResult.reason)
+    }))
   }
   if (approved && request.status === 'pending') {
     await notifyStep({ request, employeeUser, chainMap })
