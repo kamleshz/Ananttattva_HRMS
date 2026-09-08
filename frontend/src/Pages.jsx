@@ -4,6 +4,7 @@ import {
   ArrowRight,
   BriefcaseBusiness,
   CalendarDays,
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
