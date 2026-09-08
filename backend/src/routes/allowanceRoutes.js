@@ -10,6 +10,8 @@ import { allocateMonthlyAllowance, allowanceMonthKey, allowanceMonthRange, allow
 import writeXlsxFile from 'write-excel-file/node'
 import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
 import { sendAllowanceDecision } from '../services/mailService.js'
+import { OrganizationProfile } from '../models/Organization.js'
+import { generateAllowancePdf } from '../services/allowancePdfService.js'
 
 const router=Router()
 router.use(authenticate)
@@ -73,6 +75,24 @@ router.get('/:id/proof', asyncHandler(async (req,res) => {
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(!elevated&&String(claim.employee)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot view this proof')
   res.json({success:true,data:claim.proof})
+}))
+router.get('/:id/pdf', asyncHandler(async (req,res) => {
+  const claim=await AllowanceClaim.findById(req.params.id)
+    .select('+proof.data +specialApproval.proof.data')
+    .populate('employee','firstName lastName employeeCode department designation officialEmail')
+    .populate('reviewedBy','firstName lastName')
+    .populate('specialApproval.requestedBy','firstName lastName')
+    .populate('specialApproval.reviewedBy','firstName lastName')
+  if(!claim)throw new HttpError(404,'Allowance claim not found')
+  const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
+  if(!elevated&&String(claim.employee?._id)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot download this allowance claim')
+  const organization=await OrganizationProfile.findOne({singletonKey:'organization'}).select('companyName').lean()||{}
+  let pdf
+  try{pdf=await generateAllowancePdf(claim.toObject(),organization)}catch(error){throw new HttpError(422,`Unable to include the supporting document: ${error.message}`)}
+  const employeeCode=String(claim.employee?.employeeCode||'Employee').replace(/[^a-zA-Z0-9_-]+/g,'_')
+  const claimDate=new Date(claim.travelDate).toISOString().slice(0,10)
+  const fileName=`${employeeCode}_Allowance_${claimDate}.pdf`
+  res.set({'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="${fileName}"`,'Cache-Control':'private, no-store'}).send(pdf)
 }))
 router.post('/:id/special-approval', asyncHandler(async (req,res) => {
   const input=z.object({explanation:z.string().trim().min(10,'Please provide a detailed explanation').max(1000),proof:proofSchema}).parse(req.body)

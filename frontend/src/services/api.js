@@ -208,6 +208,7 @@ export const allowanceApi = {
   monthlyUsage: (date) =>
     api(`/allowances/monthly-usage?date=${encodeURIComponent(date)}`),
   proof: (id) => api(`/allowances/${id}/proof`),
+  pdf: (id) => downloadApi(`/allowances/${id}/pdf`),
   requestSpecialApproval: (id, data) =>
     api(`/allowances/${id}/special-approval`, {
       method: "POST",

@@ -2820,6 +2820,7 @@ export function AllowancesPage({ user }) {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [proof, setProof] = useState(null),
+    [downloadingClaim, setDownloadingClaim] = useState(""),
     [selectedClaim, setSelectedClaim] = useState(null),
     [claimPage, setClaimPage] = useState(1),
     [exporting, setExporting] = useState(false),
@@ -2905,6 +2906,14 @@ export function AllowancesPage({ user }) {
       const url = URL.createObjectURL(blob), link = document.createElement("a");
       link.href = url; link.download = fileName; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     } catch (e) { setError(e.message); } finally { setExporting(false); }
+  }
+  async function downloadClaimPdf(claim) {
+    setDownloadingClaim(claim._id); setError("");
+    try {
+      const { blob, fileName } = await allowanceApi.pdf(claim._id);
+      const url = URL.createObjectURL(blob), link = document.createElement("a");
+      link.href = url; link.download = fileName; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    } catch (e) { setError(e.message); } finally { setDownloadingClaim(""); }
   }
   function replaceClaim(updated) {
     setClaims((items) => items.map((item) => item._id === updated._id ? { ...item, ...updated, employee: item.employee } : item));
@@ -3097,6 +3106,7 @@ export function AllowancesPage({ user }) {
                   <th>Claim status</th>
                   <th>Special approval</th>
                   <th>Proof</th>
+                  <th>Download</th>
                 </tr>
               </thead>
               <tbody>
@@ -3166,6 +3176,11 @@ export function AllowancesPage({ user }) {
                         onClick={() => viewProof(claim._id)}
                       >
                         <FileText size={13} /> View proof
+                      </button>
+                    </td>
+                    <td>
+                      <button className="table-download-button" disabled={downloadingClaim === claim._id} onClick={() => downloadClaimPdf(claim)}>
+                        <Download size={13} /> {downloadingClaim === claim._id ? "Preparing…" : "Download PDF"}
                       </button>
                     </td>
                   </tr>
