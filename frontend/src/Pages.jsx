@@ -221,6 +221,7 @@ export function AttendancePage({ user }) {
     [correctionForm, setCorrectionForm] = useState({ requestedCheckoutTime: "", reason: "" }),
     [selected, setSelected] = useState(null),
     [viewingPhoto, setViewingPhoto] = useState(null),
+    [proofLoadingId, setProofLoadingId] = useState(null),
     [employeeFilter, setEmployeeFilter] = useState(""),
     [loading, setLoading] = useState(true),
     [exporting, setExporting] = useState(false),
@@ -298,6 +299,22 @@ export function AttendancePage({ user }) {
       setError(e.message);
     } finally {
       setExporting(false);
+    }
+  }
+  async function viewManualProof(request) {
+    setProofLoadingId(request._id);
+    setError("");
+    try {
+      const { blob } = await attendanceApi.manualProof(request._id);
+      setViewingPhoto({
+        src: URL.createObjectURL(blob),
+        label: `${request.employee?.firstName || "Employee"} · Manual ${request.action?.replace("_", "-")} proof`,
+        objectUrl: true,
+      });
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setProofLoadingId(null);
     }
   }
   function openCorrection(record) {
@@ -566,6 +583,9 @@ export function AttendancePage({ user }) {
                     <span>{formatDate(request.requestedAt || request.attemptedAt)} · Requested {formatTime(request.requestedAt || request.attemptedAt)} · Match {Math.round((request.faceMatchScore || 0) * 100)}%</span>
                     <p>{request.reasonLabel || request.reason}{request.remarks ? ` — ${request.remarks}` : ''} · {request.locationVerified?'Location verified':'Location exception'} · {request.riskLevel || 'normal'} risk</p>
                     {request.reviewNote && <small>Review note: {request.reviewNote}</small>}
+                    {request.biometricAttempt?.photoAvailable && <button type="button" className="manual-proof-button" disabled={proofLoadingId === request._id} onClick={() => viewManualProof(request)}>
+                      <Camera size={13} /> {proofLoadingId === request._id ? "Loading photo…" : "View photo"}
+                    </button>}
                   </div>
                   <StatusBadge status={request.status} />
                   {canReviewFaceRequests && request.status === "pending" && <div className="correction-review-actions">
@@ -621,7 +641,7 @@ export function AttendancePage({ user }) {
         />
       )}{" "}
       {viewingPhoto && (
-        <PhotoViewer photo={viewingPhoto} close={() => setViewingPhoto(null)} />
+        <PhotoViewer photo={viewingPhoto} close={() => { if (viewingPhoto.objectUrl) URL.revokeObjectURL(viewingPhoto.src); setViewingPhoto(null); }} />
       )}
       {arrangementOpen&&<div className="drawer-layer"><button className="drawer-backdrop" onClick={()=>setArrangementOpen(false)}/><aside className="form-drawer work-arrangement-drawer"><div className="drawer-heading"><div><p className="eyebrow">Flexible attendance</p><h2>Request a work mode</h2></div><button aria-label="Close work mode request" onClick={()=>setArrangementOpen(false)}><X size={20}/></button></div><form onSubmit={submitArrangement}><div className="work-arrangement-form-body">
         <label>Work mode *<select value={arrangementForm.type} onChange={e=>setArrangementForm({...arrangementForm,type:e.target.value})}><option value="wfh">Work from home</option><option value="client_location">Client location</option><option value="field_visit">Field visit / travelling</option></select></label>
@@ -1866,7 +1886,7 @@ export function EmployeeOnboardingPage({ user }) {
     try {
       const {biometricTemplate,biometricSamples,profilePhoto,...nonBiometricForm}=form;
       const payload = {
-        ...(SERVER_FACE_ENABLED?nonBiometricForm:{...nonBiometricForm,profilePhoto,biometricTemplate,biometricSamples}),
+        ...(SERVER_FACE_ENABLED || skipBiometric ? nonBiometricForm : {...nonBiometricForm,profilePhoto,biometricTemplate,biometricSamples}),
         manager: form.manager || null,
         employmentType: form.employmentType,
         employeeStatus: form.employeeStatus,
