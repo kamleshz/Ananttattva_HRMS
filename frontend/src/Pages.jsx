@@ -806,7 +806,12 @@ function LeaveDrawer({ close, saved, balance }) {
     const s = new Date(form.startDate); const e = new Date(form.endDate);
     if (e < s) return 0;
     let count = 0; const cur = new Date(s);
-    while (cur <= e) { const d = cur.getDay(); if (d !== 0) count += 1; cur.setDate(cur.getDate() + 1); }
+    while (cur <= e) {
+      const day = cur.getDay();
+      const saturdayOccurrence = Math.ceil(cur.getDate() / 7);
+      if (day !== 0 && (day !== 6 || saturdayOccurrence === 2 || saturdayOccurrence === 4)) count += 1;
+      cur.setDate(cur.getDate() + 1);
+    }
     return form.dayType === "half_day" && count > 0 ? 0.5 : count;
   }, [form.startDate, form.endDate, form.dayType]);
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -1796,6 +1801,7 @@ export function OrganizationChartPage() {
 export function EmployeeOnboardingPage({ user }) {
   const navigate = useNavigate();
   const todayIso = new Date().toISOString().slice(0, 10);
+  const [skipBiometric, setSkipBiometric] = useState(false);
   const [form, setForm] = useState(() => ({
     employeeCode: `EMP${String(Date.now()).slice(-5)}`,
     firstName: "",
@@ -1849,7 +1855,7 @@ export function EmployeeOnboardingPage({ user }) {
     });
   async function submit(event) {
     event.preventDefault();
-    if (!SERVER_FACE_ENABLED && (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3)) {
+    if (!SERVER_FACE_ENABLED && !skipBiometric && (!form.profilePhoto || form.biometricTemplate.length < 128 || form.biometricSamples.length !== 3)) {
       setError(
         "Biometric face enrollment is required before creating the employee.",
       );
@@ -1877,7 +1883,7 @@ export function EmployeeOnboardingPage({ user }) {
       setBusy(false);
     }
   }
-  if (!form.profilePhoto && !SERVER_FACE_ENABLED)
+  if (!form.profilePhoto && !SERVER_FACE_ENABLED && !skipBiometric)
     return (
       <>
         <button className="back-link" onClick={() => navigate("/people")}>
@@ -1893,6 +1899,12 @@ export function EmployeeOnboardingPage({ user }) {
             value={form}
             onChange={(data) => setForm((current) => ({ ...current, ...data }))}
           />
+          <div className="enrollment-skip">
+            <span>Camera unavailable? You can create the employee now and enroll their face later.</span>
+            <button type="button" className="secondary-button" onClick={() => setSkipBiometric(true)}>
+              Continue without camera <ArrowRight size={15} />
+            </button>
+          </div>
           <div className="biometric-privacy-note">
             <ShieldCheck size={17} />
             <p>

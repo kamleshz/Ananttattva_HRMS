@@ -65,7 +65,10 @@ export function countWorkingDays(start, end, holidays = new Set(), options = {})
   const cursor = cloneUtc(s);
   while (cursor <= e) {
     const key = cursor.toISOString().slice(0, 10);
-    const isWeekend = excludeWeekends && excludedWeekdays.includes(cursor.getUTCDay());
+    const weekday = cursor.getUTCDay();
+    const saturdayOccurrence = Math.ceil(cursor.getUTCDate() / 7);
+    const isNonWorkingSaturday = weekday === 6 && ![2, 4].includes(saturdayOccurrence);
+    const isWeekend = excludeWeekends && (excludedWeekdays.includes(weekday) || isNonWorkingSaturday);
     if (!isWeekend && !holidays.has(key)) count += 1;
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
