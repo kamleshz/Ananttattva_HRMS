@@ -806,7 +806,7 @@ function LeaveDrawer({ close, saved, balance }) {
     const s = new Date(form.startDate); const e = new Date(form.endDate);
     if (e < s) return 0;
     let count = 0; const cur = new Date(s);
-    while (cur <= e) { const d = cur.getDay(); if (d !== 0 && d !== 6) count += 1; cur.setDate(cur.getDate() + 1); }
+    while (cur <= e) { const d = cur.getDay(); if (d !== 0) count += 1; cur.setDate(cur.getDate() + 1); }
     return form.dayType === "half_day" && count > 0 ? 0.5 : count;
   }, [form.startDate, form.endDate, form.dayType]);
   const today = new Date(); today.setHours(0, 0, 0, 0);

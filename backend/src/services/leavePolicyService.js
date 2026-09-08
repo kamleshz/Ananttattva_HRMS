@@ -57,7 +57,7 @@ async function fetchHolidayDates(fyStart, fyEnd) {
 }
 
 export function countWorkingDays(start, end, holidays = new Set(), options = {}) {
-  const { excludeWeekends = true, excludedWeekdays = [0, 6] } = options;
+  const { excludeWeekends = true, excludedWeekdays = [0] } = options;
   const s = parseDate(start);
   const e = parseDate(end);
   if (!s || !e || e < s) return 0;
