@@ -1275,19 +1275,20 @@ export function LeavePage({ user, currentEmployeeId }) {
 
 export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) {
   const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
+  const requestScope = user.role === "manager" ? "team" : canReview ? "all" : "mine";
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
   useEffect(() => {
     leaveApi
-      .list(canReview ? "all" : "mine")
+      .list(requestScope)
       .then((items) => {
         setRequests(items);
         onPendingCountChange?.(items.filter((item) => item.status === "pending").length);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [canReview, onPendingCountChange]);
+  }, [requestScope, onPendingCountChange]);
   async function review(id, decision, note = "") {
     try {
       const updated = await leaveApi.review(id, decision, note);
@@ -2437,7 +2438,7 @@ export function ReportsPage() {
     try {
       const { blob, fileName } = await reportsApi.attendanceMisPdf(month);
       const url = URL.createObjectURL(blob), link = document.createElement("a");
-      link.href = url; link.download = fileName; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+      link.href = url; link.download = fileName?.endsWith('.pdf') ? fileName : `attendance-mis-${month}.pdf`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     } catch (requestError) { setError(requestError.message); } finally { setExporting(false); }
   }
   return <div className="mis-dashboard">
@@ -2449,7 +2450,7 @@ export function ReportsPage() {
       <section className="mis-summary">
         {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Total working hours',hours(data.summary.totalMinutes),'hours'],['Less than 8:30',data.summary.lessThanTarget,'less'],['Equal to 8:30',data.summary.equalToTarget,'equal'],['More than 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
       </section>
-      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>Standard shift: <strong>10:00–18:30</strong> · Daily target: <strong>8h 30m</strong></p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th>Employee</th><th>Employee ID</th><th>Department</th><th>Late arrivals</th><th>Completed days</th><th>Working hours</th><th>&lt; 8:30</th><th>= 8:30</th><th>&gt; 8:30</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateArrivals}</b></td><td>{row.completedDays}</td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
+      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>Standard shift: <strong>10:00–18:30</strong> · Daily target: <strong>8h 30m</strong></p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th rowSpan="2">Completed days</th><th rowSpan="2">Working hours</th><th rowSpan="2">&lt; 8:30</th><th rowSpan="2">= 8:30</th><th rowSpan="2">&gt; 8:30</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.completedDays}</td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
     </>}
   </div>;
 }

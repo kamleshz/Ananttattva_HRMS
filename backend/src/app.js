@@ -35,6 +35,7 @@ const allowedClientOrigins = [...new Set([...env.clientUrls, ...productionClient
 app.set('trust proxy', 1)
 app.use(helmet())
 app.use(cors({
+  exposedHeaders: ['Content-Disposition'],
   origin(origin, callback) {
     if (!origin || allowedClientOrigins.includes(origin)) return callback(null, true)
     if (env.nodeEnv === 'development') {

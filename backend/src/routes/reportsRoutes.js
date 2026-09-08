@@ -32,7 +32,10 @@ async function attendanceMis(month){
     const items=byEmployee.get(String(employee._id))||[]
     const completed=items.filter(item=>item.checkIn?.time&&item.checkOut?.time)
     const totalMinutes=completed.reduce((sum,item)=>sum+Number(item.workingMinutes||0),0)
-    return {employeeId:employee._id,employeeCode:employee.employeeCode,name:`${employee.firstName} ${employee.lastName}`.trim(),department:employee.department||'General',designation:employee.designation||'Employee',lateArrivals:items.filter(item=>Number(item.lateMinutes)>0||item.status==='late'||item.halfDayReason==='three_late_arrivals').length,completedDays:completed.length,totalMinutes,lessThanTarget:completed.filter(item=>Number(item.workingMinutes||0)<TARGET_MINUTES).length,equalToTarget:completed.filter(item=>Number(item.workingMinutes||0)===TARGET_MINUTES).length,moreThanTarget:completed.filter(item=>Number(item.workingMinutes||0)>TARGET_MINUTES).length}
+    const lateAt1015=items.filter(item=>Number(item.lateMinutes)>0&&Number(item.lateMinutes)<=15).length
+    const lateAt1030=items.filter(item=>Number(item.lateMinutes)>15).length
+    const legacyLate=items.filter(item=>!Number(item.lateMinutes)&&(item.status==='late'||item.halfDayReason==='three_late_arrivals')).length
+    return {employeeId:employee._id,employeeCode:employee.employeeCode,name:`${employee.firstName} ${employee.lastName}`.trim(),department:employee.department||'General',designation:employee.designation||'Employee',lateAt1015:lateAt1015+legacyLate,lateAt1030,lateArrivals:lateAt1015+lateAt1030+legacyLate,completedDays:completed.length,totalMinutes,lessThanTarget:completed.filter(item=>Number(item.workingMinutes||0)<TARGET_MINUTES).length,equalToTarget:completed.filter(item=>Number(item.workingMinutes||0)===TARGET_MINUTES).length,moreThanTarget:completed.filter(item=>Number(item.workingMinutes||0)>TARGET_MINUTES).length}
   })
   const summary=rows.reduce((result,row)=>({employees:result.employees+1,lateArrivals:result.lateArrivals+row.lateArrivals,completedDays:result.completedDays+row.completedDays,totalMinutes:result.totalMinutes+row.totalMinutes,lessThanTarget:result.lessThanTarget+row.lessThanTarget,equalToTarget:result.equalToTarget+row.equalToTarget,moreThanTarget:result.moreThanTarget+row.moreThanTarget}),{employees:0,lateArrivals:0,completedDays:0,totalMinutes:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
   return {month,label:range.label,targetMinutes:TARGET_MINUTES,summary,rows}
@@ -46,14 +49,14 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
   doc.fillColor('#f97316').font('Helvetica').fontSize(25).text('ANANT',90,25,{continued:true}).fillColor('#111827').text(' TATTVA')
   doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD',30,72)
   doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label}  |  Shift benchmark: 10:00 - 18:30 (8h 30m)`,30,96)
-  const columns=[['Employee',30,150],['ID',180,58],['Department',238,125],['Late',363,42],['Days',405,42],['Hours',447,62],['< 8:30',509,55],['= 8:30',564,55],['> 8:30',619,55]]
+  const columns=[['Employee',30,135],['ID',165,52],['Department',217,112],['10:15',329,38],['10:30',367,38],['Days',405,42],['Hours',447,62],['< 8:30',509,55],['= 8:30',564,55],['> 8:30',619,55]]
   let y=125
-  doc.rect(30,y,644,24).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width])=>doc.text(label,x+5,y+8,{width:width-8}))
-  y+=24
+  doc.rect(30,y,644,34).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width],index)=>doc.text(index===3||index===4?label:index===5?'Completed':label,x+5,y+(index===3||index===4?19:12),{width:width-8}));doc.text('LATE ARRIVAL',329,y+5,{width:76,align:'center'})
+  y+=34
   for(const [index,row] of report.rows.entries()){
-    if(y>535){doc.addPage();y=35;doc.rect(30,y,644,24).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width])=>doc.text(label,x+5,y+8,{width:width-8}));y+=24}
+    if(y>535){doc.addPage();y=35;doc.rect(30,y,644,34).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8);columns.forEach(([label,x,width],columnIndex)=>doc.text(columnIndex===3||columnIndex===4?label:columnIndex===5?'Completed':label,x+5,y+(columnIndex===3||columnIndex===4?19:12),{width:width-8}));doc.text('LATE ARRIVAL',329,y+5,{width:76,align:'center'});y+=34}
     doc.rect(30,y,644,22).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(7.5)
-    const values=[row.name,row.employeeCode,row.department,String(row.lateArrivals),String(row.completedDays),`${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)]
+    const values=[row.name,row.employeeCode,row.department,String(row.lateAt1015),String(row.lateAt1030),String(row.completedDays),`${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)]
     columns.forEach(([,x,width],i)=>doc.text(values[i],x+5,y+7,{width:width-8,ellipsis:true}));y+=22
   }
   doc.fillColor('#64748b').fontSize(8).text('Less / Equal / More values show completed attendance days compared with the 8h 30m daily benchmark.',30,560)

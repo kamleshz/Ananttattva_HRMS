@@ -907,7 +907,8 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
-    leaveApi.list(canReview ? "all" : "mine")
+    const requestScope = user.role === "manager" ? "team" : canReview ? "all" : "mine";
+    leaveApi.list(requestScope)
       .then((items) => setPendingRequestCount(items.filter((item) => item.status === "pending").length))
       .catch(() => setPendingRequestCount(0));
   }, [user, location.pathname]);
