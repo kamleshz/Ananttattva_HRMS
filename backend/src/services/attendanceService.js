@@ -1,7 +1,25 @@
+import mongoose from 'mongoose'
 import { Attendance } from '../models/Attendance.js'
+import { LeaveRequest } from '../models/LeaveRequest.js'
 import { HttpError } from '../utils/httpError.js'
-import { atOrganizationTime, startOfLocalDay } from '../utils/date.js'
+import { atOrganizationTime, endOfLocalDay, startOfLocalDay } from '../utils/date.js'
 import { evaluateLatePolicy, lateCutoff, reportLateAttendanceEscalation } from './attendancePolicyService.js'
+
+export async function attendanceTarget(employeeId, date) {
+  if (!mongoose.isValidObjectId(employeeId)) return { attendanceDayType:'full_day', expectedWorkingMinutes:510 }
+  const halfDay = await LeaveRequest.exists({ employee:employeeId, status:'approved', dayType:'half_day', startDate:{ $lte:endOfLocalDay(date) }, endDate:{ $gte:startOfLocalDay(date) } })
+  return halfDay ? { attendanceDayType:'half_day', expectedWorkingMinutes:270 } : { attendanceDayType:'full_day', expectedWorkingMinutes:510 }
+}
+
+export async function applyAttendanceCompletion(record, employeeId) {
+  const target = await attendanceTarget(employeeId, record.date)
+  record.attendanceDayType = target.attendanceDayType
+  record.expectedWorkingMinutes = target.expectedWorkingMinutes
+  record.completionStatus = record.checkOut?.time
+    ? (Number(record.workingMinutes || 0) >= target.expectedWorkingMinutes ? 'completed' : 'incomplete')
+    : 'pending'
+  return record
+}
 
 export async function checkIn(employee, payload, requestMeta, checkInTime = new Date()) {
   if (!employee) throw new HttpError(409, 'No employee profile is linked to this account')
@@ -11,7 +29,8 @@ export async function checkIn(employee, payload, requestMeta, checkInTime = new 
   const applicableLatePolicy = payload.attendanceMode !== 'wfh' && now > lateCutoff(now)
   const lateMinutes = applicableLatePolicy ? Math.max(1, Math.floor((now - lateCutoff(now)) / 60000)) : 0
   const latePolicy = applicableLatePolicy ? await evaluateLatePolicy(employee._id,now) : null
-  const record = await Attendance.create({ employee: employee._id, date, attendanceMode: payload.attendanceMode, locationVerified: Boolean(payload.locationVerified), biometricVerification:payload.biometricVerification, status: latePolicy?.becomesHalfDay ? 'half_day' : applicableLatePolicy ? 'late' : payload.attendanceMode === 'wfh' ? 'wfh' : 'present', lateMinutes, lateOccurrenceInMonth:latePolicy?.lateOccurrence||0, halfDayReason:latePolicy?.becomesHalfDay?'three_late_arrivals':null, policyHalfDayOccurrenceInMonth:latePolicy?.becomesHalfDay?latePolicy.halfDayOccurrence:0, checkIn: { ...payload.location, photo: payload.photo, time: now, ...requestMeta, source:payload.source||'biometric',manualRequest:payload.manualRequest,proofPhotoStorageKey:payload.proofPhotoStorageKey,verification:payload.biometricVerification } })
+  const target = await attendanceTarget(employee._id, date)
+  const record = await Attendance.create({ employee: employee._id, date, ...target, attendanceMode: payload.attendanceMode, locationVerified: Boolean(payload.locationVerified), biometricVerification:payload.biometricVerification, status: latePolicy?.becomesHalfDay ? 'half_day' : applicableLatePolicy ? 'late' : payload.attendanceMode === 'wfh' ? 'wfh' : 'present', lateMinutes, lateOccurrenceInMonth:latePolicy?.lateOccurrence||0, halfDayReason:latePolicy?.becomesHalfDay?'three_late_arrivals':null, policyHalfDayOccurrenceInMonth:latePolicy?.becomesHalfDay?latePolicy.halfDayOccurrence:0, checkIn: { ...payload.location, photo: payload.photo, time: now, ...requestMeta, source:payload.source||'biometric',manualRequest:payload.manualRequest,proofPhotoStorageKey:payload.proofPhotoStorageKey,verification:payload.biometricVerification } })
   if (latePolicy?.shouldEscalate) {
     try {
       await reportLateAttendanceEscalation(employee,now,latePolicy.halfDayOccurrence)
@@ -34,6 +53,8 @@ export async function checkOut(employee, payload, requestMeta, checkOutTime = ne
   if (replacingSystemAutoCheckout) record.status = record.autoCheckout?.previousStatus || (record.attendanceMode === 'wfh' ? 'wfh' : 'present')
   record.checkOut = { ...payload.location, photo: payload.photo, time: now, ...requestMeta, source:payload.source||'biometric',manualRequest:payload.manualRequest,proofPhotoStorageKey:payload.proofPhotoStorageKey,verification:payload.biometricVerification }
   record.workingMinutes = Math.max(0, Math.floor((now - record.checkIn.time) / 60000))
+  await applyAttendanceCompletion(record, employee._id)
+  record.missedCheckOut = false
   record.biometricVerification = payload.biometricVerification
   const [endHour,endMinute]=(employee.shift?.endTime||'18:30').split(':').map(Number)
   const shiftEnd=atOrganizationTime(record.date,endHour,endMinute)

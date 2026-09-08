@@ -89,8 +89,8 @@ export const authApi = {
 };
 export const dashboardApi = { employee: () => api("/dashboard/employee") };
 export const reportsApi = {
-  attendanceMis: (month) => api(`/reports/attendance-mis?month=${encodeURIComponent(month)}`),
-  attendanceMisPdf: (month) => downloadApi(`/reports/attendance-mis.pdf?month=${encodeURIComponent(month)}`),
+  attendanceMis: (from, to) => api(`/reports/attendance-mis?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  attendanceMisPdf: (from, to) => downloadApi(`/reports/attendance-mis.pdf?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 };
 export const attendanceApi = {
   today: () => api('/attendance/today'),

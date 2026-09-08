@@ -6,7 +6,7 @@ import { Attendance } from '../models/Attendance.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { organizationExcelDate, organizationMonthBoundsFor, startOfLocalDay } from '../utils/date.js'
 import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
-import { checkIn, checkOut } from '../services/attendanceService.js'
+import { applyAttendanceCompletion, checkIn, checkOut } from '../services/attendanceService.js'
 import { createHash } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env.js'
@@ -290,6 +290,8 @@ router.patch('/corrections/:id/:decision', authorize('super_admin','hr_admin'), 
     attendance.checkOut.source='hr_correction'
     attendance.checkOut.address='Checkout time approved through attendance correction'
     attendance.workingMinutes=Math.max(0,Math.floor((request.requestedCheckoutTime-attendance.checkIn.time)/60000))
+    await applyAttendanceCompletion(attendance, attendance.employee)
+    attendance.missedCheckOut=false
     attendance.status=attendance.autoCheckout?.previousStatus||'present'
     attendance.checkoutType='HR_CORRECTION'
     attendance.correctionAudit.push({previousCheckoutTime,correctedCheckoutTime:request.requestedCheckoutTime,reason:request.reason,approvedBy:req.user._id,approvedAt:new Date()})

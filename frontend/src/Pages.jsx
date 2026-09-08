@@ -830,7 +830,7 @@ function LeaveDrawer({ close, saved, balance }) {
     while (cur <= e) {
       const day = cur.getDay();
       const saturdayOccurrence = Math.ceil(cur.getDate() / 7);
-      if (day !== 0 && (day !== 6 || saturdayOccurrence === 2 || saturdayOccurrence === 4)) count += 1;
+      if (day !== 0 && (day !== 6 || [2, 4, 5].includes(saturdayOccurrence))) count += 1;
       cur.setDate(cur.getDate() + 1);
     }
     return form.dayType === "half_day" && count > 0 ? 0.5 : count;
@@ -2443,33 +2443,36 @@ export function LegacyReportsPage() {
 }
 
 export function ReportsPage() {
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(() => `${today.slice(0, 7)}-01`);
+  const [to, setTo] = useState(today);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
   useEffect(() => {
     setData(null); setError("");
-    reportsApi.attendanceMis(month).then(setData).catch((requestError) => setError(requestError.message));
-  }, [month]);
+    if (from > to) return setError("From date must be on or before To date.");
+    reportsApi.attendanceMis(from, to).then(setData).catch((requestError) => setError(requestError.message));
+  }, [from, to]);
   const hours = (minutes) => `${Math.floor((minutes || 0) / 60)}h ${String((minutes || 0) % 60).padStart(2, "0")}m`;
   async function exportPdf() {
     setExporting(true); setError("");
     try {
-      const { blob, fileName } = await reportsApi.attendanceMisPdf(month);
+      const { blob, fileName } = await reportsApi.attendanceMisPdf(from, to);
       const url = URL.createObjectURL(blob), link = document.createElement("a");
-      link.href = url; link.download = fileName?.endsWith('.pdf') ? fileName : `attendance-mis-${month}.pdf`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+      link.href = url; link.download = fileName?.endsWith('.pdf') ? fileName : `attendance-mis-${from}-to-${to}.pdf`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     } catch (requestError) { setError(requestError.message); } finally { setExporting(false); }
   }
   return <div className="mis-dashboard">
     <header className="mis-header">
-      <div className="mis-brand"><img src="/Screenshot%202026-09-08%20121937.png" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Monthly employee working-hours MIS</p></div></div>
-      <div className="mis-controls"><label>Report month<input type="month" value={month} max={new Date().toISOString().slice(0,7)} onChange={(event)=>setMonth(event.target.value)}/></label><button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
+      <div className="mis-brand"><img src="/Screenshot%202026-09-08%20121937.png" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Date-range employee working-hours MIS</p></div></div>
+      <div className="mis-controls"><label>From date<input type="date" value={from} max={to} onChange={(event)=>setFrom(event.target.value)}/></label><label>To date<input type="date" value={to} min={from} max={today} onChange={(event)=>setTo(event.target.value)}/></label><button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
     </header>
     {error?<StateMessage error>{error}</StateMessage>:!data?<StateMessage>Loading attendance MIS…</StateMessage>:<>
       <section className="mis-summary">
-        {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Total working hours',hours(data.summary.totalMinutes),'hours'],['Less than 8:30',data.summary.lessThanTarget,'less'],['Equal to 8:30',data.summary.equalToTarget,'equal'],['More than 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
+        {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Full days',data.summary.fullDays,'complete'],['Half days',data.summary.halfDays,'equal'],['Incomplete half days',data.summary.incompleteHalfDays,'less'],['Total working hours',hours(data.summary.totalMinutes),'hours'],['Below target',data.summary.lessThanTarget,'less'],['Equal target',data.summary.equalToTarget,'equal'],['Above target',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
       </section>
-      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>Standard shift: <strong>10:00–18:30</strong> · Daily target: <strong>8h 30m</strong></p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th rowSpan="2">Completed days</th><th rowSpan="2">Working hours</th><th rowSpan="2">&lt; 8:30</th><th rowSpan="2">= 8:30</th><th rowSpan="2">&gt; 8:30</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.completedDays}</td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
+      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>Targets: <strong>Full day 8h 30m</strong> · <strong>Half day 4h 30m</strong></p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th className="mis-group-heading" colSpan="4">Completed Days</th><th rowSpan="2">Working hours</th><th rowSpan="2">Below target</th><th rowSpan="2">Equal target</th><th rowSpan="2">Above target</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th><th>Total</th><th>Full day</th><th>Half day</th><th>Incomplete half</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.completedDays}</td><td>{row.fullDays}</td><td>{row.halfDays}</td><td><b className="mis-count less">{row.incompleteHalfDays}</b></td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
     </>}
   </div>;
 }

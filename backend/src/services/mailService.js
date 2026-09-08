@@ -301,6 +301,27 @@ export async function sendProbationConfirmation({ recipient, firstName, employee
   return sendGraphEmail({ recipient, subject: 'Probation confirmed', html })
 }
 
+export async function sendCheckoutReminder({ recipient, firstName, date, shiftEnd = '18:30' }) {
+  const html = companyEmailTemplate({
+    greeting: 'Checkout reminder', summary: `Hi ${firstName}, your attendance is still checked in. Please complete checkout for today.`,
+    details: [{ label:'Date', value:date }, { label:'Shift end', value:shiftEnd }, { label:'Status', value:'Checkout pending' }],
+    actionLabel:'Complete checkout', actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,
+    footer:'If checkout is missed, AT Connect will close attendance automatically according to the approved full-day or half-day policy.',
+  })
+  return sendGraphEmail({ recipient, subject:'Reminder: complete your attendance checkout', html })
+}
+
+export async function sendAttendanceMissNotice({ recipient, firstName, date, missType }) {
+  const label=missType==='check_in'?'Missing check-in':'Missed manual checkout'
+  const html=companyEmailTemplate({greeting:'Attendance action required',summary:`Hi ${firstName}, an attendance punch was missed on a scheduled working day.`,details:[{label:'Date',value:date},{label:'Exception',value:label}],actionLabel:'Review attendance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,footer:'Please submit an attendance correction if the recorded information is inaccurate.'})
+  return sendGraphEmail({recipient,subject:`Attendance exception: ${label}`,html})
+}
+
+export async function sendAttendanceEscalation({ recipient, ccRecipients = [], employeeName, employeeCode, week, misses }) {
+  const html=companyEmailTemplate({greeting:'Weekly attendance escalation',summary:`${employeeName} has reached ${misses.length} missed check-in/check-out occurrences in the current week.`,details:[{label:'Employee',value:`${employeeName} (${employeeCode})`},{label:'Week',value:week},{label:'Exceptions',value:misses.join(', ')}],actionLabel:'Open attendance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,footer:'HR and Admin should review the exceptions and request corrections where required.'})
+  return sendGraphEmail({recipient,ccRecipients,subject:`Attendance escalation: ${employeeName} (${misses.length} misses)`,html})
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' })[character])
 }
