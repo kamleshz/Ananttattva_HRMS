@@ -19,6 +19,29 @@ const punchSchema = new mongoose.Schema({
   verification: mongoose.Schema.Types.Mixed,
 }, { _id: false })
 
+const missingCheckoutSchema = new mongoose.Schema({
+  detectedAt: Date,
+  alertSentAt: Date,
+  deadline: Date,
+  justificationStatus: { type: String, enum: ['none', 'pending', 'submitted', 'approved', 'rejected', 'expired'], default: 'none' },
+  justificationRequestId: { type: mongoose.Schema.Types.ObjectId, ref: 'AttendanceCorrectionRequest' },
+  reviewerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  reviewAction: { type: String, enum: ['none', 'approved', 'rejected', 'expired'], default: 'none' },
+  reviewNote: { type: String, trim: true, maxlength: 500, default: '' },
+  finalizedAt: Date,
+  conversionReason: { type: String, maxlength: 120, default: '' },
+  leaveRequestId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveRequest' },
+  workingMinutesBefore: { type: Number, min: 0, default: 0 },
+  workingMinutesRestored: { type: Number, min: 0, default: 0 },
+  history: [{
+    timestamp: Date,
+    status: String,
+    message: String,
+    actor: String,
+    _id: false,
+  }],
+}, { _id: false })
+
 const attendanceSchema = new mongoose.Schema({
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
   date: { type: Date, required: true, index: true },
@@ -33,6 +56,8 @@ const attendanceSchema = new mongoose.Schema({
   completionStatus: { type: String, enum: ['pending','completed','incomplete'], default: 'pending', index: true },
   missedCheckIn: { type: Boolean, default: false },
   missedCheckOut: { type: Boolean, default: false },
+  missingCheckout: missingCheckoutSchema,
+  exceptionStatus: { type: String, trim: true, maxlength: 80, default: '' },
   lateMinutes: { type: Number, default: 0 },
   lateOccurrenceInMonth: { type: Number, default: 0 },
   halfDayReason: { type: String, default: null },
@@ -63,5 +88,16 @@ const attendanceSchema = new mongoose.Schema({
   },
 }, { timestamps: true })
 
+attendanceSchema.path('missedCheckOut').set(function (value) {
+  if (value === true && (!this.missingCheckout || this.missingCheckout.justificationStatus === 'none')) {
+    if (!this.missingCheckout) {
+      this.missingCheckout = {}
+    }
+    this.missingCheckout.justificationStatus = 'pending'
+  }
+  return value
+})
+
 attendanceSchema.index({ employee: 1, date: 1 }, { unique: true })
+attendanceSchema.index({ employee: 1, date: 1, 'missingCheckout.justificationStatus': 1 }, { sparse: true })
 export const Attendance = mongoose.model('Attendance', attendanceSchema)

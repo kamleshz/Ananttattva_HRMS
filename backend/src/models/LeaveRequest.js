@@ -51,6 +51,8 @@ const leaveRequestSchema = new mongoose.Schema({
     nextRole: { type: String, enum: ['manager', 'hr_admin', 'super_admin'], default: null },
   },
   fyLabel: { type: String, trim: true },
+  conversionReason: { type: String, maxlength: 120, trim: true, default: '' },
+  systemGenerated: { type: Boolean, default: false },
 }, { timestamps: true })
 
 leaveRequestSchema.index({ employee: 1, startDate: -1 })

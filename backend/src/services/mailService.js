@@ -86,18 +86,101 @@ export async function sendLoginOtp({ recipient, code, expiresMinutes }) {
   return sendGraphEmail({recipient,subject:'Your AT Connect verification code',html:buildVerificationCodeEmail({recipient,code,expiresMinutes,context:'signing in to AT Connect'})})
 }
 
-function modernMail({ preview, eyebrow, title, intro, content, actionLabel, actionUrl, footer }) {
+function iconForLabel(label) {
+  const key = String(label || '').toLowerCase().trim()
+  if (/employee|name|person|user/.test(key)) return '👤'
+  if (/leave.*type|type|category/.test(key)) return '💼'
+  if (/date/.test(key)) return '📅'
+  if (/working.*day|day|duration/.test(key)) return '⏱️'
+  if (/reason|note|comment|message/.test(key)) return '🗒️'
+  if (/reviewer|approved.*by|reviewed|manager|hr/.test(key)) return '✅'
+  if (/next.*approval|chain|stage|step/.test(key)) return '🔗'
+  if (/decision|status|action|result/.test(key)) return '🎯'
+  if (/exception|miss.*type|status/.test(key)) return '⚠️'
+  if (/week|period|attendance.*period/.test(key)) return '📆'
+  if (/scheduled|required|expected|recorded|hours|shortfall|regularize/.test(key)) return '⏳'
+  if (/shift|checkout|check.?in|check-in|check-out/.test(key)) return '🖐️'
+  if (/mode|work.*mode|attempt|score|face/.test(key)) return '🔐'
+  if (/claim|claimed|acceptable|not.*acceptable|amount|total/.test(key)) return '₹'
+  if (/login|temporary|password|credential|id/.test(key)) return '🔑'
+  if (/deadline|submission|final/.test(key)) return '🚀'
+  return '📌'
+}
+
+function toneForLabel(label, value) {
+  const key = String(label || '').toLowerCase().trim()
+  const val = String(value || '').toLowerCase()
+  if (/(approved|confirmed|recorded|success|yes)/.test(val)) return { bg:'#ecfdf5', fg:'#047857', border:'#a7f3d0' }
+  if (/(rejected|cancelled|not.*approved|unpaid|absent|expired)/.test(val)) return { bg:'#fef2f2', fg:'#b91c1c', border:'#fecaca' }
+  if (/(pending|awaiting|review|pending|processing)/.test(val)) return { bg:'#fffbeb', fg:'#b45309', border:'#fde68a' }
+  if (/(paid|eligible|active|confirmed)/.test(val)) return { bg:'#eff6ff', fg:'#1d4ed8', border:'#bfdbfe' }
+  if (/leave.*type|type|category/.test(key)) return { bg:'#f0fdf4', fg:'#15803d', border:'#bbf7d0' }
+  if (/amount|acceptable|total/.test(key)) return { bg:'#ecfeff', fg:'#0e7490', border:'#a5f3fc' }
+  if (/date|week|period|deadline/.test(key)) return { bg:'#f5f3ff', fg:'#6d28d9', border:'#ddd6fe' }
+  return { bg:'#f8fafc', fg:'#0f172a', border:'#e2e8f0' }
+}
+
+function modernMail({ preview, eyebrow, title, intro, content, actionLabel, actionUrl, secondaryLabel, secondaryUrl, footer, headerAccent, heroAvatar, heroAvatarInitials }) {
+  const gradient = headerAccent === 'warm' ? 'linear-gradient(135deg,#9a3412,#ea580c)'
+    : headerAccent === 'blue' ? 'linear-gradient(135deg,#0c4a6e,#0284c7)'
+    : headerAccent === 'red' ? 'linear-gradient(135deg,#7f1d1d,#dc2626)'
+    : headerAccent === 'violet' ? 'linear-gradient(135deg,#4c1d95,#7c3aed)'
+    : 'linear-gradient(135deg,#0e514a 0%,#087e70 55%,#10b981 100%)'
+  const avatarBlock = heroAvatarInitials
+    ? `<div style="display:inline-flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:999px;background:rgba(255,255,255,.18);border:2px solid rgba(255,255,255,.32);font-size:19px;font-weight:800;letter-spacing:-.2px;color:#fff">${escapeHtml(heroAvatarInitials.slice(0, 2).toUpperCase())}</div>`
+    : ''
+  const eyebrowFinal = eyebrow || 'AT Connect · Notification'
+  const actions = []
+  if (actionLabel && actionUrl) {
+    actions.push(`<a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:14px 22px;border-radius:12px;background:${headerAccent === 'red' ? '#dc2626' : headerAccent === 'blue' ? '#0284c7' : headerAccent === 'warm' ? '#ea580c' : headerAccent === 'violet' ? '#7c3aed' : '#087e70'};color:#fff;text-decoration:none;font-size:13px;font-weight:750;letter-spacing:.1px;box-shadow:0 8px 20px rgba(0,0,0,.12)">${escapeHtml(actionLabel)}</a>`)
+  }
+  if (secondaryLabel && secondaryUrl) {
+    actions.push(`<a href="${escapeHtml(secondaryUrl)}" style="display:inline-block;padding:13px 20px;border-radius:12px;background:#fff;color:#0f172a;text-decoration:none;font-size:13px;font-weight:700;border:1px solid #cbd5e1;margin-left:10px">${escapeHtml(secondaryLabel)}</a>`)
+  }
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(preview)}</title></head>
-  <body style="margin:0;padding:0;background:#f2f7f5;font-family:Arial,Helvetica,sans-serif;color:#17213a">
+  <body style="margin:0;padding:0;background:linear-gradient(180deg,#f0f7f4 0%,#eef4fb 100%);font-family:Arial,Helvetica,sans-serif;color:#17213a">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preview)}</div>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:38px 14px">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#fff;border:1px solid #dfe9e6;border-radius:22px;overflow:hidden;box-shadow:0 18px 48px rgba(22,74,66,.09)">
-        <tr><td style="padding:28px 34px;background:linear-gradient(135deg,#0e514a,#087e70);color:#fff"><table role="presentation" width="100%"><tr><td style="font-size:20px;font-weight:750">AT Connect</td><td align="right" style="font-size:11px;color:#bfe1db">Ananttattva Private Limited</td></tr></table></td></tr>
-        <tr><td style="padding:38px 38px 16px"><div style="color:#168174;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase">${escapeHtml(eyebrow)}</div><h1 style="margin:13px 0 12px;font-size:29px;line-height:1.25;letter-spacing:-.7px;color:#152039">${escapeHtml(title)}</h1><p style="margin:0;color:#667085;font-size:14px;line-height:1.75">${intro}</p></td></tr>
-        <tr><td style="padding:12px 38px 28px">${content}${actionLabel&&actionUrl?`<div style="padding-top:24px"><a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:14px 22px;border-radius:11px;background:#087e70;color:#fff;text-decoration:none;font-size:13px;font-weight:700">${escapeHtml(actionLabel)}</a></div>`:''}</td></tr>
-        <tr><td style="padding:22px 34px;background:#f8faf9;border-top:1px solid #e6eeeb;text-align:center;color:#87958f;font-size:11px;line-height:1.65">${footer}<br>Sent by ${escapeHtml(env.mailFromName)}</td></tr>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:620px;background:#fff;border:1px solid #e5eeea;border-radius:26px;overflow:hidden;box-shadow:0 22px 60px rgba(14,81,74,.12), 0 4px 12px rgba(15,23,42,.05)">
+        <tr><td style="padding:26px 32px;background:${gradient};color:#fff">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td align="left" style="vertical-align:middle">
+              ${avatarBlock ? `<table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="padding-right:14px;vertical-align:middle">${avatarBlock}</td><td style="vertical-align:middle">` : ''}
+              <div style="font-size:11px;font-weight:750;letter-spacing:1.6px;text-transform:uppercase;color:rgba(255,255,255,.86);opacity:.95">AT CONNECT</div>
+              <div style="margin-top:3px;font-size:19px;font-weight:800;letter-spacing:-.2px">Ananttattva Private Limited</div>
+              ${avatarBlock ? `</td></tr></table>` : ''}
+            </td>
+            <td align="right" style="vertical-align:middle;font-size:10px;color:rgba(255,255,255,.82);line-height:1.5">
+              <div style="padding:7px 11px;border-radius:999px;background:rgba(255,255,255,.14);display:inline-block;white-space:nowrap">
+                ${new Date().toLocaleDateString('en-IN', { dateStyle:'medium', timeZone:'Asia/Kolkata' })}
+              </div>
+            </td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="padding:38px 38px 16px">
+          <div style="display:inline-block;padding:6px 12px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:10.5px;font-weight:750;letter-spacing:1.1px;text-transform:uppercase;border:1px solid #a7f3d0">${escapeHtml(eyebrowFinal)}</div>
+          <h1 style="margin:14px 0 12px;font-size:30px;line-height:1.22;letter-spacing:-.9px;color:#0f172a;font-weight:800">${escapeHtml(title)}</h1>
+          <p style="margin:0;color:#475569;font-size:15px;line-height:1.78">${intro}</p>
+        </td></tr>
+        <tr><td style="padding:12px 38px 28px">
+          ${content}
+          ${actions.length ? `<div style="padding-top:24px">${actions.join('')}</div>` : ''}
+        </td></tr>
+        <tr><td style="padding:24px 34px;background:linear-gradient(180deg,#f8faf9,#f1f5f9);border-top:1px solid #e6eeeb">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td style="vertical-align:top;color:#5b6b67;font-size:11px;line-height:1.7">
+              <div style="font-weight:750;color:#2f3b38">Ananttattva Private Limited</div>
+              ${footer || ''}
+            </td>
+            <td align="right" style="vertical-align:top;font-size:11px;color:#8899a0;line-height:1.75">
+              <div style="color:#64748b;font-weight:700">Questions?</div>
+              <div>HR: <a href="mailto:hr@ananttattva.com" style="color:#087e70;text-decoration:none">hr@ananttattva.com</a></div>
+              <div style="margin-top:4px;color:#94a3b8">Sent by ${escapeHtml(env.mailFromName || 'AT Connect')}</div>
+            </td>
+          </tr></table>
+        </td></tr>
       </table>
-      <p style="margin:17px 0 0;color:#9aa6a2;font-size:10px">Automated message from AT Connect. Please do not share passwords or verification codes.</p>
+      <p style="margin:20px 0 0;color:#94a3b8;font-size:10.5px;text-align:center;line-height:1.6">🔒 Secure automated message from AT Connect · Please do not share OTPs, passwords or verification codes with anyone.</p>
     </td></tr></table>
   </body></html>`
 }
@@ -201,144 +284,293 @@ export async function sendManualAttendanceDecision({recipient,firstName,decision
   return sendGraphEmail({recipient,subject:`Your manual ${actionLabel} has been ${decision}`,html})
 }
 
-function companyEmailTemplate({ greeting, summary, details = [], actionLabel, actionUrl, footer }) {
-  const rows = details.map(({ label, value }) => `<tr><td style="font-size:13px;color:#64748b;padding:6px 10px 6px 0;vertical-align:top;width:170px">${escapeHtml(label)}</td><td style="font-size:14px;color:#0f172a;padding:6px 0;vertical-align:top">${escapeHtml(String(value))}</td></tr>`).join('')
-  const button = actionUrl ? `<a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#0f766e;color:#fff;text-decoration:none;font-weight:600;letter-spacing:-0.01em">${escapeHtml(actionLabel)}</a>` : ''
-  return `
-    <div style="font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f8fafc;padding:24px;color:#0f172a">
-      <div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden">
-        <div style="background:linear-gradient(90deg,#0f766e,#0ea5e9);padding:22px 24px;color:#fff">
-          <div style="font-size:12px;letter-spacing:0.14em;opacity:0.9;text-transform:uppercase;margin-bottom:6px">AT Connect</div>
-          <h1 style="font-size:18px;margin:0;font-weight:600">${escapeHtml(greeting)}</h1>
+function companyEmailTemplate({ greeting, summary, details = [], actionLabel, actionUrl, secondaryLabel, secondaryUrl, footer, variant = 'info', employeeName }) {
+  let gradient, accent, headerAccent
+  switch (variant) {
+    case 'approval':
+      gradient = 'linear-gradient(135deg,#0f766e 0%,#0ea5e9 60%,#22c55e 100%)'
+      accent = '#0891b2'
+      headerAccent = 'blue'
+      break
+    case 'warning':
+      gradient = 'linear-gradient(135deg,#9a3412,#f59e0b)'
+      accent = '#d97706'
+      headerAccent = 'warm'
+      break
+    case 'danger':
+      gradient = 'linear-gradient(135deg,#7f1d1d,#e11d48)'
+      accent = '#dc2626'
+      headerAccent = 'red'
+      break
+    case 'success':
+      gradient = 'linear-gradient(135deg,#065f46,#10b981,#22c55e)'
+      accent = '#059669'
+      headerAccent = undefined
+      break
+    case 'info':
+    default:
+      gradient = 'linear-gradient(135deg,#4c1d95 0%,#6366f1 50%,#0ea5e9 100%)'
+      accent = '#6366f1'
+      headerAccent = 'violet'
+      break
+  }
+  const initials = employeeName ? String(employeeName).split(' ').filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase() : null
+  const detailCards = details.map(item => {
+    const icon = item.icon || iconForLabel(item.label)
+    const tone = item.tone || toneForLabel(item.label, item.value)
+    return `
+      <div style="display:flex;align-items:stretch;margin:0 0 13px;background:#fff;border-radius:16px;border:1px solid #e5e7eb;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,.04)">
+        <div style="width:54px;min-width:54px;display:flex;align-items:center;justify-content:center;font-size:22px;background:linear-gradient(180deg,${tone.bg},#ffffff);border-right:1px solid #f1f5f9">
+          ${icon}
         </div>
-        <div style="padding:22px 24px 8px">
-          <p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#334155">${escapeHtml(summary)}</p>
-          <table style="width:100%;border-collapse:collapse;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px">${rows}</table>
-          <div style="margin:16px 0 4px">${button}</div>
+        <div style="flex:1;padding:14px 16px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px">
+          <div>
+            <div style="font-size:10.5px;font-weight:750;letter-spacing:.9px;text-transform:uppercase;color:#64748b;margin-bottom:4px">${escapeHtml(item.label)}</div>
+            <div style="font-size:15px;font-weight:700;color:#0f172a;line-height:1.45;letter-spacing:-.2px">${escapeHtml(String(item.value))}</div>
+          </div>
+          <div style="padding:6px 12px;border-radius:999px;background:${tone.bg};color:${tone.fg};border:1px solid ${tone.border};font-size:11px;font-weight:750;white-space:nowrap">
+            ${tone.fg === '#047857' ? '✓ ' : tone.fg === '#b91c1c' ? '✕ ' : tone.fg === '#b45309' ? '⏳ ' : ''}${String(item.value || '').split(' ').slice(0, 2).join(' ')}
+          </div>
         </div>
-        <div style="padding:12px 24px 22px;font-size:12px;color:#64748b;line-height:1.55">${escapeHtml(footer)}</div>
-      </div>
-    </div>`
+      </div>`
+  }).join('')
+  const actions = []
+  if (actionLabel && actionUrl) {
+    actions.push(`<a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:14px 22px;border-radius:12px;background:${accent};color:#fff;text-decoration:none;font-size:13px;font-weight:800;letter-spacing:.1px;box-shadow:0 10px 24px rgba(0,0,0,.14)">${escapeHtml(actionLabel)}</a>`)
+  }
+  if (secondaryLabel && secondaryUrl) {
+    actions.push(`<a href="${escapeHtml(secondaryUrl)}" style="display:inline-block;padding:13px 20px;border-radius:12px;background:#fff;color:#0f172a;text-decoration:none;font-size:13px;font-weight:700;border:1px solid #cbd5e1;margin-left:10px">${escapeHtml(secondaryLabel)}</a>`)
+  }
+  const avatarRow = initials
+    ? `
+      <div style="display:flex;align-items:center;gap:14px;margin:0 0 18px;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,#f0f9ff,#ecfdf5);border:1px solid #cffafe">
+        <div style="width:56px;height:56px;border-radius:999px;background:linear-gradient(135deg,#6366f1,#0ea5e9);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:20px;letter-spacing:-.4px">${escapeHtml(initials)}</div>
+        <div style="flex:1">
+          <div style="font-size:10.5px;color:#64748b;letter-spacing:.8px;text-transform:uppercase;font-weight:800">Employee</div>
+          <div style="font-size:19px;font-weight:800;color:#0f172a;letter-spacing:-.4px;margin-top:2px">${escapeHtml(employeeName)}</div>
+        </div>
+        <div style="padding:6px 11px;border-radius:999px;background:#fff;font-size:11px;color:#0f172a;font-weight:750;border:1px solid #e2e8f0;white-space:nowrap">🪪 ID verified</div>
+      </div>`
+    : ''
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(greeting)}</title></head>
+  <body style="margin:0;padding:0;background:linear-gradient(180deg,#f0f7f4 0%,#eef4fb 100%);font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(summary || greeting)}</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:38px 14px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:620px;background:#fff;border:1px solid #e5eeea;border-radius:26px;overflow:hidden;box-shadow:0 22px 60px rgba(14,81,74,.12), 0 4px 12px rgba(15,23,42,.05)">
+        <tr><td style="padding:26px 32px;background:${gradient};color:#fff">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td align="left" style="vertical-align:middle">
+              <div style="font-size:11px;font-weight:800;letter-spacing:1.8px;text-transform:uppercase;color:rgba(255,255,255,.9);opacity:.98">AT · CONNECT</div>
+              <div style="margin-top:8px;font-size:22px;font-weight:900;letter-spacing:-.5px">${escapeHtml(greeting)}</div>
+            </td>
+            <td align="right" style="vertical-align:middle">
+              <div style="text-align:right;padding:10px 14px;border-radius:16px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.2)">
+                <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.9);letter-spacing:1px;text-transform:uppercase;opacity:.95">Today</div>
+                <div style="font-size:14px;font-weight:800;letter-spacing:-.2px;color:#fff;margin-top:2px">${new Date().toLocaleDateString('en-IN', { weekday:'short', day:'2-digit', month:'short', timeZone:'Asia/Kolkata' })}</div>
+              </div>
+            </td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="padding:34px 34px 16px">
+          <div style="padding:12px 16px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;font-size:14.5px;line-height:1.75;letter-spacing:-.1px">
+            ${escapeHtml(summary)}
+          </div>
+        </td></tr>
+        <tr><td style="padding:12px 34px 8px">
+          ${avatarRow}
+          ${detailCards}
+        </td></tr>
+        <tr><td style="padding:12px 34px 30px">
+          ${actions.length ? `<div style="padding-top:10px">${actions.join('')}</div>` : ''}
+        </td></tr>
+        <tr><td style="padding:24px 34px;background:linear-gradient(180deg,#f8faf9,#f1f5f9);border-top:1px solid #e6eeeb">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>
+            <td style="vertical-align:top;color:#5b6b67;font-size:11.5px;line-height:1.7">
+              <div style="font-weight:800;color:#0f172a;font-size:12px;margin-bottom:2px">Ananttattva Private Limited</div>
+              ${footer || '<div style="color:#64748b">HRMS Powered by AT Connect</div>'}
+            </td>
+            <td align="right" style="vertical-align:top;font-size:11px;color:#8899a0;line-height:1.85">
+              <div style="color:#0891b2;font-weight:800;font-size:11.5px">Need help?</div>
+              <div>📧 HR: <a href="mailto:hr@ananttattva.com" style="color:#087e70;text-decoration:none">hr@ananttattva.com</a></div>
+              <div style="color:#94a3b8;margin-top:3px">Sent by ${escapeHtml(env.mailFromName || 'AT Connect')}</div>
+            </td>
+          </tr></table>
+        </td></tr>
+      </table>
+      <p style="margin:20px 0 0;color:#94a3b8;font-size:10.5px;text-align:center;line-height:1.6">🔒 Secure automated message from AT Connect · Please do not share passwords or verification codes with anyone.</p>
+    </td></tr></table>
+  </body></html>`
 }
 
 export async function sendLeaveApprovalRequest({ recipient, reviewerName, employeeName, employeeCode, leaveType, startDate, endDate, days, reason, stepLabel, longLeave }) {
   const base = env.clientUrl.replace(/\/$/, '')
   const details = [
-    { label: 'Employee', value: `${employeeName} (${employeeCode})` },
-    { label: 'Leave type', value: leaveType },
-    { label: 'Dates', value: `${startDate} – ${endDate}` },
-    { label: 'Working days', value: `${days} day${days === 1 ? '' : 's'}` },
-    ...(longLeave ? [{ label: 'Approval chain', value: stepLabel }] : []),
-    { label: 'Reason', value: reason },
+    { label: 'Employee', value: `${employeeName} (${employeeCode})`, icon: '👤' },
+    { label: 'Leave type', value: leaveType, icon: '💼' },
+    { label: 'Dates', value: `${startDate} – ${endDate}`, icon: '📅' },
+    { label: 'Working days', value: `${days} day${days === 1 ? '' : 's'}`, icon: '⏱️' },
+    ...(longLeave ? [{ label: 'Approval chain', value: stepLabel, icon: '🔗' }] : []),
+    { label: 'Reason', value: reason, icon: '🗒️' },
   ]
   const html = companyEmailTemplate({
     greeting: `Leave request awaiting your review`,
     summary: `${escapeHtml(reviewerName || 'Reviewer')}, a new leave request requires your approval in AT Connect.`,
     details,
-    actionLabel: 'Review request',
+    actionLabel: '✅  Approve request',
     actionUrl: `${base}/leave`,
-    footer: 'Approve only after verifying leave balance and handoff coverage with the employee.',
+    secondaryLabel: '📋  View & comment',
+    secondaryUrl: `${base}/leave`,
+    variant: 'approval',
+    employeeName,
+    footer: `Approve only after verifying leave balance and handoff coverage with ${escapeHtml(employeeName)}.`,
   })
-  return sendGraphEmail({ recipient, subject: `Leave approval: ${employeeName} (${days}d)`, html })
+  return sendGraphEmail({ recipient, subject: `⚡ Leave approval: ${employeeName} (${days} day${days === 1 ? '' : 's'})`, html })
 }
 
 export async function sendLeaveDecision({ recipient, firstName, decision, leaveType, startDate, endDate, reviewerName, reviewNote, nextApprover = '' }) {
   const base = env.clientUrl.replace(/\/$/, '')
+  const lowerDecision = String(decision || '').toLowerCase()
+  const variant = /approved|confirmed/.test(lowerDecision) ? 'success'
+    : /rejected|cancelled|canceled|denied/.test(lowerDecision) ? 'danger'
+    : nextApprover ? 'warning' : 'info'
   const details = [
-    { label: 'Decision', value: decision },
-    { label: 'Leave type', value: leaveType },
-    { label: 'Dates', value: `${startDate} – ${endDate}` },
-    { label: 'Reviewed by', value: reviewerName || 'AT Connect reviewer' },
-    ...(nextApprover ? [{ label: 'Next approval', value: nextApprover }] : []),
-    ...(reviewNote ? [{ label: 'Review note', value: reviewNote }] : []),
+    { label: 'Decision', value: decision, icon: '🎯' },
+    { label: 'Leave type', value: leaveType, icon: '💼' },
+    { label: 'Dates', value: `${startDate} – ${endDate}`, icon: '📅' },
+    { label: 'Reviewed by', value: reviewerName || 'AT Connect reviewer', icon: '✅' },
+    ...(nextApprover ? [{ label: 'Next approval', value: nextApprover, icon: '🔗' }] : []),
+    ...(reviewNote ? [{ label: 'Review note', value: reviewNote, icon: '🗒️' }] : []),
   ]
   const html = companyEmailTemplate({
     greeting: `Your leave request was ${decision}`,
     summary: `${escapeHtml(firstName)}, here is an update on the leave application you submitted.`,
     details,
-    actionLabel: 'View leave details',
+    actionLabel: '👁️  View leave details',
     actionUrl: `${base}/leave`,
-    footer: nextApprover ? `Your request is still pending and has moved to ${nextApprover} for review.` : 'Reach out to your manager or HR if you have questions about this decision.',
+    variant,
+    employeeName: firstName,
+    footer: nextApprover ? `Your request is still pending and has moved to ${escapeHtml(nextApprover)} for review.` : 'Reach out to your manager or HR if you have questions about this decision.',
   })
-  return sendGraphEmail({ recipient, subject: `Leave ${decision} for ${startDate} to ${endDate}`, html })
+  const emoji = /approved/.test(lowerDecision) ? '✅ ' : /reject|cancel|denied/.test(lowerDecision) ? '⛔ ' : '⏳ '
+  return sendGraphEmail({ recipient, subject: `${emoji}Leave ${decision} for ${startDate} to ${endDate}`, html })
 }
 
 export async function sendLeaveOverrideNotice({ recipient, recipientName, employeeName, employeeCode, leaveType, startDate, endDate, reviewerName, reviewNote }) {
   const base = env.clientUrl.replace(/\/$/, '')
   const details = [
-    { label: 'Employee', value: `${employeeName} (${employeeCode})` },
-    { label: 'Leave type', value: leaveType },
-    { label: 'Dates', value: `${startDate} – ${endDate}` },
-    { label: 'Final approval', value: `Approved directly by ${reviewerName || 'Super Admin'}` },
-    ...(reviewNote ? [{ label: 'Review note', value: reviewNote }] : []),
+    { label: 'Employee', value: `${employeeName} (${employeeCode})`, icon: '👤' },
+    { label: 'Leave type', value: leaveType, icon: '💼' },
+    { label: 'Dates', value: `${startDate} – ${endDate}`, icon: '📅' },
+    { label: 'Final approval', value: `Approved directly by ${reviewerName || 'Super Admin'}`, icon: '✅' },
+    ...(reviewNote ? [{ label: 'Review note', value: reviewNote, icon: '🗒️' }] : []),
   ]
   const html = companyEmailTemplate({
-    greeting: 'Leave request fully approved',
+    greeting: '🏆  Leave request fully approved',
     summary: `${escapeHtml(recipientName || 'Reviewer')}, ${escapeHtml(employeeName)}'s leave has received final approval from Super Admin. No further Manager or HR action is required.`,
     details,
     actionLabel: 'View leave details',
     actionUrl: `${base}/requests`,
+    variant: 'success',
+    employeeName,
     footer: 'This is a final workflow decision. The remaining approval stages were bypassed by Super Admin authority.',
   })
-  return sendGraphEmail({ recipient, subject: `Final leave approval: ${employeeName}`, html })
+  return sendGraphEmail({ recipient, subject: `🏆 Final leave approval: ${employeeName}`, html })
 }
 
 export async function sendProbationConfirmation({ recipient, firstName, employeeCode, confirmedAt, reviewNote }) {
   const base = env.clientUrl.replace(/\/$/, '')
   const details = [
-    { label: 'Employee', value: `${firstName} (${employeeCode})` },
-    { label: 'Confirmed on', value: confirmedAt },
-    ...(reviewNote ? [{ label: 'Note from HR', value: reviewNote }] : []),
+    { label: 'Employee', value: `${firstName} (${employeeCode})`, icon: '👤' },
+    { label: 'Confirmed on', value: confirmedAt, icon: '📅' },
+    ...(reviewNote ? [{ label: 'Note from HR', value: reviewNote, icon: '🗒️' }] : []),
   ]
   const html = companyEmailTemplate({
-    greeting: 'Your probation has been confirmed',
+    greeting: '🎉  Probation confirmed',
     summary: `${escapeHtml(firstName)}, HR has confirmed your probation. Paid leave eligibility is now active for the remainder of the financial year.`,
     details,
     actionLabel: 'Open My Space',
     actionUrl: `${base}/my-space`,
+    variant: 'success',
+    employeeName: firstName,
     footer: 'Paid leaves are prorated from the confirmation month through the end of the financial year.',
   })
-  return sendGraphEmail({ recipient, subject: 'Probation confirmed', html })
+  return sendGraphEmail({ recipient, subject: '🎉 Probation confirmed', html })
 }
 
 export async function sendCheckoutReminder({ recipient, firstName, date, shiftEnd = '18:30' }) {
   const html = companyEmailTemplate({
-    greeting: 'Checkout reminder', summary: `Hi ${firstName}, your attendance is still checked in. Please complete checkout for today.`,
-    details: [{ label:'Date', value:date }, { label:'Shift end', value:shiftEnd }, { label:'Status', value:'Checkout pending' }],
-    actionLabel:'Complete checkout', actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,
-    footer:'If checkout is missed, AT Connect will close attendance automatically according to the approved full-day or half-day policy.',
+    greeting: '⏰  Checkout reminder',
+    summary: `Hi ${escapeHtml(firstName)}, your attendance is still checked in. Please complete checkout for today before shift end.`,
+    details: [
+      { label: 'Date', value: date, icon: '📅' },
+      { label: 'Shift end', value: shiftEnd, icon: '🖐️' },
+      { label: 'Status', value: 'Checkout pending', icon: '⚠️' },
+    ],
+    actionLabel: '🖐️  Complete checkout',
+    actionUrl: `${env.clientUrl.replace(/\/$/, '')}/attendance`,
+    variant: 'warning',
+    employeeName: firstName,
+    footer: 'If checkout is missed, AT Connect will close attendance automatically according to the approved full-day or half-day policy.',
   })
-  return sendGraphEmail({ recipient, subject:'Reminder: complete your attendance checkout', html })
+  return sendGraphEmail({ recipient, subject: '⏰ Reminder: Complete your attendance checkout', html })
 }
 
 export async function sendAttendanceMissNotice({ recipient, firstName, date, missType }) {
-  const label=missType==='check_in'?'Missing check-in':'Missed manual checkout'
-  const html=companyEmailTemplate({greeting:'Attendance action required',summary:`Hi ${firstName}, an attendance punch was missed on a scheduled working day.`,details:[{label:'Date',value:date},{label:'Exception',value:label}],actionLabel:'Review attendance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,footer:'Please submit an attendance correction if the recorded information is inaccurate.'})
-  return sendGraphEmail({recipient,subject:`Attendance exception: ${label}`,html})
+  const label = missType === 'check_in' ? 'Missing check-in' : 'Missed manual checkout'
+  const html = companyEmailTemplate({
+    greeting: '🚨  Attendance action required',
+    summary: `Hi ${escapeHtml(firstName)}, an attendance punch was missed on a scheduled working day. Correct it before the deadline.`,
+    details: [
+      { label: 'Date', value: date, icon: '📅' },
+      { label: 'Exception', value: label, icon: '⚠️' },
+    ],
+    actionLabel: '✍️  Review & correct attendance',
+    actionUrl: `${env.clientUrl.replace(/\/$/, '')}/attendance`,
+    variant: 'danger',
+    employeeName: firstName,
+    footer: 'Please submit an attendance correction if the recorded information is inaccurate.',
+  })
+  return sendGraphEmail({ recipient, subject: `🚨 Attendance exception: ${label}`, html })
 }
 
 export async function sendAttendanceEscalation({ recipient, ccRecipients = [], employeeName, employeeCode, week, misses }) {
-  const html=companyEmailTemplate({greeting:'Weekly attendance escalation',summary:`${employeeName} has reached ${misses.length} missed check-in/check-out occurrences in the current week.`,details:[{label:'Employee',value:`${employeeName} (${employeeCode})`},{label:'Week',value:week},{label:'Exceptions',value:misses.join(', ')}],actionLabel:'Open attendance',actionUrl:`${env.clientUrl.replace(/\/$/,'')}/attendance`,footer:'HR and Admin should review the exceptions and request corrections where required.'})
-  return sendGraphEmail({recipient,ccRecipients,subject:`Attendance escalation: ${employeeName} (${misses.length} misses)`,html})
+  const html = companyEmailTemplate({
+    greeting: '🔴  Weekly attendance escalation',
+    summary: `${escapeHtml(employeeName)} has reached ${misses.length} missed check-in/check-out occurrences in the current week and requires HR or Admin attention.`,
+    details: [
+      { label: 'Employee', value: `${employeeName} (${employeeCode})`, icon: '👤' },
+      { label: 'Week', value: week, icon: '📆' },
+      { label: 'Exceptions', value: misses.join(', '), icon: '⚠️' },
+    ],
+    actionLabel: 'Open attendance',
+    actionUrl: `${env.clientUrl.replace(/\/$/, '')}/attendance`,
+    variant: 'danger',
+    employeeName,
+    footer: 'HR and Admin should review the exceptions and request corrections where required.',
+  })
+  return sendGraphEmail({ recipient, ccRecipients, subject: `🔴 Escalation: ${employeeName} (${misses.length} misses)`, html })
 }
 
 export async function sendWeeklyHoursShortfall({ recipient, ccRecipients = [], firstName, employeeName, employeeCode, period, scheduledDays, expectedHours, recordedHours, shortfallHours }) {
-  const base=env.clientUrl.replace(/\/$/,'')
-  const html=companyEmailTemplate({
-    greeting:'Weekly working-hours summary',
-    summary:`Hi ${escapeHtml(firstName)}, your recorded working hours for ${escapeHtml(period)} are below the scheduled weekly target.`,
-    details:[
-      {label:'Employee',value:`${employeeName} (${employeeCode})`},
-      {label:'Attendance period',value:period},
-      {label:'Scheduled working days',value:String(scheduledDays)},
-      {label:'Required working hours',value:expectedHours},
-      {label:'Recorded working hours',value:recordedHours},
-      {label:'Hours to regularize',value:shortfallHours},
+  const base = env.clientUrl.replace(/\/$/, '')
+  const html = companyEmailTemplate({
+    greeting: '📊  Weekly working-hours summary',
+    summary: `Hi ${escapeHtml(firstName)}, your recorded working hours for ${escapeHtml(period)} are below the scheduled weekly target. Regularize before the week closes.`,
+    details: [
+      { label: 'Employee', value: `${employeeName} (${employeeCode})`, icon: '👤' },
+      { label: 'Attendance period', value: period, icon: '📆' },
+      { label: 'Scheduled working days', value: String(scheduledDays), icon: '⏱️' },
+      { label: 'Required working hours', value: expectedHours, icon: '⏳' },
+      { label: 'Recorded working hours', value: recordedHours, icon: '⏳' },
+      { label: 'Hours to regularize', value: shortfallHours, icon: '⚠️' },
     ],
-    actionLabel:'Review attendance',actionUrl:`${base}/attendance`,
-    footer:'HR, Admin and Super Admin have been copied for visibility. Please submit an attendance correction if any punch or approved leave is missing.',
+    actionLabel: '📋  Review attendance',
+    actionUrl: `${base}/attendance`,
+    variant: 'warning',
+    employeeName,
+    footer: 'HR, Admin and Super Admin have been copied for visibility. Please submit an attendance correction if any punch or approved leave is missing.',
   })
-  return sendGraphEmail({recipient,ccRecipients,subject:`Weekly attendance shortfall: ${period}`,html})
+  return sendGraphEmail({ recipient, ccRecipients, subject: `📊 Weekly shortfall: ${period}`, html })
 }
 
 function escapeHtml(value) {

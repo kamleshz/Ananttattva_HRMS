@@ -5,6 +5,20 @@ const profileSchema = new mongoose.Schema({
   description:{ type:String, default:'Environmental compliance, sustainability and technology services.' }, industry:{ type:String, default:'Environmental Services & Technology' }, registrationNumber:String, gstNumber:String, pan:String,
   email:String, phone:String, website:String, headOfficeAddress:String, city:{ type:String, default:'Mumbai' }, state:{ type:String, default:'Maharashtra' }, country:{ type:String, default:'India' }, pinCode:String,
   workingDays:{ type:String, default:'Monday to Friday' }, workingHours:{ type:String, default:'9:30 AM – 6:30 PM' }, timeZone:{ type:String, default:'Asia/Kolkata' }, dateFormat:{ type:String, default:'DD/MM/YYYY' }, socialLinks:mongoose.Schema.Types.Mixed, updatedBy:{ type:objectId, ref:'User' },
+  attendancePolicy: {
+    fullDayWorkingMinutes: { type: Number, default: 510, min: 0, max: 1440 },
+    halfDayWorkingMinutes: { type: Number, default: 255, min: 0, max: 1440 },
+    lateCutoff: {
+      hour: { type: Number, default: 10, min: 0, max: 23 },
+      minute: { type: Number, default: 15, min: 0, max: 59 },
+    },
+    checkoutReminder: {
+      hour: { type: Number, default: 18, min: 0, max: 23 },
+      minute: { type: Number, default: 30, min: 0, max: 59 },
+    },
+    autoDeductPaidLeaveOnMissingCheckout: { type: Boolean, default: false },
+    missingCheckoutJustificationDays: { type: Number, default: 3, min: 1, max: 30 },
+  },
 }, { timestamps:true, collection:'organizationProfiles' })
 const contactSchema = new mongoose.Schema({
   category:{ type:String, required:true, trim:true },

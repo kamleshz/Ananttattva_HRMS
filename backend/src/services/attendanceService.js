@@ -3,12 +3,13 @@ import { Attendance } from '../models/Attendance.js'
 import { LeaveRequest } from '../models/LeaveRequest.js'
 import { HttpError } from '../utils/httpError.js'
 import { atOrganizationTime, endOfLocalDay, startOfLocalDay } from '../utils/date.js'
-import { evaluateLatePolicy, lateCutoff, reportLateAttendanceEscalation } from './attendancePolicyService.js'
+import { evaluateLatePolicy, lateCutoff, reportLateAttendanceEscalation, getAttendancePolicy } from './attendancePolicyService.js'
 
 export async function attendanceTarget(employeeId, date) {
-  if (!mongoose.isValidObjectId(employeeId)) return { attendanceDayType:'full_day', expectedWorkingMinutes:510 }
+  const policy = await getAttendancePolicy()
+  if (!mongoose.isValidObjectId(employeeId)) return { attendanceDayType:'full_day', expectedWorkingMinutes: policy.fullDayWorkingMinutes }
   const halfDay = await LeaveRequest.exists({ employee:employeeId, status:'approved', dayType:'half_day', startDate:{ $lte:endOfLocalDay(date) }, endDate:{ $gte:startOfLocalDay(date) } })
-  return halfDay ? { attendanceDayType:'half_day', expectedWorkingMinutes:270 } : { attendanceDayType:'full_day', expectedWorkingMinutes:510 }
+  return halfDay ? { attendanceDayType:'half_day', expectedWorkingMinutes: policy.halfDayWorkingMinutes } : { attendanceDayType:'full_day', expectedWorkingMinutes: policy.fullDayWorkingMinutes }
 }
 
 export async function applyAttendanceCompletion(record, employeeId) {

@@ -6,6 +6,8 @@ import { asyncHandler } from '../utils/asyncHandler.js'
 import { startOfLocalDay } from '../utils/date.js'
 import { Holiday } from '../models/Holiday.js'
 import { OrganizationProfile } from '../models/Organization.js'
+import { getWeeklySummary, getMondayOfDate, splitWeekByMonth } from '../services/attendanceCalculationService.js'
+import { getAttendancePolicy } from '../services/attendancePolicyService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -27,17 +29,17 @@ function upcomingBirthday(employee, today) {
 router.get('/employee', asyncHandler(async (req, res) => {
   const employee = req.user.employee
   const today = startOfLocalDay()
-  const weekStart=new Date(today)
-  const day=weekStart.getDay()
-  weekStart.setDate(weekStart.getDate()-(day===0?6:day-1))
+  const currentWeekMonday = getMondayOfDate(today)
+  const weekStart=new Date(currentWeekMonday)
   const weekEnd=new Date(weekStart);weekEnd.setDate(weekEnd.getDate()+7)
   const holidayEnd=new Date(today);holidayEnd.setDate(holidayEnd.getDate()+90)
-  const [attendance,birthdayEmployees,weekRecords,holidays,organization] = await Promise.all([
+  const [attendance,birthdayEmployees,weekRecords,holidays,organization, weeklySummary] = await Promise.all([
     employee ? Attendance.findOne({employee:employee._id,date:today}) : null,
     Employee.find({employeeStatus:'active',dateOfBirth:{$ne:null}}).select('firstName lastName profilePhoto dateOfBirth'),
     employee?Attendance.find({employee:employee._id,date:{$gte:weekStart,$lt:weekEnd}}).sort({date:1}).lean():[],
     Holiday.find({date:{$gte:today,$lte:holidayEnd}}).sort({date:1}).limit(5).lean(),
     OrganizationProfile.findOne({singletonKey:'organization'}).select('companyName shortName logo').lean(),
+    employee?getWeeklySummary(employee, currentWeekMonday):null,
   ])
   const birthdays = birthdayEmployees.map(item=>upcomingBirthday(item,today)).filter(item=>item.daysUntil<=30).sort((a,b)=>a.daysUntil-b.daysUntil).slice(0,5)
   const week=Array.from({length:5},(_,index)=>{
@@ -45,10 +47,31 @@ router.get('/employee', asyncHandler(async (req, res) => {
     const record=weekRecords.find(item=>new Date(item.date).toDateString()===date.toDateString())
     return {date,status:record?.status||(date>today?'upcoming':date.toDateString()===today.toDateString()?'today':'not_recorded'),workingMinutes:record?.workingMinutes||0,lateMinutes:record?.lateMinutes||0,halfDayPenaltyApplied:Boolean(record?.halfDayReason)}
   })
-  const effectiveMinutes=weekRecords.reduce((sum,item)=>sum+(item.workingMinutes||0),0)
-  const completedDays=weekRecords.filter(item=>item.checkOut?.time).length
+  const effectiveMinutes = weeklySummary ? weeklySummary.approvedWorkingMinutes : weekRecords.reduce((sum,item)=>sum+(item.workingMinutes||0),0)
+  const completedDays = weeklySummary ? weeklySummary.dailyBreakdown.filter(d=>d.approvedWorkingMinutes>0).length : weekRecords.filter(item=>item.checkOut?.time).length
   const demographics=['super_admin','admin','hr_admin','it_admin'].includes(req.user.role)?await workforceDemographics():null
-  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, organization, today:attendance, birthdays, holidays, week, demographics, weekSummary:{effectiveMinutes,averageMinutes:completedDays?Math.round(effectiveMinutes/completedDays):0,onTimeDays:weekRecords.filter(item=>!item.lateMinutes).length,completedDays,monthlyLateCount:attendance?.lateOccurrenceInMonth||0}, tasks:[], away:[] } })
+  const weekSummaryBackwardCompat = {
+    effectiveMinutes,
+    averageMinutes: completedDays ? Math.round(effectiveMinutes / completedDays) : 0,
+    onTimeDays: weekRecords.filter(item => !item.lateMinutes).length,
+    completedDays,
+    monthlyLateCount: attendance?.lateOccurrenceInMonth || 0,
+  }
+  const weekSummary = weeklySummary ? {
+    ...weekSummaryBackwardCompat,
+    v2: {
+      originalScheduledMinutes: weeklySummary.originalScheduledMinutes,
+      fullDayLeaveAdjustmentMinutes: weeklySummary.fullDayLeaveAdjustmentMinutes,
+      halfDayLeaveAdjustmentMinutes: weeklySummary.halfDayLeaveAdjustmentMinutes,
+      adjustedTargetMinutes: weeklySummary.adjustedTargetMinutes,
+      approvedWorkingMinutes: weeklySummary.approvedWorkingMinutes,
+      shortfallExcessMinutes: weeklySummary.shortfallExcessMinutes,
+      pendingExceptionsCount: weeklySummary.pendingExceptionsCount,
+      complianceStatusText: weeklySummary.complianceStatusText,
+    },
+    dailyBreakdown: weeklySummary.dailyBreakdown,
+  } : weekSummaryBackwardCompat
+  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, organization, today:attendance, birthdays, holidays, week, demographics, weekSummary, tasks:[], away:[] } })
 }))
 router.get('/admin', authorize('super_admin','hr_admin','it_admin'), asyncHandler(async (_req, res) => {
   const date = startOfLocalDay()

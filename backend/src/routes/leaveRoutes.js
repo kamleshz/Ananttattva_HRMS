@@ -6,6 +6,7 @@ import { LeaveRequest } from '../models/LeaveRequest.js'
 import { Employee } from '../models/Employee.js'
 import { User } from '../models/User.js'
 import { Notification } from '../models/Recruitment.js'
+import { ScheduledEmail } from '../models/ScheduledEmail.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
 import {
@@ -17,6 +18,8 @@ import {
   validateLeaveRequest,
 } from '../services/leavePolicyService.js'
 import { sendLeaveApprovalRequest, sendLeaveDecision, sendLeaveOverrideNotice } from '../services/mailService.js'
+import { organizationDateKey } from '../services/workingDayService.js'
+import { splitWeekByMonth } from '../services/attendanceCalculationService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -124,6 +127,54 @@ async function loadReviewerFilters(currentEmployee, role) {
     manager = await User.findOne({ employee: currentEmployee.manager, isActive: true }).select('_id email firstName role').populate('employee', 'firstName lastName employeeCode')
   }
   return { hr, superAdmins, manager }
+}
+
+const DAY_MS = 86_400_000
+
+function startOfLocalDay(now = new Date()) {
+  const d = now instanceof Date ? now : new Date(now)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function weekMondayFor(date) {
+  const today = startOfLocalDay(date)
+  const weekday = new Date(today.getTime() + 330 * 60_000).getUTCDay()
+  const offset = weekday === 0 ? 6 : weekday - 1
+  return new Date(today.getTime() - offset * DAY_MS)
+}
+
+async function invalidateWeeklyAuditKeysForLeaveDates(leave) {
+  try {
+    const employeeId = leave.employee?._id || leave.employee
+    if (!employeeId) return
+    const userDoc = await User.findOne({ employee: employeeId, isActive: true }).select('_id').lean()
+    if (!userDoc) return
+    const userId = userDoc._id
+    const start = startOfLocalDay(leave.startDate)
+    const end = startOfLocalDay(leave.endDate)
+    const mondays = []
+    let cursor = weekMondayFor(start)
+    const endWeekMonday = weekMondayFor(end)
+    while (cursor <= endWeekMonday) {
+      mondays.push(new Date(cursor))
+      cursor = new Date(cursor.getTime() + 7 * DAY_MS)
+    }
+    for (const monday of mondays) {
+      const slices = splitWeekByMonth(monday)
+      for (const slice of slices) {
+        const periodStartKey = organizationDateKey(slice.startDate)
+        const periodEndKey = organizationDateKey(slice.endDate)
+        const escapedPrefix = `weekly-hours-shortfall:${periodStartKey}:${periodEndKey}:`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        await ScheduledEmail.updateMany(
+          { key: { $regex: `^${escapedPrefix}` }, type: 'weekly_hours_shortfall', recipient: userId },
+          { $set: { status: 'processing', lastError: 'Invalidated by leave approval', sentAt: null } }
+        )
+      }
+    }
+  } catch (error) {
+    console.error('invalidateWeeklyAuditKeysForLeaveDates failed:', error?.message || error)
+  }
 }
 
 router.get('/balance', asyncHandler(async (req, res) => {
@@ -374,6 +425,7 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
       workflow.nextRole = null
       request.workflow = workflow
       await request.save()
+      await invalidateWeeklyAuditKeysForLeaveDates(request)
     } else {
       let currentStepIndex = workflow.currentStepIndex || 0
       const currentRole = activeRole || workflow.requiredSteps[currentStepIndex] || workflow.requiredSteps[Math.max(0, currentStepIndex - 1)]
@@ -404,6 +456,9 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
       }
       request.workflow = workflow
       await request.save()
+      if (approved && request.status === 'approved') {
+        await invalidateWeeklyAuditKeysForLeaveDates(request)
+      }
     }
   }
   const employee = request.employee

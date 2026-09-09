@@ -134,6 +134,139 @@ const punctualityLabel = (record, long = false) => {
   const minutes = derivedLateMinutes(record);
   return `Late${minutes ? ` · ${minutes}${long ? " minutes" : "m"}` : ""}`;
 };
+function formatMinToHhmm(totalMinutes) {
+  if (totalMinutes == null || Number.isNaN(Number(totalMinutes))) return "—";
+  const mins = Number(totalMinutes);
+  const sign = mins < 0 ? "-" : "";
+  const abs = Math.abs(mins);
+  return `${sign}${Math.floor(abs / 60)}h ${String(abs % 60).padStart(2, "0")}m`;
+}
+function formatDdMm(dateValue) {
+  if (!dateValue) return "";
+  const d = new Date(dateValue);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function startOfWeekISO(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+function getWeeksInMonth(year, month1Based) {
+  const weeks = [];
+  const firstOfMonth = new Date(year, month1Based - 1, 1);
+  const lastOfMonth = new Date(year, month1Based, 0);
+  let cursor = new Date(startOfWeekISO(firstOfMonth));
+  while (cursor <= lastOfMonth) {
+    const weekStart = new Date(cursor);
+    const weekEnd = new Date(cursor);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const overlapStart = weekStart < firstOfMonth ? firstOfMonth : weekStart;
+    const overlapEnd = weekEnd > lastOfMonth ? lastOfMonth : weekEnd;
+    weeks.push({
+      weekStartISO: weekStart.toISOString().slice(0, 10),
+      weekStart,
+      weekEnd,
+      overlapStart,
+      overlapEnd,
+      label: `${new Intl.DateTimeFormat("en", { month: "short", day: "2-digit" }).format(weekStart)} – ${new Intl.DateTimeFormat("en", { month: "short", day: "2-digit" }).format(weekEnd)}`,
+    });
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return weeks;
+}
+function isWorkingDay(date, policy) {
+  const day = date.getDay();
+  if (day === 0) return false;
+  if (day === 6) {
+    const saturdayOccurrence = Math.ceil(date.getDate() / 7);
+    return [2, 4, 5].includes(saturdayOccurrence);
+  }
+  return true;
+}
+function renderDeadlineBadge(deadline) {
+  if (!deadline) return null;
+  const nowTs = Date.now();
+  const deadlineTs = new Date(deadline).getTime();
+  if (Number.isNaN(deadlineTs)) return null;
+  if (nowTs < deadlineTs) {
+    const diffDays = Math.ceil((deadlineTs - nowTs) / (1000 * 60 * 60 * 24));
+    return <span className="deadline-badge">⏰ {diffDays}d left · Expires {formatDdMm(deadline)}</span>;
+  }
+  return <span className="deadline-badge expired">Expired · {formatDdMm(deadline)}</span>;
+}
+function renderAttendanceStatus(record) {
+  const missing = record?.missingCheckout || {};
+  const justificationStatus = missing.justificationStatus || "";
+  const reviewAction = missing.reviewAction || "";
+  const exceptionStatus = (record.exceptionStatus || "").toLowerCase();
+  const recStatus = record.status || "";
+  const isPendingException =
+    exceptionStatus.includes("pending") ||
+    (justificationStatus === "pending") ||
+    (recStatus === "missing_checkout" && justificationStatus === "pending");
+  if (recStatus === "missing_checkout" && justificationStatus === "pending") {
+    return (
+      <span className="status-pill-group">
+        <span className="data-status pending">Missing Checkout – Justification Pending</span>
+        {renderDeadlineBadge(missing.deadline)}
+      </span>
+    );
+  }
+  if (isPendingException) {
+    return (
+      <span className="status-pill-group">
+        <span className="data-status pending">Missing Checkout – Justification Pending</span>
+        {renderDeadlineBadge(missing.deadline)}
+      </span>
+    );
+  }
+  if (justificationStatus === "submitted") {
+    return <span className="data-status submitted">Submitted – Awaiting Review</span>;
+  }
+  if (justificationStatus === "approved") {
+    const restored = missing.restoredMinutes
+      ? ` · Restored ${formatMinToHhmm(missing.restoredMinutes).replace("-", "")}`
+      : "";
+    return <span className="data-status approved">Approved{restored && <small style={{ display: "block", fontSize: "7.5px", opacity: 0.85, fontWeight: 500 }}>{restored.trim()}</small>}</span>;
+  }
+  if (justificationStatus === "rejected" || reviewAction === "rejected" || exceptionStatus.includes("rejected")) {
+    return <span className="data-status rejected">Rejected – Leave applied</span>;
+  }
+  if (justificationStatus === "expired" || reviewAction === "expired" || exceptionStatus.includes("expired")) {
+    return <span className="data-status rejected" style={{ background: "#fee2e2", color: "#7f1d1d", borderColor: "#fecaca" }}>Expired – Leave applied</span>;
+  }
+  return <StatusBadge status={recStatus} />;
+}
+function shouldShowCorrectCheckoutButton(record, canReviewCorrections, pendingCorrectionIds) {
+  if (canReviewCorrections) return false;
+  if (pendingCorrectionIds.has(String(record._id))) return false;
+  const missing = record?.missingCheckout || {};
+  const justificationStatus = missing.justificationStatus || "";
+  const deadlineTs = missing.deadline ? new Date(missing.deadline).getTime() : null;
+  const nowTs = Date.now();
+  if (record.status !== "missing_checkout") return false;
+  if ((record.checkOut?.source || "") !== "system_auto") return false;
+  if (justificationStatus === "pending" && deadlineTs && nowTs < deadlineTs) return true;
+  if (!justificationStatus && (!deadlineTs || nowTs < deadlineTs)) return true;
+  return false;
+}
+function shouldShowViewRequestLink(record) {
+  const justificationStatus = record?.missingCheckout?.justificationStatus || "";
+  return justificationStatus === "submitted";
+}
+function shouldHideEmployeeButton(record) {
+  const missing = record?.missingCheckout || {};
+  const justificationStatus = missing.justificationStatus || "";
+  const deadlineTs = missing.deadline ? new Date(missing.deadline).getTime() : null;
+  const nowTs = Date.now();
+  if (justificationStatus === "expired") return true;
+  if (deadlineTs && nowTs >= deadlineTs && justificationStatus !== "approved" && justificationStatus !== "rejected") return true;
+  return false;
+}
 
 export function MySpacePage() {
   const navigate = useNavigate();
@@ -233,7 +366,9 @@ export function AttendancePage({ user }) {
     [arrangementBusy, setArrangementBusy] = useState(false),
     [approvalNotice, setApprovalNotice] = useState(null),
     [arrangementForm, setArrangementForm] = useState(() => { const date=new Date().toISOString().slice(0,10); return {type:"wfh",startDate:date,endDate:date,startTime:"09:00",endTime:"18:30",reason:"",clientName:"",destination:{name:"",address:"",latitude:"",longitude:"",allowedRadiusMeters:250}} }),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [weeksViewMode, setWeeksViewMode] = useState("month"),
+    [weeklySummaries, setWeeklySummaries] = useState({});
   const [recordsPage, setRecordsPage] = useState(1);
   const [manualPage, setManualPage] = useState(1);
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
@@ -284,6 +419,81 @@ export function AttendancePage({ user }) {
       ),
     [records],
   );
+  const weeksInMonth = useMemo(() => getWeeksInMonth(year, month), [year, month]);
+  const currentWeekStartISO = startOfWeekISO(new Date());
+  const metaPolicy = records.length && records[0]?.meta?.policy ? records[0].meta.policy : null;
+  const policyFullDayMins = metaPolicy?.fullDayWorkingMinutes || 510;
+  const policyHalfDayMins = metaPolicy?.halfDayWorkingMinutes || 255;
+  const computedWeeklySummaries = useMemo(() => {
+    const out = {};
+    const byWeek = new Map();
+    records.forEach((rec) => {
+      const ws = startOfWeekISO(rec.date);
+      if (!byWeek.has(ws)) byWeek.set(ws, []);
+      byWeek.get(ws).push(rec);
+    });
+    weeksInMonth.forEach(({ weekStartISO, weekStart, weekEnd }) => {
+      const existing = weeklySummaries[weekStartISO];
+      if (existing) {
+        out[weekStartISO] = existing;
+        return;
+      }
+      const weekRecords = byWeek.get(weekStartISO) || [];
+      let workingDayCount = 0;
+      for (let d = new Date(weekStart); d <= weekEnd; d.setDate(d.getDate() + 1)) {
+        if (isWorkingDay(new Date(d), metaPolicy)) workingDayCount += 1;
+      }
+      let fullDayLeaveAdjustment = 0;
+      let halfDayLeaveAdjustment = 0;
+      let approvedWorkingMinutes = 0;
+      let pendingExceptionsCount = 0;
+      weekRecords.forEach((rec) => {
+        const leaveType = rec.leaveType || (rec.status === "leave" ? (rec.dayType || "full_day") : null);
+        if (leaveType === "full_day" || rec.status === "leave") {
+          if (rec.dayType === "half_day") {
+            halfDayLeaveAdjustment += policyHalfDayMins;
+          } else {
+            fullDayLeaveAdjustment += policyFullDayMins;
+          }
+        } else if (rec.dayType === "half_day" && (rec.status === "half_day" || rec.halfDayReason)) {
+          halfDayLeaveAdjustment += policyHalfDayMins;
+        }
+        const exceptionStatus = rec.exceptionStatus || "";
+        const hasPendingException =
+          exceptionStatus.toLowerCase().includes("pending") ||
+          (rec.status === "missing_checkout" && rec.missingCheckout?.justificationStatus === "pending");
+        if (!hasPendingException) {
+          approvedWorkingMinutes += Number(rec.workingMinutes) || 0;
+        }
+        if (hasPendingException) pendingExceptionsCount += 1;
+      });
+      const originalScheduledMinutes = workingDayCount * policyFullDayMins;
+      const adjustedTargetMinutes = originalScheduledMinutes - fullDayLeaveAdjustment - halfDayLeaveAdjustment;
+      const shortfallExcessMinutes = approvedWorkingMinutes - adjustedTargetMinutes;
+      let complianceStatusText = "On target";
+      let complianceTone = "approved";
+      if (shortfallExcessMinutes < -60) {
+        complianceStatusText = "Non-compliant";
+        complianceTone = "rejected";
+      } else if (shortfallExcessMinutes < 0 || pendingExceptionsCount > 0) {
+        complianceStatusText = "At risk";
+        complianceTone = "pending";
+      }
+      out[weekStartISO] = {
+        weekStartISO,
+        originalScheduledMinutes,
+        fullDayLeaveAdjustmentMinutes: fullDayLeaveAdjustment,
+        halfDayLeaveAdjustmentMinutes: halfDayLeaveAdjustment,
+        adjustedTargetMinutes,
+        approvedWorkingMinutes,
+        shortfallExcessMinutes,
+        pendingExceptionsCount,
+        complianceStatusText,
+        complianceTone,
+      };
+    });
+    return out;
+  }, [records, weeksInMonth, weeklySummaries, metaPolicy, policyFullDayMins, policyHalfDayMins]);
   async function downloadExcel() {
     setExporting(true);
     setError("");
@@ -432,6 +642,10 @@ export function AttendancePage({ user }) {
               ›
             </button>
           </div>
+          <div className="view-toggle-segmented" role="group" aria-label="Attendance view mode">
+            <button type="button" className={weeksViewMode === "month" ? "active" : ""} onClick={() => setWeeksViewMode("month")}>Month view</button>
+            <button type="button" className={weeksViewMode === "week" ? "active" : ""} onClick={() => setWeeksViewMode("week")}>Week view</button>
+          </div>
           {canExport && <button className="secondary-button attendance-export-button" disabled={exporting} onClick={downloadExcel}>
             <Download size={15} /> {exporting ? "Preparing…" : "Download Excel"}
           </button>}
@@ -458,15 +672,127 @@ export function AttendancePage({ user }) {
           <strong>{records.length}</strong>
         </div>
       </div>
+      {weeksViewMode === "week" && computedWeeklySummaries[currentWeekStartISO] && (() => {
+        const ws = computedWeeklySummaries[currentWeekStartISO];
+        const weekMeta = weeksInMonth.find((w) => w.weekStartISO === currentWeekStartISO);
+        const shortfallTone = ws.shortfallExcessMinutes < 0 ? "shortfall" : ws.shortfallExcessMinutes > 0 ? "excess" : "ontarget";
+        return (
+          <section className="content-card weekly-kpi-strip-card">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Current week summary</p>
+                <h2>{weekMeta?.label || "This week"}</h2>
+              </div>
+            </div>
+            <div className="weekly-kpi-strip">
+              <article>
+                <span>Original target</span>
+                <strong>{formatMinToHhmm(ws.originalScheduledMinutes)}</strong>
+              </article>
+              <article>
+                <span>Full-day leave adj</span>
+                <strong className={ws.fullDayLeaveAdjustmentMinutes > 0 ? "non-acceptable-value" : ""}>
+                  {ws.fullDayLeaveAdjustmentMinutes > 0 ? "-" : ""}{formatMinToHhmm(ws.fullDayLeaveAdjustmentMinutes)}
+                </strong>
+              </article>
+              <article>
+                <span>Half-day leave adj</span>
+                <strong className={ws.halfDayLeaveAdjustmentMinutes > 0 ? "non-acceptable-value" : ""}>
+                  {ws.halfDayLeaveAdjustmentMinutes > 0 ? "-" : ""}{formatMinToHhmm(ws.halfDayLeaveAdjustmentMinutes)}
+                </strong>
+              </article>
+              <article>
+                <span>Adjusted target</span>
+                <strong>{formatMinToHhmm(ws.adjustedTargetMinutes)}</strong>
+              </article>
+              <article>
+                <span>Approved hours</span>
+                <strong>{formatMinToHhmm(ws.approvedWorkingMinutes)}</strong>
+              </article>
+              <article>
+                <span>Shortfall / Excess</span>
+                <strong className={`kpi-tone-${shortfallTone}`}>
+                  {ws.shortfallExcessMinutes < 0
+                    ? `Shortfall ${formatMinToHhmm(Math.abs(ws.shortfallExcessMinutes))}`
+                    : ws.shortfallExcessMinutes > 0
+                    ? `Excess +${formatMinToHhmm(ws.shortfallExcessMinutes).replace("-", "")}`
+                    : "On target"}
+                </strong>
+              </article>
+              <article>
+                <span>Pending exceptions</span>
+                <strong className={ws.pendingExceptionsCount > 0 ? "muted-value" : ""}>{ws.pendingExceptionsCount}</strong>
+              </article>
+              <article>
+                <span>Compliance</span>
+                <strong>
+                  <StatusBadge status={ws.complianceTone} label={ws.complianceStatusText} />
+                </strong>
+              </article>
+            </div>
+          </section>
+        );
+      })()}
       {canReviewArrangements && <div className={`work-approval-banner ${pendingArrangements.length ? "has-pending" : ""}`}>
         <div><span>Work-mode approval queue</span><strong>{pendingArrangements.length ? `${pendingArrangements.length} request${pendingArrangements.length === 1 ? "" : "s"} waiting for review` : "No pending work-mode requests"}</strong><small>Review work-from-home, client-location and field-visit requests.</small></div>
         <button className="secondary-button" onClick={()=>document.getElementById("work-mode-approvals")?.scrollIntoView({behavior:"smooth",block:"start"})}>Review requests <ArrowRight size={15}/></button>
       </div>}
+      {weeksViewMode === "week" && !loading && !error && (
+        <section className="content-card weekly-summary-table-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Weekly report</p>
+              <h2>Weekly attendance summary — {new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(new Date(year, month - 1))}</h2>
+            </div>
+          </div>
+          <div className="data-table-wrap">
+            <table className="data-table weekly-summary-table">
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>Original target</th>
+                  <th>Full-day leave adj</th>
+                  <th>Half-day leave adj</th>
+                  <th>Adjusted target</th>
+                  <th>Approved hours</th>
+                  <th>Shortfall / Excess</th>
+                  <th>Pending exceptions</th>
+                  <th>Compliance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weeksInMonth.map(({ weekStartISO, label }) => {
+                  const ws = computedWeeklySummaries[weekStartISO] || {};
+                  const shortfallVal = Number(ws.shortfallExcessMinutes) || 0;
+                  const shortfallCell = shortfallVal < 0
+                    ? <td className="weekly-cell shortfall-cell"><strong className="non-acceptable-value">Shortfall {formatMinToHhmm(Math.abs(shortfallVal))}</strong></td>
+                    : shortfallVal > 0
+                    ? <td className="weekly-cell excess-cell"><strong className="acceptable-value">Excess +{formatMinToHhmm(shortfallVal).replace("-", "")}</strong></td>
+                    : <td className="weekly-cell ontarget-cell"><strong>On target</strong></td>;
+                  return (
+                    <tr key={weekStartISO}>
+                      <td><strong>{label}</strong></td>
+                      <td>{formatMinToHhmm(ws.originalScheduledMinutes)}</td>
+                      <td>{ws.fullDayLeaveAdjustmentMinutes > 0 ? `-${formatMinToHhmm(Math.abs(ws.fullDayLeaveAdjustmentMinutes))}` : formatMinToHhmm(0)}</td>
+                      <td>{ws.halfDayLeaveAdjustmentMinutes > 0 ? `-${formatMinToHhmm(ws.halfDayLeaveAdjustmentMinutes)}` : formatMinToHhmm(0)}</td>
+                      <td><strong>{formatMinToHhmm(ws.adjustedTargetMinutes)}</strong></td>
+                      <td>{formatMinToHhmm(ws.approvedWorkingMinutes)}</td>
+                      {shortfallCell}
+                      <td>{ws.pendingExceptionsCount > 0 ? <strong className="muted-value">{ws.pendingExceptionsCount}</strong> : ws.pendingExceptionsCount ?? 0}</td>
+                      <td>{ws.complianceStatusText ? <StatusBadge status={ws.complianceTone || "approved"} label={ws.complianceStatusText} /> : <span>—</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <section className="content-card">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Attendance log</p>
-            <h2>Daily records</h2>
+            <h2>{weeksViewMode === "week" ? "Weekly daily records" : "Daily records"}</h2>
           </div>
           {canViewCompleteRoster && <label className="attendance-employee-filter"><Search size={15}/><input value={employeeFilter} onChange={event=>setEmployeeFilter(event.target.value)} placeholder="Filter by employee name or ID" aria-label="Filter attendance by employee"/>{employeeFilter&&<button type="button" onClick={()=>setEmployeeFilter("")} aria-label="Clear employee filter"><X size={14}/></button>}</label>}
         </div>
@@ -545,14 +871,24 @@ export function AttendancePage({ user }) {
                       {item.workingMinutes % 60}m
                     </td>
                     <td>
-                      <StatusBadge status={item.status} />
+                      {renderAttendanceStatus(item)}
                     </td>
                     <td>{punctualityFor(item) ? <StatusBadge status={punctualityFor(item)} label={punctualityLabel(item)} /> : <span>—</span>}</td>
                     <td>
                       <div className="attendance-row-actions">
                         {!item.isRosterPlaceholder && <button className="table-action" onClick={() => setSelected(item)}>View</button>}
-                        {item.status === "missing_checkout" && item.checkOut?.source === "system_auto" && !canReviewCorrections && !pendingCorrectionIds.has(String(item._id)) && (
+                        {shouldShowCorrectCheckoutButton(item, canReviewCorrections, pendingCorrectionIds) && (
                           <button className="correction-button" onClick={() => openCorrection(item)}>Correct checkout</button>
+                        )}
+                        {shouldShowViewRequestLink(item) && (
+                          <button className="correction-button" style={{ opacity: 0.6, background: "#f5f7f9", borderColor: "#dfe4e7", color: "#6b7585" }} disabled>
+                            View request
+                          </button>
+                        )}
+                        {canReviewCorrections && shouldHideEmployeeButton(item) && item.status === "missing_checkout" && (
+                          <button className="correction-button" style={{ background: "#fff5f5", borderColor: "#f5b6b6", color: "#991b1b" }}>
+                            Override deadline
+                          </button>
                         )}
                         {pendingCorrectionIds.has(String(item._id)) && <StatusBadge status="pending" />}
                       </div>
@@ -682,6 +1018,18 @@ function AttendanceDetailDrawer({ record, close, viewPhoto }) {
     record.checkIn?.latitude != null
       ? `${record.checkIn.latitude.toFixed(6)}, ${record.checkIn.longitude.toFixed(6)}`
       : "Not captured";
+  const missing = record?.missingCheckout || {};
+  const justificationStatus = missing.justificationStatus || "";
+  const exceptionStatus = record.exceptionStatus || "";
+  const deadlineTs = missing.deadline ? new Date(missing.deadline).getTime() : null;
+  const nowTs = Date.now();
+  const remainingDays = deadlineTs && nowTs < deadlineTs
+    ? Math.ceil((deadlineTs - nowTs) / (1000 * 60 * 60 * 24))
+    : null;
+  const reviewNote = missing.reviewNote || record.reviewNote || "";
+  const reviewAction = missing.reviewAction || "";
+  const leaveRequestId = missing.leaveRequestId || record.leaveRequestId || "";
+  const hasExceptionDetails = justificationStatus || exceptionStatus || missing.deadline || missing.alertSentAt || reviewNote || reviewAction || leaveRequestId;
   return (
     <div className="drawer-layer">
       <button className="drawer-backdrop" onClick={close} />
@@ -696,9 +1044,9 @@ function AttendanceDetailDrawer({ record, close, viewPhoto }) {
           </button>
         </div>
         <div className="attendance-detail-status">
-          <StatusBadge status={record.status} />
+          {renderAttendanceStatus(record)}
           {punctualityFor(record) && <StatusBadge status={punctualityFor(record)} label={punctualityLabel(record, true)} />}
-          <span>{record.checkOut?.source === "system_auto" ? "System Auto Checkout · Configured shift end" : record.checkOut?.source === "hr_correction" ? "HR-approved corrected checkout" : "General shift · 10:00 AM – 6:30 PM"}</span>
+          <span style={{ marginTop: 6 }}>{record.checkOut?.source === "system_auto" ? "System Auto Checkout · Configured shift end" : record.checkOut?.source === "hr_correction" ? "HR-approved corrected checkout" : "General shift · 10:00 AM – 6:30 PM"}</span>
         </div>
         <div className="attendance-time-grid">
           <div>
@@ -723,6 +1071,52 @@ function AttendanceDetailDrawer({ record, close, viewPhoto }) {
             </strong>
           </div>
         </div>
+        {hasExceptionDetails && (
+          <section className="attendance-exception-detail-card">
+            <p className="eyebrow">Exception details</p>
+            <div className="attendance-detail-field-grid">
+              <div>
+                <span>Exception status</span>
+                <strong>{exceptionStatus || "—"}</strong>
+              </div>
+              <div>
+                <span>Justification status</span>
+                <strong>{capitalize(justificationStatus.replaceAll("_", " ")) || "—"}</strong>
+              </div>
+              <div>
+                <span>Deadline</span>
+                <strong>
+                  {missing.deadline
+                    ? `${formatDate(missing.deadline)}${remainingDays ? ` · ${remainingDays} day${remainingDays === 1 ? "" : "s"} left` : nowTs >= deadlineTs ? " · Expired" : ""}`
+                    : "—"}
+                </strong>
+              </div>
+              <div>
+                <span>Alert sent at</span>
+                <strong>{missing.alertSentAt ? formatDate(missing.alertSentAt) + " · " + formatTime(missing.alertSentAt) : "—"}</strong>
+              </div>
+              {(reviewAction || reviewNote) && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span>Review action</span>
+                  <strong>
+                    {reviewAction ? capitalize(reviewAction.replaceAll("_", " ")) : "—"}
+                    {reviewNote && <small style={{ display: "block", marginTop: 4, color: "#6b7585", fontWeight: 500 }}>Note: {reviewNote}</small>}
+                  </strong>
+                </div>
+              )}
+              {leaveRequestId && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span>Leave link</span>
+                  <strong>
+                    <span className="data-status pending" style={{ marginTop: 4 }}>
+                      Leave request #{String(leaveRequestId).slice(-6)}
+                    </span>
+                  </strong>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
         <section className="attendance-photos">
           <div>
             <div className="photo-heading">
@@ -1129,12 +1523,15 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
 }
 
 export function LeavePage({ user, currentEmployeeId }) {
+  const today = new Date();
   const [requests, setRequests] = useState([]),
     [balance, setBalance] = useState(null),
     [drawer, setDrawer] = useState(false),
     [scope, setScope] = useState("mine"),
     [loading, setLoading] = useState(true),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [leaveReportMonth, setLeaveReportMonth] = useState(today.getMonth() + 1),
+    [leaveReportYear, setLeaveReportYear] = useState(today.getFullYear());
   const scopes = useMemo(() => {
     const items = [{ value: "mine", label: "My leave" }];
     if (user?.role === "manager") items.push({ value: "team", label: "Team" });
@@ -1169,6 +1566,31 @@ export function LeavePage({ user, currentEmployeeId }) {
       throw e;
     }
   }
+  const monthlyLeaveReport = useMemo(() => {
+    let fullDayCount = 0;
+    let halfDayCount = 0;
+    requests.forEach((req) => {
+      if (req.status !== "approved") return;
+      const startDate = req.startDate ? new Date(req.startDate) : null;
+      const endDate = req.endDate ? new Date(req.endDate) : null;
+      if (!startDate || !endDate) return;
+      const inMonth = (
+        (startDate.getFullYear() === leaveReportYear && startDate.getMonth() + 1 === leaveReportMonth) ||
+        (endDate.getFullYear() === leaveReportYear && endDate.getMonth() + 1 === leaveReportMonth) ||
+        (startDate <= new Date(leaveReportYear, leaveReportMonth - 1, 1) && endDate >= new Date(leaveReportYear, leaveReportMonth, 0))
+      );
+      if (!inMonth) return;
+      const dayType = req.dayType || "full_day";
+      if (dayType === "half_day") {
+        halfDayCount += 1;
+      } else {
+        const days = Number(req.workingDays) || Number(req.days) || 1;
+        if (days >= 1) fullDayCount += Math.round(days);
+      }
+    });
+    const totalLeaveDaysConsumed = fullDayCount + halfDayCount * 0.5;
+    return { fullDayCount, halfDayCount, totalLeaveDaysConsumed };
+  }, [requests, leaveReportMonth, leaveReportYear]);
   const paidPct = balance && balance.paidEntitled > 0 ? Math.min(100, Math.round((balance.paidUsed / balance.paidEntitled) * 100)) : 0;
   const probationConfirmed = Boolean(balance?.probation?.confirmationStatus === "confirmed");
   return (
@@ -1233,6 +1655,68 @@ export function LeavePage({ user, currentEmployeeId }) {
           {balance?.manager && <small>{balance.manager.employeeCode}</small>}
         </div>
       </div>
+
+      <section className="content-card monthly-leave-report-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Monthly leave report</p>
+            <h2>
+              Monthly leave report —{" "}
+              {new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(
+                new Date(leaveReportYear, leaveReportMonth - 1),
+              )}
+            </h2>
+          </div>
+          <div className="month-control leave-report-month-control">
+            <button
+              type="button"
+              onClick={() => {
+                if (leaveReportMonth === 1) {
+                  setLeaveReportMonth(12);
+                  setLeaveReportYear((y) => y - 1);
+                } else {
+                  setLeaveReportMonth((m) => m - 1);
+                }
+              }}
+            >
+              ‹
+            </button>
+            <span>
+              {new Intl.DateTimeFormat("en", { month: "short" }).format(
+                new Date(leaveReportYear, leaveReportMonth - 1),
+              )}{" "}
+              {leaveReportYear}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (leaveReportMonth === 12) {
+                  setLeaveReportMonth(1);
+                  setLeaveReportYear((y) => y + 1);
+                } else {
+                  setLeaveReportMonth((m) => m + 1);
+                }
+              }}
+            >
+              ›
+            </button>
+          </div>
+        </div>
+        <div className="monthly-leave-kpi-strip">
+          <article>
+            <span>Full-day leaves</span>
+            <strong>{monthlyLeaveReport.fullDayCount} <small>day{monthlyLeaveReport.fullDayCount === 1 ? "" : "s"}</small></strong>
+          </article>
+          <article>
+            <span>Half-day leaves</span>
+            <strong>{monthlyLeaveReport.halfDayCount} <small>instance{monthlyLeaveReport.halfDayCount === 1 ? "" : "s"}</small></strong>
+          </article>
+          <article>
+            <span>Total leave days consumed</span>
+            <strong>{monthlyLeaveReport.totalLeaveDaysConsumed} <small>day{monthlyLeaveReport.totalLeaveDaysConsumed === 1 ? "" : "s"}</small></strong>
+          </article>
+        </div>
+      </section>
 
       <section className="content-card">
         <div className="section-heading">
@@ -2473,7 +2957,14 @@ export function ReportsPage() {
       <section className="mis-summary">
         {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Full days',data.summary.fullDays,'complete'],['Half days',data.summary.halfDays,'equal'],['Incomplete half days',data.summary.incompleteHalfDays,'less'],['Total working hours',hours(data.summary.totalMinutes),'hours'],['Leave before 8:30',data.summary.lessThanTarget,'less'],['Leave on 8:30',data.summary.equalToTarget,'equal'],['Leave after 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
       </section>
-      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>Targets: <strong>Full day 8h 30m</strong> · <strong>Half day 4h 30m</strong></p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th className="mis-group-heading" colSpan="3">Completed Days</th><th rowSpan="2">Working hours</th><th rowSpan="2">Leave before 8:30</th><th rowSpan="2">Leave on 8:30</th><th rowSpan="2">Leave after 8:30</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th><th>Full day</th><th>Half day</th><th>Incomplete half</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.fullDays}</td><td>{row.halfDays}</td><td><b className="mis-count less">{row.incompleteHalfDays}</b></td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
+      <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>{(() => {
+        const policy = (data.summary?.meta?.policy) || (data.meta?.policy) || null;
+        const fullMins = Number(policy?.fullDayWorkingMinutes) || 510;
+        const halfMins = Number(policy?.halfDayWorkingMinutes) || 255;
+        const fullH = Math.floor(fullMins / 60), fullM = fullMins % 60;
+        const halfH = Math.floor(halfMins / 60), halfM_f = halfMins % 60;
+        return <>Targets: <strong>Full day {fullH}h {String(fullM).padStart(2, "0")}m</strong> · <strong>Half day {halfH}h {String(halfM_f).padStart(2, "0")}m</strong></>;
+      })()}</p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th className="mis-group-heading" colSpan="3">Completed Days</th><th rowSpan="2">Working hours</th><th rowSpan="2">Leave before 8:30</th><th rowSpan="2">Leave on 8:30</th><th rowSpan="2">Leave after 8:30</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th><th>Full day</th><th>Half day</th><th>Incomplete half</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.fullDays}</td><td>{row.halfDays}</td><td><b className="mis-count less">{row.incompleteHalfDays}</b></td><td><strong>{hours(row.totalMinutes)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
     </>}
   </div>;
 }

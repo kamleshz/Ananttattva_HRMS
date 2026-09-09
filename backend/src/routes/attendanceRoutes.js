@@ -18,11 +18,17 @@ import { User } from '../models/User.js'
 import { OfficeLocation, OrganizationProfile } from '../models/Organization.js'
 import { WorkArrangementRequest } from '../models/WorkArrangementRequest.js'
 import { FaceAttendanceRequest } from '../models/FaceAttendanceRequest.js'
-import { sendFaceCheckInApprovalRequest, sendFaceCheckInDecision } from '../services/mailService.js'
+import { sendFaceCheckInApprovalRequest, sendFaceCheckInDecision, sendGraphEmail } from '../services/mailService.js'
 import manualAttendanceRoutes from './manualAttendanceRoutes.js'
 import { BiometricVerificationUse } from '../models/BiometricVerificationUse.js'
 import { Employee } from '../models/Employee.js'
 import { buildAttendanceRoster } from '../services/attendanceRosterService.js'
+import { ScheduledEmail } from '../models/ScheduledEmail.js'
+import { LeaveRequest } from '../models/LeaveRequest.js'
+import { getAttendancePolicy } from '../services/attendancePolicyService.js'
+import { getApprovedLeavesByDate, getDailyAttendancePlan, getOrganizationHolidayKeys } from '../services/attendanceCalculationService.js'
+import { isScheduledWorkingDay } from '../services/workingDayService.js'
+import { proratedAnnualPaidLeaves, countPaidLeaveDaysForEmployee, computeLeaveDays, financialYearRange } from '../services/leavePolicyService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -41,6 +47,138 @@ const faceRequestSchema = z.object({
   mismatchToken: z.string().min(20),
   reason: z.string().trim().min(10, 'Please explain why manual approval is required').max(1000),
 })
+
+function pad2(n){return String(n).padStart(2,'0')}
+function fmtDDMMYYYY(date){return `${pad2(date.getDate())}/${pad2(date.getMonth()+1)}/${date.getFullYear()}`}
+function fmtHHMM(date){return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`}
+function parseHHMMToMinutes(str){const [h,m]=String(str||'00:00').split(':').map(Number);return (Number.isFinite(h)?h:0)*60+(Number.isFinite(m)?m:0)}
+function dateMinutes(date){return date.getHours()*60+date.getMinutes()}
+function weekBounds(now){const today=startOfLocalDay(now),weekday=new Date(today.getTime()+330*60_000).getUTCDay(),offset=weekday===0?6:weekday-1;return{start:new Date(today.getTime()-offset*86_400_000),end:new Date(today.getTime()+(7-offset)*86_400_000)}}
+function organizationDateKey(date){const d=new Date(date.getTime()+330*60_000);return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth()+1)}-${pad2(d.getUTCDate())}`}
+
+function validateRequestedCheckoutTime({requestedCheckoutTime,attendance,shiftEnd}){
+  if(!(requestedCheckoutTime>attendance.checkIn.time)){
+    return {code:'CHECKOUT_BEFORE_CHECKIN',message:'Requested checkout time must be after check-in'}
+  }
+  const maxEnd=new Date(attendance.date);maxEnd.setDate(maxEnd.getDate()+2);maxEnd.setHours(23,59,59,999)
+  if(!(requestedCheckoutTime<maxEnd)){
+    return {code:'CHECKOUT_OUTSIDE_RANGE',message:'Checkout too far from attendance date, max 2 days after check-in date'}
+  }
+  const shiftMinutes=parseHHMMToMinutes(shiftEnd||'18:30')
+  const checkoutMinutes=dateMinutes(requestedCheckoutTime)
+  if(Math.abs(checkoutMinutes-shiftMinutes)>240){
+    return {code:'CHECKOUT_OUTSIDE_RANGE',message:'Checkout must be within 4 hours of configured shift end'}
+  }
+  return null
+}
+
+async function invalidateWeeklyAuditKeysForDate(attendance){
+  const {start,end}=weekBounds(attendance.date)
+  const periodStartKey=organizationDateKey(start)
+  const periodEndKey=organizationDateKey(new Date(end.getTime()-1))
+  const keyPrefix=`weekly-hours-shortfall:${periodStartKey}:${periodEndKey}:`
+  try{
+    await ScheduledEmail.updateMany({key:{$regex:`^${keyPrefix.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}`},type:'weekly_hours_shortfall'},{$set:{status:'processing',lastError:'Invalidated by attendance correction',sentAt:null}})
+  }catch(error){
+    console.error('invalidateWeeklyAuditKeysForDate failed:',error?.message||error)
+  }
+}
+
+async function finalizeMissingCheckoutAsLeaveInline({attendance,reason,reviewerId}){
+  const policy=await getAttendancePolicy()
+  const employee=await Employee.findById(attendance.employee).lean()
+  if(!employee)throw new HttpError(500,'Employee record not found for leave conversion')
+  const employeeId=employee._id
+  const {workingDays}=await computeLeaveDays({startDate:attendance.date,endDate:attendance.date})
+  const {fyStart,fyEnd,fyLabel,annualPaidLeaves,cycleStartMonth,eligibleMonths,entitledPaidLeaves,canApplyPaidLeave}=proratedAnnualPaidLeaves({employee,asOf:attendance.date})
+  let paymentsMode='unpaid',paidDays=0,unpaidDays=1,balanceBefore=0,balanceAfter=0
+  if(policy.autoDeductPaidLeaveOnMissingCheckout&&canApplyPaidLeave){
+    const usedPaidDays=await countPaidLeaveDaysForEmployee({employeeId,leaveRequestModel:LeaveRequest,leaveTypeKey:'paid_leave'})
+    balanceBefore=Math.max(0,entitledPaidLeaves-usedPaidDays)
+    if(balanceBefore>=1){
+      paymentsMode='paid';paidDays=1;unpaidDays=0;balanceAfter=balanceBefore-1
+    }
+  }
+  const leaveType=paymentsMode==='paid'?'paid_leave':'unpaid_leave'
+  const workflowRequiredSteps=paymentsMode==='paid'?['manager','hr_admin']:['hr_admin']
+  const workflowSteps=workflowRequiredSteps.map(role=>({role,status:'approved',actor:reviewerId,actedAt:new Date(),comment:reason||''}))
+  const workflow={requiredSteps:workflowRequiredSteps,currentStepIndex:workflowRequiredSteps.length,steps:workflowSteps,nextRole:null}
+  const leaveRequest=await LeaveRequest.create({
+    employee:employeeId,
+    reportingManager:employee.manager||null,
+    leaveType,
+    dayType:'full_day',
+    startDate:attendance.date,
+    endDate:attendance.date,
+    days:1,
+    workingDays:Math.max(1,workingDays),
+    reason:reason||'Missing checkout auto conversion',
+    status:'approved',
+    reviewedBy:reviewerId||null,
+    reviewedAt:new Date(),
+    reviewNote:reason||'',
+    policySnapshot:{annualPaidLeaves,cycleStartMonth,entitledPaidLeaves,eligibleMonths,canApplyPaidLeave,longLeave:{isLongLeave:false,noticeDaysRequired:0,calendarNoticeDays:0,meetsAdvanceNotice:true}},
+    payments:{mode:paymentsMode,paidDays,unpaidDays,balanceBefore,balanceAfter},
+    workflow,
+    fyLabel,
+    conversionReason:reason||'',
+    systemGenerated:true,
+  })
+  const workingMinutesBefore=Number(attendance.workingMinutes)||0
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  attendance.missingCheckout.justificationStatus='expired'
+  attendance.missingCheckout.reviewAction='expired'
+  attendance.missingCheckout.finalizedAt=new Date()
+  attendance.missingCheckout.conversionReason=reason||''
+  attendance.missingCheckout.leaveRequestId=leaveRequest._id
+  attendance.missingCheckout.workingMinutesBefore=workingMinutesBefore
+  attendance.missingCheckout.workingMinutesRestored=0
+  attendance.status=paymentsMode==='paid'?'on_leave':'absent'
+  attendance.exceptionStatus=`Missing Checkout – ${paymentsMode==='paid'?'Paid Leave Deducted':'Marked Absent'}`
+  attendance.workingMinutes=0
+  attendance.completionStatus='exception_pending'
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({timestamp:new Date(),status:'leave_converted',message:`${reason}. Leave: ${paymentsMode}`,actor:`system:${reviewerId||'auto'}`})
+  await attendance.save()
+  return leaveRequest
+}
+
+async function sendCorrectionDecisionNotification({employeeId,correctionId,attendance,approved,reviewNote,reviewerName}){
+  const employeeUser=await User.findOne({employee:employeeId,isActive:true}).select('_id email firstName lastName').lean()
+  if(!employeeUser)return
+  const dedupeKey=`attendance-correction-decision:${employeeId}:${correctionId}`
+  const type=approved?'Attendance Correction Approved':'Attendance Correction Rejected'
+  const title=approved?'Checkout correction approved':'Checkout correction rejected'
+  const dateLabel=fmtDDMMYYYY(attendance.date)
+  let message
+  if(approved){
+    const actualMinutes=Math.max(0,Math.floor(((attendance.checkOut?.time||new Date())-attendance.checkIn.time)/60000))
+    message=reviewNote||`Your checkout correction for ${dateLabel} was approved. Working minutes restored: ${actualMinutes} min.`
+  }else{
+    message=reviewNote||`Your checkout correction for ${dateLabel} was rejected and converted to leave.`
+  }
+  await Notification.create({recipient:employeeUser._id,type,title,message,employee:employeeId})
+  if(employeeUser.email){
+    let claim
+    try{claim=await ScheduledEmail.create({key:dedupeKey,type:'attendance_miss',period:dateLabel,recipient:employeeUser._id,email:employeeUser.email,attempts:1})}catch(error){if(error?.code!==11000)throw error;claim=null}
+    if(claim){
+      const subject=approved?'Checkout correction approved':'Checkout correction rejected'
+      const intro=approved
+        ?`Hi ${employeeUser.firstName}, your checkout time correction request for ${dateLabel} has been approved by ${reviewerName||'HR'}.`
+        :`Hi ${employeeUser.firstName}, your checkout time correction request for ${dateLabel} has been rejected by ${reviewerName||'HR'}.`
+      const contentBlock=reviewNote?`<div style="margin-top:8px;padding:14px 16px;border-left:4px solid ${approved?'#087e70':'#a04a59'};border-radius:8px;background:${approved?'#f2faf7':'#fbf4f5'};color:${approved?'#0e514a':'#6e2b36'};font-size:12px;line-height:1.65"><strong>Review note:</strong><br>${String(reviewNote).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}</div>`:''
+      const html=`<div style="font-family:Arial,sans-serif;color:#17213a;line-height:1.7"><h2 style="color:${approved?'#087e70':'#a04a59'}">${subject}</h2><p>${intro}</p>${contentBlock}<p>Review your attendance record in AT Connect for details.</p></div>`
+      try{
+        await sendGraphEmail({recipient:employeeUser.email,subject,html})
+        claim.status='sent';claim.sentAt=new Date();await claim.save()
+      }catch(error){
+        claim.status='failed';claim.lastError=String(error?.message||error).slice(0,500);await claim.save()
+        console.error('Correction decision email failed:',error?.message||error)
+      }
+    }
+  }
+}
+
 function distanceMeters(from,to){
   const radians=value=>value*Math.PI/180
   const earthRadius=6371000
@@ -201,23 +339,28 @@ router.get('/today', asyncHandler(async (req, res) => {
     autoCheckout:record?.autoCheckout||null,
     attendanceId:record?._id||null,
     attendanceMode:record?.attendanceMode||null,
+    exceptionStatus:record?.exceptionStatus||'',
+    missingCheckout:record?.missingCheckout||null,
   }})
 }))
 router.get('/all', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res)=>{
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100),complete:z.enum(['true','false']).default('false')}).parse(req.query)
   const {start,end}=organizationMonthBoundsFor(input.year,input.month)
-  const records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:-1,employee:1})
+  const [records, meta] = await Promise.all([
+    Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:-1,employee:1}),
+    buildMetaPolicyEnvelope(),
+  ])
   const canViewCompleteRoster=['super_admin','admin','hr_admin'].includes(req.user.role)
-  if(input.complete!=='true'||!canViewCompleteRoster)return res.json({success:true,data:records})
+  if(input.complete!=='true'||!canViewCompleteRoster)return res.json({success:true,meta,data:records})
   const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
   const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
   const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({firstName:1,lastName:1}).lean()
-  res.json({success:true,data:buildAttendanceRoster({employees,records,start,end:rosterEnd})})
+  res.json({success:true,meta,data:buildAttendanceRoster({employees,records,start,end:rosterEnd})})
 }))
 router.get('/corrections', asyncHandler(async (req,res)=>{
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=elevated&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
-  const requests=await AttendanceCorrectionRequest.find(filter).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes').sort({createdAt:-1}).limit(100)
+  const requests=await AttendanceCorrectionRequest.find(filter).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
 }))
 router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res) => {
@@ -231,82 +374,322 @@ router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin'
     records=buildAttendanceRoster({employees,records,start,end:rosterEnd}).sort((left,right)=>new Date(left.date)-new Date(right.date)||`${left.employee?.firstName||''} ${left.employee?.lastName||''}`.localeCompare(`${right.employee?.firstName||''} ${right.employee?.lastName||''}`))
   }
   const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'}).format(start)
-  const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Location','Location Verified','Face Match %','Liveness %']
+  const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Original Target (min)','Adjusted Target (min)','Full-day Leave','Half-day Leave','Location','Location Verified','Face Match %','Liveness %']
   const emptyRow=Array(headers.length).fill(null)
   const theme=ATTENDANCE_REPORT_THEME
   const sheetData=[
     [{value:`AT Connect – Attendance Report – ${reportMonth}`,columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...emptyRow.slice(1)],
     [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date())} · ${records.length} records · Times shown in IST`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...emptyRow.slice(1)],
-    reportSectionRow([{label:'EMPLOYEE DETAILS',span:4},{label:'ATTENDANCE & WORK HOURS',span:8},{label:'EXCEPTIONS & VERIFICATION',span:5}],theme),
-    reportHeaderRow(headers,[4,8,5],theme),
+    reportSectionRow([{label:'EMPLOYEE DETAILS',span:4},{label:'ATTENDANCE & WORK HOURS',span:10},{label:'LEAVE & ADJUSTMENTS',span:4},{label:'VERIFICATION',span:3}],theme),
+    reportHeaderRow(headers,[4,10,4,3],theme),
   ]
+  const policy = await getAttendancePolicy()
+  const FULL_DAY_MINUTES = policy.fullDayWorkingMinutes
+  const dateKeyStart = organizationDateKey(start)
+  const yearNum = Number(dateKeyStart.slice(0,4))
+  const holidayMap = await getOrganizationHolidayKeys([yearNum, yearNum])
+  const holidaysSet = holidayMap.get(yearNum) || new Set()
+  const employeeIds = [...new Set(records.map(r => String(r.employee?._id || r.employee)).filter(Boolean))]
+  const allLeavesByEmployee = new Map()
+  for (const empId of employeeIds) {
+    try {
+      const leavesMap = await getApprovedLeavesByDate(empId, start, new Date(end.getTime() - 1))
+      allLeavesByEmployee.set(empId, leavesMap)
+    } catch (_) {
+      allLeavesByEmployee.set(empId, new Map())
+    }
+  }
   records.forEach((record,index)=>{
     const employee=record.employee||{}
     const cell=(value,extra={})=>reportCell(value,index,theme,extra)
     const statusLabel=String(record.status||'').replaceAll('_',' ')
     const modeLabel=String(record.attendanceMode||'').replaceAll('_',' ')
+    const dateKey = organizationDateKey(record.date)
+    const isWorkingDay = isScheduledWorkingDay(record.date, holidaysSet)
+    const originalTarget = isWorkingDay ? FULL_DAY_MINUTES : 0
+    const adjustedTarget = Number(record.expectedWorkingMinutes != null ? record.expectedWorkingMinutes : originalTarget)
+    const empIdKey = String(employee._id || record.employee)
+    const leavesForDate = allLeavesByEmployee.get(empIdKey)?.get(dateKey) || { fullDayLeaves: [], halfDayLeaves: [] }
+    const fullDayLeave = Array.isArray(leavesForDate.fullDayLeaves) && leavesForDate.fullDayLeaves.length > 0 ? 'Yes' : 'No'
+    const halfDayLeave = fullDayLeave === 'Yes' ? 'No' : (Array.isArray(leavesForDate.halfDayLeaves) && leavesForDate.halfDayLeaves.length > 0 ? 'Yes' : 'No')
     sheetData.push([
       cell(employee.employeeCode||'',{fontWeight:'bold',textColor:theme.accent}),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim(),{fontWeight:'bold'}),cell(employee.department||''),cell(employee.designation||''),cell(organizationExcelDate(record.date),{type:Date,format:'dd-mmm-yyyy',align:'center'}),
       cell(new Intl.DateTimeFormat('en-IN',{weekday:'long',timeZone:'Asia/Kolkata'}).format(record.date),{align:'center'}),cell(modeLabel,{backgroundColor:'#E8F1FA',textColor:'#315F91',fontWeight:'bold',align:'center'}),cell(statusLabel,statusCellStyle(record.status)),
       record.checkIn?.time?cell(organizationExcelDate(record.checkIn.time),{type:Date,format:'hh:mm AM/PM',align:'center',fontWeight:'bold'}):cell('',{align:'center'}),record.checkOut?.time?cell(organizationExcelDate(record.checkOut.time),{type:Date,format:'hh:mm AM/PM',align:'center'}):cell('',{align:'center'}),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00',align:'right',fontWeight:'bold'}),cell(record.lateMinutes||0,{type:Number,align:'right',...(record.lateMinutes?{backgroundColor:'#FFF0CC',textColor:'#865D13',fontWeight:'bold'}:{})}),cell(record.halfDayReason||''),
+      cell(originalTarget,{type:Number,align:'right'}),cell(adjustedTarget,{type:Number,align:'right'}),cell(fullDayLeave,{align:'center',...(fullDayLeave==='Yes'?{backgroundColor:'#E8F5E9',textColor:'#2E7D32',fontWeight:'bold'}:{})}),cell(halfDayLeave,{align:'center',...(halfDayLeave==='Yes'?{backgroundColor:'#FFF3E0',textColor:'#E65100',fontWeight:'bold'}:{})}),
       cell(record.checkIn?.address||''),cell(record.locationVerified?'Yes':'No',{...(statusCellStyle(record.locationVerified?'verified':'rejected')),align:'center'}),record.biometricVerification?.faceMatchScore==null?cell('',{align:'right'}):cell(record.biometricVerification.faceMatchScore,{type:Number,format:'0.0%',align:'right'}),record.biometricVerification?.livenessScore==null?cell('',{align:'right'}):cell(record.biometricVerification.livenessScore,{type:Number,format:'0.0%',align:'right'}),
     ])
   })
-  const columns=[14,22,18,20,14,13,18,16,14,14,15,13,24,30,18,15,15].map(width=>({width}))
-  const buffer=await writeXlsxFile(sheetData,{sheet:'Attendance Report',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.85},{fontFamily:'Calibri',fontSize:10}).toBuffer()
+  const columns=[14,22,18,20,14,13,18,16,14,14,15,13,24,16,16,14,14,30,18,15,15].map(width=>({width}))
+  const buffer=await writeXlsxFile(sheetData,{sheet:'Attendance Report',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.82},{fontFamily:'Calibri',fontSize:10}).toBuffer()
   const fileName=`AT_Connect_Attendance_${input.year}_${String(input.month).padStart(2,'0')}.xlsx`
   res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition',`attachment; filename="${fileName}"`)
   res.send(Buffer.from(buffer))
 }))
+
 router.post('/:id/correction', asyncHandler(async (req,res)=>{
   if(!req.user.employee)throw new HttpError(409,'No employee profile is linked to this account')
   const input=z.object({requestedCheckoutTime:z.coerce.date(),reason:z.string().trim().min(10,'Please provide a detailed correction reason').max(1000)}).parse(req.body)
   const attendance=await Attendance.findById(req.params.id)
   if(!attendance)throw new HttpError(404,'Attendance record not found')
   if(String(attendance.employee)!==String(req.user.employee._id))throw new HttpError(403,'You cannot correct this attendance record')
-  if(attendance.status!=='missing_checkout'||attendance.checkOut?.source!=='system_auto')throw new HttpError(409,'Only system auto-checkout records can be corrected')
-  const nextDay=new Date(attendance.date);nextDay.setDate(nextDay.getDate()+1)
-  if(input.requestedCheckoutTime<attendance.checkIn.time||input.requestedCheckoutTime>=nextDay)throw new HttpError(422,'Corrected checkout must be after check-in and before midnight on the attendance date')
+  const missingCheckout=attendance.missingCheckout||{}
+  if((!missingCheckout.justificationStatus||missingCheckout.justificationStatus==='none')&&!attendance.missedCheckOut){
+    throw new HttpError(409,'Attendance not missing checkout')
+  }
+  if(attendance.status!=='missing_checkout'||attendance.checkOut?.source!=='system_auto'){
+    throw new HttpError(409,'Only system auto-checkout records can be corrected')
+  }
+  const now=new Date()
+  const deadline=missingCheckout.deadline
+  if(!deadline||now>=deadline){
+    throw new HttpError(422,{code:'DEADLINE_EXPIRED',message:`Justification deadline passed on ${deadline?fmtDDMMYYYY(deadline):'unknown'}`,deadline})
+  }
+  const employeeFull=await Employee.findById(attendance.employee).select('shift').lean()
+  const shiftEnd=employeeFull?.shift?.endTime||'18:30'
+  const timeError=validateRequestedCheckoutTime({requestedCheckoutTime:input.requestedCheckoutTime,attendance,shiftEnd})
+  if(timeError)throw new HttpError(422,timeError)
   if(await AttendanceCorrectionRequest.exists({attendance:attendance._id,status:'pending'}))throw new HttpError(409,'A correction request is already pending for this record')
-  const request=await AttendanceCorrectionRequest.create({attendance:attendance._id,employee:req.user.employee._id,requestedCheckoutTime:input.requestedCheckoutTime,reason:input.reason})
+  const request=await AttendanceCorrectionRequest.create({
+    attendance:attendance._id,
+    employee:req.user.employee._id,
+    requestedCheckoutTime:input.requestedCheckoutTime,
+    reason:input.reason,
+    deadline,
+    kind:'missing_checkout',
+    submittedWithinDeadline:true,
+    isHrOverride:false,
+    overrideBy:null,
+  })
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  attendance.missingCheckout.justificationStatus='submitted'
+  attendance.missingCheckout.justificationRequestId=request._id
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({
+    timestamp:new Date(),
+    status:'submitted',
+    message:`Justification submitted: requested ${fmtHHMM(input.requestedCheckoutTime)} - ${input.reason.substring(0,60)}`,
+    actor:'employee',
+  })
+  await attendance.save()
   const reviewers=await User.find({role:{$in:['hr_admin','admin','super_admin']},isActive:true}).select('_id')
   if(reviewers.length)await Notification.insertMany(reviewers.map(reviewer=>({recipient:reviewer._id,type:'Attendance Correction',title:'Attendance correction requested',message:`${req.user.firstName} ${req.user.lastName} requested a corrected checkout time.`,employee:req.user.employee._id})))
   res.status(201).json({success:true,data:request})
 }))
-router.patch('/corrections/:id/:decision', authorize('super_admin','hr_admin'), asyncHandler(async (req,res)=>{
-  if(!['approve','reject'].includes(req.params.decision))throw new HttpError(400,'Invalid correction decision')
+
+router.post('/:id/correction/override', authorize('hr_admin','admin','super_admin'), asyncHandler(async (req,res)=>{
+  if(!['hr_admin','admin','super_admin'].includes(req.user.role))throw new HttpError(403,'Only HR or Admin can override deadline')
+  const input=z.object({requestedCheckoutTime:z.coerce.date(),reason:z.string().trim().min(10,'Please provide a detailed correction reason').max(1000),employeeId:z.string().optional()}).parse(req.body)
+  const attendance=await Attendance.findById(req.params.id)
+  if(!attendance)throw new HttpError(404,'Attendance record not found')
+  if(attendance.status!=='missing_checkout'||attendance.checkOut?.source!=='system_auto'){
+    throw new HttpError(409,'Only system auto-checkout records can be corrected')
+  }
+  const missingCheckout=attendance.missingCheckout||{}
+  const employeeId=input.employeeId||String(attendance.employee)
+  const employeeFull=await Employee.findById(attendance.employee).select('shift').lean()
+  const shiftEnd=employeeFull?.shift?.endTime||'18:30'
+  const timeError=validateRequestedCheckoutTime({requestedCheckoutTime:input.requestedCheckoutTime,attendance,shiftEnd})
+  if(timeError)throw new HttpError(422,timeError)
+  if(await AttendanceCorrectionRequest.exists({attendance:attendance._id,status:'pending'}))throw new HttpError(409,'A correction request is already pending for this record')
+  const now=new Date()
+  const deadline=missingCheckout.deadline
+  const submittedWithinDeadline=Boolean(deadline&&now<deadline)
+  const request=await AttendanceCorrectionRequest.create({
+    attendance:attendance._id,
+    employee:employeeId,
+    requestedCheckoutTime:input.requestedCheckoutTime,
+    reason:input.reason,
+    deadline,
+    kind:'missing_checkout',
+    submittedWithinDeadline,
+    isHrOverride:true,
+    overrideBy:req.user._id,
+  })
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  if(!submittedWithinDeadline){
+    attendance.missingCheckout.justificationStatus='submitted'
+  }else{
+    attendance.missingCheckout.justificationStatus='submitted'
+  }
+  attendance.missingCheckout.justificationRequestId=request._id
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({
+    timestamp:new Date(),
+    status:'submitted',
+    message:`HR Override: justification submitted ${submittedWithinDeadline?'(within deadline)':'(DEADLINE OVERRIDE)'}: requested ${fmtHHMM(input.requestedCheckoutTime)} - ${input.reason.substring(0,60)}`,
+    actor:`hr_override:${req.user._id}`,
+  })
+  await attendance.save()
+  res.status(201).json({success:true,data:request})
+}))
+
+router.patch('/corrections/:id/approve', authorize('hr_admin','admin','super_admin'), asyncHandler(async (req,res)=>{
+  if(!['hr_admin','admin','super_admin'].includes(req.user.role))throw new HttpError(403,'Only HR or Admin can approve corrections')
   const input=z.object({reviewNote:z.string().trim().max(500).default('')}).parse(req.body)
-  if(req.params.decision==='reject'&&input.reviewNote.length<3)throw new HttpError(422,'A rejection reason is required')
   const request=await AttendanceCorrectionRequest.findById(req.params.id)
   if(!request||request.status!=='pending')throw new HttpError(409,'This correction request is no longer pending')
   const attendance=await Attendance.findById(request.attendance)
   if(!attendance)throw new HttpError(404,'Attendance record not found')
-  const approved=req.params.decision==='approve'
-  request.status=approved?'approved':'rejected';request.reviewedBy=req.user._id;request.reviewedAt=new Date();request.reviewNote=input.reviewNote
-  if(approved){
-    const previousCheckoutTime=attendance.checkOut?.time
-    attendance.checkOut.time=request.requestedCheckoutTime
-    attendance.checkOut.source='hr_correction'
-    attendance.checkOut.address='Checkout time approved through attendance correction'
-    attendance.workingMinutes=Math.max(0,Math.floor((request.requestedCheckoutTime-attendance.checkIn.time)/60000))
-    await applyAttendanceCompletion(attendance, attendance.employee)
-    attendance.missedCheckOut=false
-    attendance.status=attendance.autoCheckout?.previousStatus||'present'
-    attendance.checkoutType='HR_CORRECTION'
-    attendance.correctionAudit.push({previousCheckoutTime,correctedCheckoutTime:request.requestedCheckoutTime,reason:request.reason,approvedBy:req.user._id,approvedAt:new Date()})
-    await attendance.save()
+  if(!(request.requestedCheckoutTime>=attendance.checkIn.time)){
+    throw new HttpError(422,{code:'CHECKOUT_BEFORE_CHECKIN',message:'Requested checkout time must be after check-in'})
   }
+  const actualMinutes=Math.max(0,Math.floor((request.requestedCheckoutTime-attendance.checkIn.time)/60000))
+  attendance.workingMinutes=actualMinutes
+  const previousCheckoutTime=attendance.checkOut?.time
+  attendance.checkOut={
+    ...(attendance.checkOut?.toObject?attendance.checkOut.toObject():attendance.checkOut||{}),
+    time:request.requestedCheckoutTime,
+    source:'hr_correction',
+    device:'correction',
+    address:'Checkout time approved through attendance correction',
+  }
+  attendance.checkOut.source='hr_correction'
+  await applyAttendanceCompletion(attendance, attendance.employee)
+  attendance.missedCheckOut=false
+  attendance.status=attendance.autoCheckout?.previousStatus||(attendance.lateMinutes>0?'late':'present')
+  attendance.checkoutType='HR_CORRECTION'
+  attendance.exceptionStatus=''
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  attendance.missingCheckout.justificationStatus='approved'
+  attendance.missingCheckout.reviewerId=req.user._id
+  attendance.missingCheckout.reviewAction='approved'
+  attendance.missingCheckout.reviewNote=input.reviewNote||''
+  attendance.missingCheckout.workingMinutesRestored=actualMinutes
+  attendance.missingCheckout.finalizedAt=new Date()
+  attendance.missingCheckout.conversionReason=''
+  attendance.missingCheckout.leaveRequestId=null
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({
+    timestamp:new Date(),
+    status:'approved',
+    message:`Correction approved. Working minutes restored: ${actualMinutes}`,
+    actor:`hr:${req.user._id}`,
+  })
+  attendance.correctionAudit.push({
+    previousCheckoutTime,
+    correctedCheckoutTime:request.requestedCheckoutTime,
+    reason:request.reason,
+    approvedBy:req.user._id,
+    approvedAt:new Date(),
+  })
+  await attendance.save()
+  request.status='approved'
+  request.reviewedBy=req.user._id
+  request.reviewedAt=new Date()
+  request.reviewNote=input.reviewNote
   await request.save()
-  const employeeUser=await User.findOne({employee:request.employee,isActive:true}).select('_id')
-  if(employeeUser)await Notification.create({recipient:employeeUser._id,type:`Attendance Correction ${approved?'Approved':'Rejected'}`,title:`Attendance correction ${approved?'approved':'rejected'}`,message:input.reviewNote||'Your corrected checkout time was approved.',employee:request.employee})
-  const result=await AttendanceCorrectionRequest.findById(request._id).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes')
+  const reviewerName=`${req.user.firstName||''} ${req.user.lastName||''}`.trim()
+  await sendCorrectionDecisionNotification({employeeId:request.employee,correctionId:request._id,attendance,approved:true,reviewNote:input.reviewNote,reviewerName})
+  await invalidateWeeklyAuditKeysForDate(attendance)
+  const result=await AttendanceCorrectionRequest.findById(request._id).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout')
   res.json({success:true,data:result})
 }))
+
+router.patch('/corrections/:id/reject', authorize('hr_admin','admin','super_admin'), asyncHandler(async (req,res)=>{
+  if(!['hr_admin','admin','super_admin'].includes(req.user.role))throw new HttpError(403,'Only HR or Admin can reject corrections')
+  const input=z.object({reviewNote:z.string().trim().min(3,'A rejection reason is required').max(500)}).parse(req.body)
+  const request=await AttendanceCorrectionRequest.findById(req.params.id)
+  if(!request||request.status!=='pending')throw new HttpError(409,'This correction request is no longer pending')
+  const attendance=await Attendance.findById(request.attendance)
+  if(!attendance)throw new HttpError(404,'Attendance record not found')
+  request.status='rejected'
+  request.reviewedBy=req.user._id
+  request.reviewedAt=new Date()
+  request.reviewNote=input.reviewNote
+  await request.save()
+  await finalizeMissingCheckoutAsLeaveInline({attendance,reason:'Justification rejected',reviewerId:req.user._id})
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  attendance.missingCheckout.reviewAction='rejected'
+  attendance.missingCheckout.reviewerId=req.user._id
+  attendance.missingCheckout.reviewNote=input.reviewNote
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({
+    timestamp:new Date(),
+    status:'rejected',
+    message:`Correction rejected by HR. ${input.reviewNote.substring(0,80)}`,
+    actor:`hr_reject:${req.user._id}`,
+  })
+  await attendance.save()
+  const reviewerName=`${req.user.firstName||''} ${req.user.lastName||''}`.trim()
+  await sendCorrectionDecisionNotification({employeeId:request.employee,correctionId:request._id,attendance,approved:false,reviewNote:input.reviewNote,reviewerName})
+  await invalidateWeeklyAuditKeysForDate(attendance)
+  const result=await AttendanceCorrectionRequest.findById(request._id).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout')
+  res.json({success:true,data:result})
+}))
+
+router.patch('/corrections/:id/reopen', authorize('hr_admin','admin','super_admin'), asyncHandler(async (req,res)=>{
+  if(!['hr_admin','admin','super_admin'].includes(req.user.role))throw new HttpError(403,'Only HR or Admin can reopen corrections')
+  const input=z.object({reopenReason:z.string().trim().max(500).default('Reopened by HR')}).parse(req.body)
+  const request=await AttendanceCorrectionRequest.findById(req.params.id)
+  if(!request)throw new HttpError(404,'Correction request not found')
+  if(!['approved','rejected'].includes(request.status))throw new HttpError(409,'Only approved or rejected corrections can be reopened')
+  const attendance=await Attendance.findById(request.attendance)
+  if(!attendance)throw new HttpError(404,'Attendance record not found')
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  const reviewAction=attendance.missingCheckout.reviewAction
+  if(!reviewAction||reviewAction==='none')throw new HttpError(409,'Correction has no review action to reopen')
+  attendance.missingCheckout.finalizedAt=undefined
+  attendance.missingCheckout.workingMinutesRestored=0
+  attendance.missingCheckout.reviewAction='none'
+  attendance.missingCheckout.reviewerId=null
+  if(attendance.missingCheckout.leaveRequestId){
+    if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+    attendance.missingCheckout.history.push({
+      timestamp:new Date(),
+      status:'reopen_warning',
+      message:'Note: A leave request was previously created and may need manual cancellation in the leave module.',
+      actor:`hr_reopen:${req.user._id}`,
+    })
+  }
+  if(request.status==='approved'){
+    attendance.missingCheckout.justificationStatus='submitted'
+  }else{
+    attendance.missingCheckout.justificationStatus='submitted'
+  }
+  attendance.exceptionStatus='Missing Checkout – Justification Reopened'
+  attendance.workingMinutes=0
+  attendance.completionStatus='exception_pending'
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({
+    timestamp:new Date(),
+    status:'reopened',
+    message:input.reopenReason||'Reopened by HR',
+    actor:`hr_reopen:${req.user._id}`,
+  })
+  await attendance.save()
+  request.status='pending'
+  request.reviewedBy=null
+  request.reviewedAt=null
+  request.reviewNote=''
+  await request.save()
+  await invalidateWeeklyAuditKeysForDate(attendance)
+  const result=await AttendanceCorrectionRequest.findById(request._id).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout')
+  res.json({success:true,data:result})
+}))
+
+async function buildMetaPolicyEnvelope() {
+  const policy = await getAttendancePolicy()
+  return {
+    policy: {
+      fullDayWorkingMinutes: policy.fullDayWorkingMinutes,
+      halfDayWorkingMinutes: policy.halfDayWorkingMinutes,
+      lateCutoffHour: policy.lateCutoff.hour,
+      lateCutoffMinute: policy.lateCutoff.minute,
+      missingCheckoutJustificationDays: policy.missingCheckoutJustificationDays,
+    },
+  }
+}
+
 router.get('/me', asyncHandler(async (req, res) => {
   const { month, year } = req.query
   const filter = { employee: req.user.employee._id }
   if (month && year) { const {start,end}=organizationMonthBoundsFor(Number(year),Number(month));filter.date={$gte:start,$lt:end} }
-  res.json({ success: true, data: await Attendance.find(filter).sort({ date: -1 }).limit(100) })
+  const [data, meta] = await Promise.all([
+    Attendance.find(filter).sort({ date: -1 }).limit(100),
+    buildMetaPolicyEnvelope(),
+  ])
+  res.json({ success: true, meta, data })
 }))
 export default router
