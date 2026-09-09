@@ -10,6 +10,7 @@ const allowanceClaimSchema = new mongoose.Schema({
   totalAmount: { type: Number, required: true, min: 0 },
   monthlyLimit: { type: Number, default: 2000, min: 0 },
   capAcceptableAmount: { type: Number, min: 0 },
+  capTravelAcceptableAmount: { type: Number, min: 0 },
   acceptableAmount: { type: Number, min: 0 },
   nonAcceptableAmount: { type: Number, default: 0, min: 0 },
   specialApproval: {

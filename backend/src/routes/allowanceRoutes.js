@@ -38,7 +38,7 @@ async function getMonthlyUsage(date,employeeId){
   const {start,end}=allowanceMonthRange(date)
   const [usage]=await AllowanceClaim.aggregate([
     {$match:{employee:employeeId,travelDate:{$gte:start,$lt:end},status:{$in:['pending','approved']}}},
-    {$group:{_id:null,total:{$sum:{$ifNull:['$capAcceptableAmount',{$ifNull:['$acceptableAmount','$totalAmount']}]}}}},
+    {$group:{_id:null,total:{$sum:{$ifNull:['$capTravelAcceptableAmount',{$min:['$travelAllowance',{$ifNull:['$capAcceptableAmount',{$ifNull:['$acceptableAmount','$totalAmount']}]}]}]}}}},
   ])
   return currency(usage?.total||0)
 }
@@ -50,7 +50,7 @@ router.get('/monthly-usage', asyncHandler(async (req,res) => {
 }))
 router.get('/export', authorize('super_admin','admin','hr_admin'), asyncHandler(async (_req,res) => {
   const claims=await AllowanceClaim.find({}).populate('employee','firstName lastName employeeCode department').sort({travelDate:-1,createdAt:-1}).lean()
-  const headers=['Employee ID','Employee Name','Department','Travel Date','Travel Location','Travel Allowance','Extra Allowance','Extra Details','Total','Acceptable','Not Acceptable','Claim Status','Special Approval']
+  const headers=['Employee ID','Employee Name','Department','Travel Date/ Extra Allowance Date','Travel Location','Travel Allowance','Extra Allowance','Extra Details','Total','Acceptable','Not Acceptable','Claim Status','Special Approval']
   const theme=ATTENDANCE_REPORT_THEME,empty=Array(headers.length).fill(null)
   const data=[[{value:'AT Connect – All Employee Allowances',columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...empty.slice(1)],[{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date())} · ${claims.length} records`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...empty.slice(1)],reportSectionRow([{label:'EMPLOYEE',span:3},{label:'CLAIM DETAILS',span:6},{label:'ALLOWANCE DECISION',span:4}],theme),reportHeaderRow(headers,[3,6,4],theme)]
   claims.forEach((claim,index)=>{const employee=claim.employee||{},cell=(value,extra={})=>reportCell(value,index,theme,extra);data.push([cell(employee.employeeCode||'',{fontWeight:'bold',textColor:theme.accent}),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim(),{fontWeight:'bold'}),cell(employee.department||''),cell(claim.travelDate,{type:Date,format:'dd-mmm-yyyy',align:'center'}),cell(claim.travelLocation),cell(claim.travelAllowance,{type:Number,format:'₹#,##0.00',align:'right'}),cell(claim.extraAllowance,{type:Number,format:'₹#,##0.00',align:'right'}),cell(claim.extraAllowanceReason||''),cell(claim.totalAmount,{type:Number,format:'₹#,##0.00',align:'right',fontWeight:'bold'}),cell(claim.acceptableAmount??claim.totalAmount,{type:Number,format:'₹#,##0.00',align:'right',backgroundColor:'#E2F3E8',textColor:'#25633F'}),cell(claim.nonAcceptableAmount||0,{type:Number,format:'₹#,##0.00',align:'right',...((claim.nonAcceptableAmount||0)>0?{backgroundColor:'#FBE1E5',textColor:'#96394B'}:{})}),cell(claim.status,statusCellStyle(claim.status)),cell(claim.specialApproval?.status||'not requested',statusCellStyle(claim.specialApproval?.status))])})
@@ -64,8 +64,8 @@ router.post('/', asyncHandler(async (req,res) => {
   if(new Date()>deadline)throw new HttpError(422,`The submission deadline for this allowance month was ${deadline.toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'long',year:'numeric'})}`)
   const totalAmount=currency(input.travelAllowance+input.extraAllowance)
   const monthlyUsed=await getMonthlyUsage(input.travelDate,req.user.employee._id)
-  const allocation=allocateMonthlyAllowance(monthlyUsed,totalAmount)
-  const claim=await AllowanceClaim.create({...input,totalAmount,...allocation,capAcceptableAmount:allocation.acceptableAmount,allowanceMonth:allowanceMonthKey(input.travelDate),employee:req.user.employee._id})
+  const allocation=allocateMonthlyAllowance(monthlyUsed,input.travelAllowance,input.extraAllowance)
+  const claim=await AllowanceClaim.create({...input,totalAmount,...allocation,capAcceptableAmount:allocation.acceptableAmount,capTravelAcceptableAmount:allocation.acceptableTravel,allowanceMonth:allowanceMonthKey(input.travelDate),employee:req.user.employee._id})
   const safeClaim=claim.toObject();delete safeClaim.proof.data
   res.status(201).json({success:true,data:safeClaim})
 }))

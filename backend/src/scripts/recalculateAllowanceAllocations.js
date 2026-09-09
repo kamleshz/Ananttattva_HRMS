@@ -11,15 +11,19 @@ let updated=0
 for(const claim of claims){
   const month=allowanceMonthKey(claim.travelDate)
   const key=`${claim.employee}:${month}`
-  const total=currency(claim.totalAmount)
+  const travel=currency(claim.travelAllowance)
+  const extra=currency(claim.extraAllowance||0)
+  const total=currency(travel+extra)
   if(claim.status==='rejected'){
     claim.capAcceptableAmount=0
+    claim.capTravelAcceptableAmount=0
     claim.acceptableAmount=0
     claim.nonAcceptableAmount=total
   }else{
     const used=usedByEmployeeMonth.get(key)||0
-    const allocation=allocateMonthlyAllowance(used,total)
+    const allocation=allocateMonthlyAllowance(used,travel,extra)
     claim.capAcceptableAmount=allocation.acceptableAmount
+    claim.capTravelAcceptableAmount=allocation.acceptableTravel
     let specialAmount=0
     if(['pending','approved'].includes(claim.specialApproval?.status)){
       specialAmount=currency(Math.min(claim.specialApproval.amount||0,allocation.nonAcceptableAmount))
@@ -29,7 +33,7 @@ for(const claim of claims){
     const speciallyApproved=claim.specialApproval?.status==='approved'?specialAmount:0
     claim.acceptableAmount=currency(allocation.acceptableAmount+speciallyApproved)
     claim.nonAcceptableAmount=currency(allocation.nonAcceptableAmount-speciallyApproved)
-    usedByEmployeeMonth.set(key,currency(used+allocation.acceptableAmount))
+    usedByEmployeeMonth.set(key,currency(used+(allocation.acceptableTravel||0)))
   }
   claim.monthlyLimit=2000
   claim.allowanceMonth=month
@@ -37,5 +41,5 @@ for(const claim of claims){
   updated++
 }
 
-console.log(JSON.stringify({updated,employeeMonths:usedByEmployeeMonth.size,policy:'per_employee_month'}))
+console.log(JSON.stringify({updated,employeeMonths:usedByEmployeeMonth.size,policy:'travel_only_cap'}))
 await mongoose.disconnect()

@@ -75,7 +75,7 @@ function buildSummaryPdf(claim, organization) {
     heading('Claim details')
     row('Claim ID', String(claim._id))
     row('Allowance month', claim.allowanceMonth)
-    row('Travel date', date(claim.travelDate))
+    row('Travel date/ Extra Allowance date', date(claim.travelDate))
     row('Travel location', claim.travelLocation)
     row('Travel allowance', money(claim.travelAllowance))
     row('Extra allowance', money(claim.extraAllowance))

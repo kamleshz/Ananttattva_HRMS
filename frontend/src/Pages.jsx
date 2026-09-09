@@ -2982,8 +2982,11 @@ export function AllowancesPage({ user }) {
     0,
   );
   const draftTotal = Number(form.travelAllowance || 0) + Number(form.extraAllowance || 0);
-  const draftAcceptable = Math.min(draftTotal, monthlyUsage.remaining);
-  const draftNonAcceptable = Math.max(0, draftTotal - draftAcceptable);
+  const travelAllowanceNum = Number(form.travelAllowance || 0);
+  const extraAllowanceNum = Number(form.extraAllowance || 0);
+  const acceptableTravel = Math.min(travelAllowanceNum, monthlyUsage.remaining);
+  const draftAcceptable = acceptableTravel + extraAllowanceNum;
+  const draftNonAcceptable = Math.max(0, travelAllowanceNum - acceptableTravel);
   const claimMonths = useMemo(() => [...new Set(claims.map((claim) => String(claim.travelDate || "").slice(0, 7)).filter(Boolean))].sort().reverse(), [claims]);
   const filteredClaims = useMemo(() => {
     const query = claimSearch.trim().toLowerCase();
@@ -3095,7 +3098,7 @@ export function AllowancesPage({ user }) {
               <thead>
                 <tr>
                   {canViewAll && <th>Employee</th>}
-                  <th>Travel date</th>
+                  <th>Travel date/ Extra Allowance date</th>
                   <th>Travel location</th>
                   <th>Travel</th>
                   <th>Extra</th>
@@ -3209,7 +3212,7 @@ export function AllowancesPage({ user }) {
             </div>
             <form onSubmit={submit}>
               <label>
-                1. Travel date *
+                1. Travel date/ Extra Allowance date *
                 <input
                   required
                   type="date"
@@ -3290,7 +3293,7 @@ export function AllowancesPage({ user }) {
                   </span>
                 </div>
               </label>
-              <div className="allowance-limit-note">Monthly acceptable allowance limit: <strong>₹2,000</strong>. Any excess is recorded as not acceptable.</div>
+              <div className="allowance-limit-note">Monthly acceptable <strong>travel allowance</strong> limit: <strong>₹2,000</strong>. Extra allowance has no limit. Any travel allowance excess is recorded as not acceptable.</div>
               <div className="claim-total-preview allowance-split-preview">
                 <div><span>Claim total</span><strong>₹{draftTotal.toLocaleString("en-IN")}</strong></div>
                 <div><span>Acceptable</span><strong className="acceptable-value">₹{draftAcceptable.toLocaleString("en-IN")}</strong></div>
@@ -3314,7 +3317,7 @@ export function AllowancesPage({ user }) {
       )}
       {selectedClaim && <div className="drawer-layer allowance-modal-layer"><button className="drawer-backdrop" onClick={() => setSelectedClaim(null)}/><section className="allowance-detail-modal" role="dialog" aria-modal="true" aria-labelledby="allowance-detail-title">
         <div className="drawer-heading"><div><p className="eyebrow">Employee allowance</p><h2 id="allowance-detail-title">{selectedClaim.employee ? `${selectedClaim.employee.firstName || ""} ${selectedClaim.employee.lastName || ""}`.trim() : "Allowance details"}</h2><small>{selectedClaim.employee?.employeeCode || "Employee claim"}</small></div><button onClick={() => setSelectedClaim(null)}><X size={20}/></button></div>
-        <div className="allowance-detail-grid"><div><span>Travel date</span><strong>{formatDate(selectedClaim.travelDate)}</strong></div><div><span>Location</span><strong>{selectedClaim.travelLocation}</strong></div><div><span>Travel allowance</span><strong>₹{selectedClaim.travelAllowance.toLocaleString("en-IN")}</strong></div><div><span>Extra allowance</span><strong>₹{selectedClaim.extraAllowance.toLocaleString("en-IN")}</strong></div><div><span>Total</span><strong>₹{selectedClaim.totalAmount.toLocaleString("en-IN")}</strong></div><div><span>Claim status</span><StatusBadge status={selectedClaim.status}/></div><div><span>Acceptable</span><strong className="acceptable-value">₹{(selectedClaim.acceptableAmount ?? selectedClaim.totalAmount).toLocaleString("en-IN")}</strong></div><div><span>Not acceptable</span><strong className="non-acceptable-value">₹{(selectedClaim.nonAcceptableAmount ?? 0).toLocaleString("en-IN")}</strong></div></div>
+        <div className="allowance-detail-grid"><div><span>Travel date/ Extra Allowance date</span><strong>{formatDate(selectedClaim.travelDate)}</strong></div><div><span>Location</span><strong>{selectedClaim.travelLocation}</strong></div><div><span>Travel allowance</span><strong>₹{selectedClaim.travelAllowance.toLocaleString("en-IN")}</strong></div><div><span>Extra allowance</span><strong>₹{selectedClaim.extraAllowance.toLocaleString("en-IN")}</strong></div><div><span>Total</span><strong>₹{selectedClaim.totalAmount.toLocaleString("en-IN")}</strong></div><div><span>Claim status</span><StatusBadge status={selectedClaim.status}/></div><div><span>Acceptable</span><strong className="acceptable-value">₹{(selectedClaim.acceptableAmount ?? selectedClaim.totalAmount).toLocaleString("en-IN")}</strong></div><div><span>Not acceptable</span><strong className="non-acceptable-value">₹{(selectedClaim.nonAcceptableAmount ?? 0).toLocaleString("en-IN")}</strong></div></div>
         <div className="allowance-detail-reason"><span>Extra allowance details</span><p>{selectedClaim.extraAllowanceReason || "No extra allowance details provided."}</p></div>{selectedClaim.specialApproval?.status && selectedClaim.specialApproval.status !== "not_requested" && <div className="allowance-detail-reason"><span>Special approval</span><p>{selectedClaim.specialApproval.explanation || "No explanation provided."}</p><StatusBadge status={selectedClaim.specialApproval.status}/></div>}
         <div className="allowance-modal-actions"><button className="secondary-button" onClick={() => viewProof(selectedClaim._id)}><FileText size={14}/> View proof</button><button className="primary-button" onClick={() => setSelectedClaim(null)}>Done</button></div>
       </section></div>}
