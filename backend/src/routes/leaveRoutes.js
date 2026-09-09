@@ -208,17 +208,21 @@ router.get('/', asyncHandler(async (req, res) => {
   const currentEmployee = await resolveEmployee(req)
   const elevated = ['super_admin', 'admin', 'hr_admin', 'it_admin', 'finance_admin'].includes(req.user.role)
   const currentEmployeeId = currentEmployee ? new mongoose.Types.ObjectId(currentEmployee._id.toString()) : null
-  const directReportsCount = currentEmployeeId ? await Employee.countDocuments({ manager: currentEmployeeId }) : 0
+  const directReportsCount = currentEmployeeId ? await Employee.countDocuments({ manager: currentEmployeeId, employeeStatus: { $in: ['active', 'notice_period'] } }) : 0
   const isReportingManager = currentEmployeeId && directReportsCount > 0
   let filter = {}
   const scope = req.query.scope || 'mine'
-  const canUseTeamScope = req.user.role === 'manager' || isReportingManager
+  // scope='team' is always permitted for any authenticated user: if the current
+  // employee does not actually manage anyone, the $or clauses below simply match
+  // zero rows (safe), and the meta.isReportingManager flag alerts the caller.
+  // This avoids missed rows when dashboard/user flags are stale (e.g. manager was
+  // just assigned & login session has cached user object without flag).
+  const canUseTeamScope = true
   if (elevated && scope === 'all') {
     filter = {}
-  } else if (canUseTeamScope && scope === 'team') {
-    if (!currentEmployee) return res.json({ success: true, data: [] })
+  } else if (canUseTeamScope && scope === 'team' && currentEmployee) {
     const managerId = currentEmployeeId
-    const directReports = await Employee.find({ manager: managerId }).distinct('_id')
+    const directReports = await Employee.find({ manager: managerId, employeeStatus: { $in: ['active', 'notice_period'] } }).distinct('_id')
     const directReportIds = (directReports || []).map(id => new mongoose.Types.ObjectId(id.toString()))
     const assignedAsReportingManager = { reportingManager: managerId }
     const assignedAsStepActor = { 'workflow.steps': { $elemMatch: { role: 'manager', expectedActorEmployee: managerId } } }
@@ -227,7 +231,7 @@ router.get('/', asyncHandler(async (req, res) => {
     if (directReportLeaves) orClauses.push(directReportLeaves)
     filter = { $or: orClauses }
   } else if (req.user.role === 'hr_admin' && scope === 'approvals') {
-    filter = { $or: [{ 'workflow.nextRole': 'hr_admin', status: 'pending' }, { employee: req.user.employee?._id && currentEmployee?._id }].filter(Boolean) }
+    filter = { $or: [{ 'workflow.nextRole': 'hr_admin', status: 'pending' }, currentEmployee ? { employee: currentEmployee._id } : null].filter(Boolean) }
   } else if (['super_admin', 'admin'].includes(req.user.role) && scope === 'approvals') {
     filter = { 'workflow.nextRole': 'super_admin', status: 'pending' }
   } else if (currentEmployee) {
@@ -360,6 +364,11 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     .populate('reportingManager', 'firstName lastName employeeCode')
   if (!request || request.status !== 'pending') throw new HttpError(409, 'This leave request is no longer pending')
   const currentEmployee = await resolveEmployee(req)
+  // HARD BLOCK: self-review is never allowed (Tushar cannot approve his own leave even if Employee.manager=Tushar by accident)
+  const selfRequest = Boolean(currentEmployee && String(request.employee?._id) === String(currentEmployee._id))
+  if (selfRequest && req.params.decision === 'approve') {
+    throw new HttpError(403, 'You cannot approve your own leave request. Please ask another manager or HR to review it.')
+  }
   // Identity-based guard: employees with role='employee' can still act on a leave
   // request as its assigned Manager reviewer (Employee.manager assignment or
   // workflow.steps[manager].expectedActorEmployee). The per-request canAct check

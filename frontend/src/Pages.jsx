@@ -1777,29 +1777,74 @@ export function LeavePage({ user, currentEmployeeId }) {
 
 export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) {
   const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
-  const dashboardFlag = Boolean(user?.isReportingManager);
-  const [reportingManager, setReportingManager] = useState(dashboardFlag ? true : null);
-  const effectiveIsManager = elevatedCanReview || reportingManager === true || dashboardFlag;
-  const baseScope = elevatedCanReview ? (user.role === "manager" ? "team" : "all") : "mine";
-  const effectiveScope = effectiveIsManager && !elevatedCanReview ? "team" : baseScope;
-  const canReview = elevatedCanReview || reportingManager === true || dashboardFlag;
+  const dashboardMgrFlag = Boolean(user?.isReportingManager);
+  const initialManagerState = elevatedCanReview || dashboardMgrFlag ? true : null;
+  const [reportingManager, setReportingManager] = useState(initialManagerState);
+  const canReview = elevatedCanReview || reportingManager === true;
+  const elevatedDefaultScope = user.role === "manager" ? "team" : "all";
+  const initialScope = elevatedCanReview
+    ? elevatedDefaultScope
+    : dashboardMgrFlag
+    ? "team"
+    : "mine";
+  const [scope, setScope] = useState(initialScope);
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    leaveApi
-      .list(effectiveScope)
-      .then(({ items, meta }) => {
-        if (!active) return;
-        setRequests(items);
-        if (typeof meta?.isReportingManager === 'boolean') setReportingManager(meta.isReportingManager);
-        onPendingCountChange?.(items.filter((item) => item.status === "pending").length);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [effectiveScope, onPendingCountChange]);
+    let cancelled = false;
+    let targetScope = scope;
+    (async () => {
+      try {
+        setLoading(true);
+        let resolvedItems = [];
+        let resolvedMeta = {};
+        // Manager auto-detect: if scope still 'mine' & we don't know yet →
+        // use the meta flag from 'mine' response to auto-switch scope='team'.
+        // This guarantees correct results even with a stale dashboard/user
+        // object (e.g. old session after deploy adds flag field).
+        if (targetScope === "mine" && reportingManager === null) {
+          const mine = await leaveApi.list("mine");
+          const mineItems = Array.isArray(mine?.items) ? mine.items : Array.isArray(mine) ? mine : [];
+          const metaMgr = Boolean(mine?.meta?.isReportingManager);
+          resolvedMeta = mine?.meta || {};
+          if (metaMgr) {
+            // Confirmed manager via leave meta (directReportsCount>0).
+            // Now fetch the TEAM inbox to get Prachi's etc.
+            const team = await leaveApi.list("team");
+            const teamItems = Array.isArray(team?.items) ? team.items : Array.isArray(team) ? team : [];
+            const seen = new Set();
+            const combined = [];
+            for (const item of teamItems) { if (item && item._id && !seen.has(item._id)) { seen.add(item._id); combined.push(item); } }
+            for (const item of mineItems) { if (item && item._id && !seen.has(item._id)) { seen.add(item._id); combined.push(item); } }
+            resolvedItems = combined;
+            if (active && !cancelled) {
+              setReportingManager(true);
+              setScope("team");
+            }
+          } else {
+            // Not a reporting manager → keep mine results only.
+            resolvedItems = mineItems;
+            if (active && !cancelled) setReportingManager(false);
+          }
+        } else {
+          const list = await leaveApi.list(targetScope);
+          resolvedItems = Array.isArray(list?.items) ? list.items : Array.isArray(list) ? list : [];
+          resolvedMeta = list?.meta || {};
+        }
+        if (!active || cancelled) return;
+        setRequests(resolvedItems);
+        onPendingCountChange?.(resolvedItems.filter((item) => item.status === "pending").length);
+      } catch (e) {
+        if (active && !cancelled) setError(e.message);
+      } finally {
+        if (active && !cancelled) setLoading(false);
+      }
+    })();
+    return () => { active = false; cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
   async function review(id, decision, note = "") {
     try {
       const updated = await leaveApi.review(id, decision, note);
