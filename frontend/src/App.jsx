@@ -80,6 +80,12 @@ const teamNavigation = [
   ["Holidays", CalendarDays, "/holidays"],
 ];
 const employeeAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances", "/offboarding"]);
+// Manager role (even when auto-promoted) sees only primary navigation (per spec).
+// Team / Lifecycle / Recruitment / Help sections are reserved for HR/Admin/IT/Finance.
+const elevatedNavigationRoles = new Set(["super_admin", "admin", "hr_admin", "it_admin", "finance_admin"]);
+const isElevatedNavRole = (role) => elevatedNavigationRoles.has(role);
+// Manager allowed paths: same as primary navigation (no direct URL escape).
+const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances"]);
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
@@ -164,8 +170,8 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
               {label === "Requests" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
             </button>
           ))}
-          {user.role !== "employee" && <p className="nav-label">Team</p>}
-          {user.role !== "employee" && teamNavigation.map(([label, Icon, route]) => (
+          {isElevatedNavRole(user.role) && <p className="nav-label">Team</p>}
+          {isElevatedNavRole(user.role) && teamNavigation.map(([label, Icon, route]) => (
             <button
               key={label}
               title={collapsed?label:undefined}
@@ -180,8 +186,8 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
               <span>{label}</span>
             </button>
           ))}
-          {user.role !== "employee" && <p className="nav-label">Employee lifecycle</p>}
-          {user.role !== "employee" && <button title={collapsed?'Offboarding':undefined} aria-label="Offboarding" onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>}
+          {isElevatedNavRole(user.role) && <p className="nav-label">Employee lifecycle</p>}
+          {isElevatedNavRole(user.role) && <button title={collapsed?'Offboarding':undefined} aria-label="Offboarding" onClick={()=>{navigate('/offboarding');close()}} className={`nav-item ${path.startsWith('/offboarding')?'active':''}`}><ClipboardCheck size={18}/><span>Offboarding</span></button>}
           {recruitmentNavigation[user.role] && (
             <>
               <p className="nav-label">Recruitment</p>
@@ -215,7 +221,7 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
           )}
         </nav>
         <div className="sidebar-bottom">
-          {user.role !== "employee" && <button className="nav-item">
+          {isElevatedNavRole(user.role) && <button className="nav-item">
             <HelpCircle size={18} />
             <span>Help & support</span>
           </button>}
@@ -903,6 +909,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
+    if (user?.role === "manager" && !managerAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/public/offers/")) navigate("/");
   }, [user, location.pathname, navigate]);
   useEffect(() => {
     if (!user) return;
