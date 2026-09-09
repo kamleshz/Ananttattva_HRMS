@@ -1524,53 +1524,80 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
 
 export function LeavePage({ user, currentEmployeeId }) {
   const today = new Date();
+  const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user?.role);
+  const dashboardMgrFlag = Boolean(user?.isReportingManager);
+  const elevatedDefaultScope = user?.role === "manager" ? "team" : elevatedCanReview ? "all" : "mine";
+  const initialScope = dashboardMgrFlag && !elevatedCanReview ? "team" : elevatedDefaultScope;
   const [requests, setRequests] = useState([]),
     [balance, setBalance] = useState(null),
     [drawer, setDrawer] = useState(false),
-    [scope, setScope] = useState(() => {
-      const elevated = ["super_admin", "admin", "hr_admin", "manager"].includes(user?.role);
-      if (user?.role === "manager") return "team";
-      if (Boolean(user?.isReportingManager)) return "team";
-      if (elevated) return "all";
-      return "mine";
-    }),
+    [scope, setScope] = useState(() => initialScope),
+    [reportingManager, setReportingManager] = useState(() => (elevatedCanReview || dashboardMgrFlag ? true : null)),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [leaveReportMonth, setLeaveReportMonth] = useState(today.getMonth() + 1),
-    [leaveReportYear, setLeaveReportYear] = useState(today.getFullYear()),
-    [reportingManager, setReportingManager] = useState(() => (user?.isReportingManager ? true : null));
-  const elevatedScopeTabs = ["super_admin", "admin", "hr_admin"].includes(user?.role);
-  const isMgr = user?.role === "manager" || reportingManager === true || Boolean(user?.isReportingManager);
+    [leaveReportYear, setLeaveReportYear] = useState(today.getFullYear());
+  const isMgr =
+    elevatedCanReview || reportingManager === true || dashboardMgrFlag;
   const scopes = useMemo(() => {
     const items = [{ value: "mine", label: "My leave" }];
     if (isMgr) items.push({ value: "team", label: "Team" });
-    if (elevatedScopeTabs) {
+    if (["hr_admin", "admin", "super_admin"].includes(user?.role)) {
       items.push({ value: "approvals", label: "Approvals" });
       items.push({ value: "all", label: "All" });
     }
     return items;
-  }, [isMgr, elevatedScopeTabs]);
+  }, [isMgr, user?.role]);
+
   useEffect(() => {
     let active = true;
-    Promise.all([
-      leaveApi.balance(),
-      leaveApi.list(scope),
-    ]).then(([b, r]) => {
-      if (!active) return;
-      if (b) setBalance(b);
-      if (r && typeof r === 'object' && !Array.isArray(r)) {
-        const { items, meta } = r;
-        if (Array.isArray(items)) setRequests(items);
-        if (typeof meta?.isReportingManager === 'boolean') setReportingManager(meta.isReportingManager);
-      } else if (Array.isArray(r)) {
-        setRequests(r);
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        let resolvedRequests = [];
+        let balanceResult = null;
+        const balancePromise = leaveApi.balance().catch(() => null);
+        if (scope === "mine" && reportingManager === null && !dashboardMgrFlag) {
+          // Robust auto-detect (no stale dashboard flag dependency):
+          // Step 1 — fetch 'mine' to read meta.isReportingManager.
+          const mine = await leaveApi.list("mine");
+          const mineItems = Array.isArray(mine?.items) ? mine.items : Array.isArray(mine) ? mine : [];
+          const metaMgr = Boolean(mine?.meta?.isReportingManager);
+          if (metaMgr) {
+            // Step 2 — confirmed manager via leave meta, fetch 'team' too & dedupe combine.
+            const team = await leaveApi.list("team");
+            const teamItems = Array.isArray(team?.items) ? team.items : Array.isArray(team) ? team : [];
+            const seen = new Set();
+            const combined = [];
+            for (const item of teamItems) { if (item && item._id && !seen.has(item._id)) { seen.add(item._id); combined.push(item); } }
+            for (const item of mineItems) { if (item && item._id && !seen.has(item._id)) { seen.add(item._id); combined.push(item); } }
+            resolvedRequests = combined;
+            if (active && !cancelled) {
+              setReportingManager(true);
+              setScope("team");
+            }
+          } else {
+            resolvedRequests = mineItems;
+            if (active && !cancelled) setReportingManager(false);
+          }
+        } else {
+          resolvedRequests = await leaveApi.list(scope)
+            .then(r => Array.isArray(r?.items) ? r.items : Array.isArray(r) ? r : [])
+            .catch(e => { setError(e.message); return []; });
+        }
+        balanceResult = await balancePromise;
+        if (!active || cancelled) return;
+        setRequests(resolvedRequests);
+        if (balanceResult) setBalance(balanceResult);
+      } catch (e) {
+        if (active && !cancelled) setError(e.message);
+      } finally {
+        if (active && !cancelled) setLoading(false);
       }
-    }).catch(e => {
-      if (active) setError(e.message);
-    }).finally(() => {
-      if (active) setLoading(false);
-    });
-    return () => { active = false; };
+    })();
+    return () => { active = false; cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
   async function review(id, decision, reviewNote) {
     try {
@@ -2204,6 +2231,7 @@ export function EmployeeEditPage({ employeeId, user }) {
                   {!canAssignAdminRoles && protectedRole && <option value={form.role}>{form.role === "super_admin" ? "Super Admin" : "Admin"}</option>}
                 </select>
                 {protectedRole && !canAssignAdminRoles && <small>Only an Admin or Super Admin can change this role.</small>}
+                <small>Tip: when this employee is assigned as another employee's Reporting Manager, their application role is automatically promoted to Manager if still set to Employee.</small>
               </label>
               <label>Reporting manager
                 <select value={selectedManager || ""} onChange={e => update("manager", e.target.value || null)}>

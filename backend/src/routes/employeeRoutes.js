@@ -153,9 +153,31 @@ router.put('/:id',authorize('super_admin','admin','hr_admin'),asyncHandler(async
   delete patch.role
   if (input.probation || input.joiningDate) patch.probation = deriveProbation({ ...(input.probation || {}), ...(input.joiningDate ? { joiningDate: input.joiningDate } : {}) }, employee)
   if (patch.manager === '') patch.manager = null
+  const previousManagerId = employee.manager
   Object.assign(employee, patch)
   await employee.save()
   if(loginUser&&(input.officialEmail||input.firstName||input.lastName||input.role))await User.findByIdAndUpdate(loginUser._id,{email:input.officialEmail||employee.officialEmail,firstName:input.firstName||employee.firstName,lastName:input.lastName||employee.lastName,role:input.role||loginUser.role},{runValidators:true})
+  // AUTO-PROMOTE manager convenience: whenever an employee is assigned as someone's
+  // reporting manager (Employee.manager field updated), auto-promote their User.role
+  // from 'employee' to 'manager'. This keeps the Application role in sync with the
+  // reporting structure so an admin does not have to update two separate fields.
+  // We promote the NEW manager (if changed) AND the previous manager (still may have reports).
+  const managersToCheck = new Set();
+  if (patch.manager !== undefined && previousManagerId) managersToCheck.add(String(previousManagerId));
+  if (patch.manager) managersToCheck.add(String(patch.manager));
+  if (managersToCheck.size > 0) {
+    for (const managerEmployeeIdStr of managersToCheck) {
+      const managerEmp = await Employee.findById(managerEmployeeIdStr).select('user');
+      if (!managerEmp?.user) continue;
+      const hasDirectReports = await Employee.exists({ manager: managerEmp._id, employeeStatus: { $in: ['active', 'notice_period'] } });
+      if (!hasDirectReports) continue;
+      const managerUser = await User.findById(managerEmp.user).select('role isActive');
+      if (!managerUser || !managerUser.isActive) continue;
+      if (managerUser.role === 'employee') {
+        await User.findByIdAndUpdate(managerUser._id, { role: 'manager' }, { runValidators: true });
+      }
+    }
+  }
   res.json({success:true,data:employee})
 }))
 router.get('/:id/biometrics', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
