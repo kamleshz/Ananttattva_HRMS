@@ -213,9 +213,15 @@ router.get('/', asyncHandler(async (req, res) => {
     filter = {}
   } else if (req.user.role === 'manager' && scope === 'team') {
     if (!currentEmployee) return res.json({ success: true, data: [] })
-    const directReports = await Employee.find({ manager: currentEmployee._id }).distinct('_id')
-    const myPendingForManager = { 'workflow.nextRole': 'manager', reportingManager: currentEmployee._id, status: 'pending' }
-    filter = { $or: [{ employee: { $in: directReports } }, myPendingForManager] }
+    const managerId = new mongoose.Types.ObjectId(currentEmployee._id.toString())
+    const directReports = await Employee.find({ manager: managerId }).distinct('_id')
+    const directReportIds = (directReports || []).map(id => new mongoose.Types.ObjectId(id.toString()))
+    const assignedAsReportingManager = { reportingManager: managerId }
+    const assignedAsStepActor = { 'workflow.steps': { $elemMatch: { role: 'manager', expectedActorEmployee: managerId } } }
+    const directReportLeaves = directReportIds.length ? { employee: { $in: directReportIds } } : null
+    const orClauses = [assignedAsReportingManager, assignedAsStepActor]
+    if (directReportLeaves) orClauses.push(directReportLeaves)
+    filter = { $or: orClauses }
   } else if (req.user.role === 'hr_admin' && scope === 'approvals') {
     filter = { $or: [{ 'workflow.nextRole': 'hr_admin', status: 'pending' }, { employee: req.user.employee?._id && currentEmployee?._id }].filter(Boolean) }
   } else if (['super_admin', 'admin'].includes(req.user.role) && scope === 'approvals') {
@@ -362,10 +368,19 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
   const reportingManagerId = String(request.reportingManager?._id || request.employee?.manager?._id || '')
   const employeeId = String(request.employee?._id || '')
   const isAssignedManager = Boolean(currentEmployee && reportingManagerId === String(currentEmployee._id) && employeeId !== String(currentEmployee._id))
+  const workflowManagerStep = Array.isArray(workflow.steps)
+    ? workflow.steps.find(step => step.role === 'manager' && step.status === 'pending')
+    : null
+  const isExpectedManagerActor = Boolean(
+    currentEmployee &&
+    workflowManagerStep?.expectedActorEmployee &&
+    String(workflowManagerStep.expectedActorEmployee) === String(currentEmployee._id) &&
+    employeeId !== String(currentEmployee._id)
+  )
   // A user may hold an elevated application role and still be this employee's
   // assigned reporting manager. Resolve the active workflow stage by identity
   // first so an Admin/HR account can complete its Manager responsibility.
-  if (nextRole === 'manager' && isAssignedManager) {
+  if (nextRole === 'manager' && (isAssignedManager || isExpectedManagerActor)) {
     canAct = true
     activeRole = 'manager'
   } else if (req.user.role === 'hr_admin') {
