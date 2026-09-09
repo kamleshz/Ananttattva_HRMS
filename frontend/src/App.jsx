@@ -79,7 +79,7 @@ const teamNavigation = [
   ["Reports", FileText, "/reports"],
   ["Holidays", CalendarDays, "/holidays"],
 ];
-const employeeAllowedPaths = new Set(["/", "/attendance", "/leave", "/allowances", "/offboarding"]);
+const employeeAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances", "/offboarding"]);
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
@@ -745,7 +745,7 @@ function MobileNav({ user }) {
   const navigate = useNavigate(),
     location = useLocation();
   const mobileItems = user.role === "employee"
-    ? [[Home, "Home", "/"], [Clock3, "Attendance", "/attendance"], [IndianRupee, "Allowances", "/allowances"]]
+    ? [[Home, "Home", "/"], [Clock3, "Attendance", "/attendance"], [Inbox, "Requests", "/requests"], [IndianRupee, "Allowances", "/allowances"]]
     : [[Home, "Home", "/"], [Clock3, "Attendance", "/attendance"], [Inbox, "Requests", "/requests"], [UserRound, "Profile", "/my-space"]];
   return (
     <nav className="mobile-nav">
