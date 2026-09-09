@@ -906,11 +906,27 @@ export default function App() {
   }, [user, location.pathname, navigate]);
   useEffect(() => {
     if (!user) return;
-    const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
-    const requestScope = user.role === "manager" ? "team" : canReview ? "all" : "mine";
-    leaveApi.list(requestScope)
-      .then((items) => setPendingRequestCount(items.filter((item) => item.status === "pending").length))
-      .catch(() => setPendingRequestCount(0));
+    let cancelled = false;
+    (async () => {
+      try {
+        const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
+        const baseScope = elevatedCanReview ? (user.role === "manager" ? "team" : "all") : "mine";
+        const first = await leaveApi.list(baseScope);
+        const listA = Array.isArray(first?.items) ? first.items : Array.isArray(first) ? first : [];
+        const isReportingManager = Boolean(first?.meta?.isReportingManager);
+        let combined = listA;
+        if (!elevatedCanReview && isReportingManager && baseScope === "mine") {
+          const team = await leaveApi.list("team");
+          const listB = Array.isArray(team?.items) ? team.items : Array.isArray(team) ? team : [];
+          const seen = new Set(listA.map(item => item._id));
+          combined = [...listA, ...listB.filter(item => !seen.has(item._id))];
+        }
+        if (!cancelled) setPendingRequestCount(combined.filter(item => item.status === "pending").length);
+      } catch {
+        if (!cancelled) setPendingRequestCount(0);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [user, location.pathname]);
   if (location.pathname.startsWith("/public/offers/"))
     return <PublicOfferPage />;

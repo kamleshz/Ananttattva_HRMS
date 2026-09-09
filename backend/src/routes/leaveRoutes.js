@@ -207,13 +207,17 @@ router.get('/balance', asyncHandler(async (req, res) => {
 router.get('/', asyncHandler(async (req, res) => {
   const currentEmployee = await resolveEmployee(req)
   const elevated = ['super_admin', 'admin', 'hr_admin', 'it_admin', 'finance_admin'].includes(req.user.role)
+  const currentEmployeeId = currentEmployee ? new mongoose.Types.ObjectId(currentEmployee._id.toString()) : null
+  const directReportsCount = currentEmployeeId ? await Employee.countDocuments({ manager: currentEmployeeId }) : 0
+  const isReportingManager = currentEmployeeId && directReportsCount > 0
   let filter = {}
   const scope = req.query.scope || 'mine'
+  const canUseTeamScope = req.user.role === 'manager' || isReportingManager
   if (elevated && scope === 'all') {
     filter = {}
-  } else if (req.user.role === 'manager' && scope === 'team') {
+  } else if (canUseTeamScope && scope === 'team') {
     if (!currentEmployee) return res.json({ success: true, data: [] })
-    const managerId = new mongoose.Types.ObjectId(currentEmployee._id.toString())
+    const managerId = currentEmployeeId
     const directReports = await Employee.find({ manager: managerId }).distinct('_id')
     const directReportIds = (directReports || []).map(id => new mongoose.Types.ObjectId(id.toString()))
     const assignedAsReportingManager = { reportingManager: managerId }
@@ -237,7 +241,7 @@ router.get('/', asyncHandler(async (req, res) => {
     .populate('reportingManager', 'firstName lastName employeeCode')
     .sort({ createdAt: -1 })
     .limit(200)
-  res.json({ success: true, data: items })
+  res.json({ success: true, data: { items, meta: { isReportingManager: Boolean(isReportingManager), directReportsCount } } })
 }))
 
 const createSchema = z.object({
@@ -348,7 +352,7 @@ router.post('/', asyncHandler(async (req, res) => {
 
 const reviewSchema = z.object({ reviewNote: z.string().trim().max(500).default('') })
 
-router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'manager'), asyncHandler(async (req, res) => {
+router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'manager', 'employee'), asyncHandler(async (req, res) => {
   if (!['approve', 'reject'].includes(req.params.decision)) throw new HttpError(400, 'Invalid decision')
   const input = reviewSchema.parse(req.body)
   const request = await LeaveRequest.findById(req.params.id)
@@ -356,6 +360,25 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     .populate('reportingManager', 'firstName lastName employeeCode')
   if (!request || request.status !== 'pending') throw new HttpError(409, 'This leave request is no longer pending')
   const currentEmployee = await resolveEmployee(req)
+  // Identity-based guard: employees with role='employee' can still act on a leave
+  // request as its assigned Manager reviewer (Employee.manager assignment or
+  // workflow.steps[manager].expectedActorEmployee). The per-request canAct check
+  // below strictly enforces: only the assigned reviewer may act, and only at
+  // the exact workflow stage matching the current nextRole.
+  const elevatedReviewer = ['super_admin', 'admin', 'hr_admin', 'manager'].includes(req.user.role)
+  if (!elevatedReviewer && currentEmployee) {
+    const workflow = request.workflow || { requiredSteps: [], steps: [], currentStepIndex: 0, nextRole: null }
+    const reportingManagerId = String(request.reportingManager?._id || request.employee?.manager?._id || '')
+    const employeeId = String(request.employee?._id || '')
+    const assignedManager = Boolean(reportingManagerId && reportingManagerId === String(currentEmployee._id) && employeeId !== String(currentEmployee._id))
+    const managerStep = Array.isArray(workflow.steps) ? workflow.steps.find(s => s.role === 'manager' && s.status === 'pending') : null
+    const expectedActor = Boolean(managerStep?.expectedActorEmployee && String(managerStep.expectedActorEmployee) === String(currentEmployee._id) && employeeId !== String(currentEmployee._id))
+    if (workflow.nextRole === 'manager' && (assignedManager || expectedActor)) {
+      // permitted: identity-based manager review gate passed
+    } else {
+      throw new HttpError(403, 'You do not have permission for this action')
+    }
+  }
   const workflow = request.workflow || { requiredSteps: [], steps: [], currentStepIndex: 0, nextRole: null }
   const nextRole = workflow.nextRole
   const approved = req.params.decision === 'approve'

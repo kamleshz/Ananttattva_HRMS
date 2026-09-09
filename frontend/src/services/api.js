@@ -147,8 +147,13 @@ export const employeeApi = {
 };
 export const leaveApi = {
   balance: () => api('/leaves/balance'),
-  list: (scope = "mine") =>
-    api(`/leaves${scope === "mine" ? "" : `?scope=${scope}`}`),
+  list: async (scope = "mine") => {
+    const payload = await api(`/leaves${scope === "mine" ? "" : `?scope=${scope}`}`);
+    if (payload && Array.isArray(payload)) {
+      return { items: payload, meta: {} };
+    }
+    return { items: Array.isArray(payload?.items) ? payload.items : [], meta: payload?.meta || {} };
+  },
   create: (data) =>
     api("/leaves", { method: "POST", body: JSON.stringify(data) }),
   review: (id, decision, reviewNote = "") =>

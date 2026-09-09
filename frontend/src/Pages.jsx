@@ -1531,16 +1531,17 @@ export function LeavePage({ user, currentEmployeeId }) {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [leaveReportMonth, setLeaveReportMonth] = useState(today.getMonth() + 1),
-    [leaveReportYear, setLeaveReportYear] = useState(today.getFullYear());
+    [leaveReportYear, setLeaveReportYear] = useState(today.getFullYear()),
+    [reportingManager, setReportingManager] = useState(null);
   const scopes = useMemo(() => {
     const items = [{ value: "mine", label: "My leave" }];
-    if (user?.role === "manager") items.push({ value: "team", label: "Team" });
+    if (user?.role === "manager" || reportingManager === true) items.push({ value: "team", label: "Team" });
     if (["hr_admin", "admin", "super_admin"].includes(user?.role)) {
       items.push({ value: "approvals", label: "Approvals" });
       items.push({ value: "all", label: "All" });
     }
     return items;
-  }, [user?.role]);
+  }, [user?.role, reportingManager]);
   useEffect(() => {
     let active = true;
     Promise.all([
@@ -1549,7 +1550,13 @@ export function LeavePage({ user, currentEmployeeId }) {
     ]).then(([b, r]) => {
       if (!active) return;
       if (b) setBalance(b);
-      if (Array.isArray(r)) setRequests(r);
+      if (r && typeof r === 'object' && !Array.isArray(r)) {
+        const { items, meta } = r;
+        if (Array.isArray(items)) setRequests(items);
+        if (typeof meta?.isReportingManager === 'boolean') setReportingManager(meta.isReportingManager);
+      } else if (Array.isArray(r)) {
+        setRequests(r);
+      }
     }).catch(e => {
       if (active) setError(e.message);
     }).finally(() => {
@@ -1761,21 +1768,28 @@ export function LeavePage({ user, currentEmployeeId }) {
 }
 
 export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) {
-  const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
-  const requestScope = user.role === "manager" ? "team" : canReview ? "all" : "mine";
+  const [reportingManager, setReportingManager] = useState(null);
+  const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
+  const baseScope = elevatedCanReview ? (user.role === "manager" ? "team" : "all") : "mine";
+  const effectiveScope = (reportingManager === true && baseScope === "mine") ? "team" : baseScope;
+  const canReview = elevatedCanReview || Boolean(reportingManager);
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
   useEffect(() => {
+    let active = true;
     leaveApi
-      .list(requestScope)
-      .then((items) => {
+      .list(effectiveScope)
+      .then(({ items, meta }) => {
+        if (!active) return;
         setRequests(items);
+        if (typeof meta?.isReportingManager === 'boolean') setReportingManager(meta.isReportingManager);
         onPendingCountChange?.(items.filter((item) => item.status === "pending").length);
       })
       .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [requestScope, onPendingCountChange]);
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [effectiveScope, onPendingCountChange]);
   async function review(id, decision, note = "") {
     try {
       const updated = await leaveApi.review(id, decision, note);
