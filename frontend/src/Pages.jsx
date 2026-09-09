@@ -1527,21 +1527,29 @@ export function LeavePage({ user, currentEmployeeId }) {
   const [requests, setRequests] = useState([]),
     [balance, setBalance] = useState(null),
     [drawer, setDrawer] = useState(false),
-    [scope, setScope] = useState("mine"),
+    [scope, setScope] = useState(() => {
+      const elevated = ["super_admin", "admin", "hr_admin", "manager"].includes(user?.role);
+      if (user?.role === "manager") return "team";
+      if (Boolean(user?.isReportingManager)) return "team";
+      if (elevated) return "all";
+      return "mine";
+    }),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [leaveReportMonth, setLeaveReportMonth] = useState(today.getMonth() + 1),
     [leaveReportYear, setLeaveReportYear] = useState(today.getFullYear()),
-    [reportingManager, setReportingManager] = useState(null);
+    [reportingManager, setReportingManager] = useState(() => (user?.isReportingManager ? true : null));
+  const elevatedScopeTabs = ["super_admin", "admin", "hr_admin"].includes(user?.role);
+  const isMgr = user?.role === "manager" || reportingManager === true || Boolean(user?.isReportingManager);
   const scopes = useMemo(() => {
     const items = [{ value: "mine", label: "My leave" }];
-    if (user?.role === "manager" || reportingManager === true) items.push({ value: "team", label: "Team" });
-    if (["hr_admin", "admin", "super_admin"].includes(user?.role)) {
+    if (isMgr) items.push({ value: "team", label: "Team" });
+    if (elevatedScopeTabs) {
       items.push({ value: "approvals", label: "Approvals" });
       items.push({ value: "all", label: "All" });
     }
     return items;
-  }, [user?.role, reportingManager]);
+  }, [isMgr, elevatedScopeTabs]);
   useEffect(() => {
     let active = true;
     Promise.all([
@@ -1768,11 +1776,13 @@ export function LeavePage({ user, currentEmployeeId }) {
 }
 
 export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) {
-  const [reportingManager, setReportingManager] = useState(null);
   const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
+  const dashboardFlag = Boolean(user?.isReportingManager);
+  const [reportingManager, setReportingManager] = useState(dashboardFlag ? true : null);
+  const effectiveIsManager = elevatedCanReview || reportingManager === true || dashboardFlag;
   const baseScope = elevatedCanReview ? (user.role === "manager" ? "team" : "all") : "mine";
-  const effectiveScope = (reportingManager === true && baseScope === "mine") ? "team" : baseScope;
-  const canReview = elevatedCanReview || Boolean(reportingManager);
+  const effectiveScope = effectiveIsManager && !elevatedCanReview ? "team" : baseScope;
+  const canReview = elevatedCanReview || reportingManager === true || dashboardFlag;
   const [requests, setRequests] = useState([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");

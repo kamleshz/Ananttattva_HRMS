@@ -33,6 +33,8 @@ router.get('/employee', asyncHandler(async (req, res) => {
   const weekStart=new Date(currentWeekMonday)
   const weekEnd=new Date(weekStart);weekEnd.setDate(weekEnd.getDate()+7)
   const holidayEnd=new Date(today);holidayEnd.setDate(holidayEnd.getDate()+90)
+  const directReportsCount = employee ? await Employee.countDocuments({ manager: employee._id, employeeStatus: { $in: ['active', 'notice_period'] } }) : 0
+  const isReportingManager = directReportsCount > 0
   const [attendance,birthdayEmployees,weekRecords,holidays,organization, weeklySummary] = await Promise.all([
     employee ? Attendance.findOne({employee:employee._id,date:today}) : null,
     Employee.find({employeeStatus:'active',dateOfBirth:{$ne:null}}).select('firstName lastName profilePhoto dateOfBirth'),
@@ -71,7 +73,14 @@ router.get('/employee', asyncHandler(async (req, res) => {
     },
     dailyBreakdown: weeklySummary.dailyBreakdown,
   } : weekSummaryBackwardCompat
-  res.json({ success:true, data:{ user:{firstName:req.user.firstName,lastName:req.user.lastName,role:req.user.role}, employee, organization, today:attendance, birthdays, holidays, week, demographics, weekSummary, tasks:[], away:[] } })
+  const userWithFlags = {
+    firstName: req.user.firstName,
+    lastName: req.user.lastName,
+    role: req.user.role,
+    isReportingManager,
+    directReportsCount,
+  }
+  res.json({ success:true, data:{ user: userWithFlags, employee, organization, today:attendance, birthdays, holidays, week, demographics, weekSummary, tasks:[], away:[] } })
 }))
 router.get('/admin', authorize('super_admin','hr_admin','it_admin'), asyncHandler(async (_req, res) => {
   const date = startOfLocalDay()

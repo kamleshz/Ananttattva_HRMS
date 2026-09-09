@@ -910,12 +910,17 @@ export default function App() {
     (async () => {
       try {
         const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);
-        const baseScope = elevatedCanReview ? (user.role === "manager" ? "team" : "all") : "mine";
+        const dashboardMgrFlag = Boolean(user?.isReportingManager);
+        const baseScope = elevatedCanReview
+          ? (user.role === "manager" ? "team" : "all")
+          : dashboardMgrFlag
+          ? "team"
+          : "mine";
         const first = await leaveApi.list(baseScope);
         const listA = Array.isArray(first?.items) ? first.items : Array.isArray(first) ? first : [];
-        const isReportingManager = Boolean(first?.meta?.isReportingManager);
+        const metaMgr = Boolean(first?.meta?.isReportingManager);
         let combined = listA;
-        if (!elevatedCanReview && isReportingManager && baseScope === "mine") {
+        if (baseScope === "mine" && (dashboardMgrFlag || metaMgr)) {
           const team = await leaveApi.list("team");
           const listB = Array.isArray(team?.items) ? team.items : Array.isArray(team) ? team : [];
           const seen = new Set(listA.map(item => item._id));
