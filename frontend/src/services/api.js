@@ -1,6 +1,7 @@
 const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
 const TOKEN_KEY = "peoplepulse_access_token";
-export const SERVER_FACE_ENABLED = ['opencv_sface','uniface'].includes(import.meta.env.VITE_FACE_ENGINE);
+const FACE_ENGINE = import.meta.env.VITE_FACE_ENGINE || 'opencv_sface';
+export const SERVER_FACE_ENABLED = ['opencv_sface','uniface'].includes(FACE_ENGINE);
 const BIOMETRIC_API_URL = (import.meta.env.VITE_BIOMETRIC_API_URL || API_URL).replace(/\/+$/, '');
 
 export function apiUrl(path = "") {

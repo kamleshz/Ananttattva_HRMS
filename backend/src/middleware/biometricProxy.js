@@ -1,6 +1,10 @@
 import { env } from '../config/env.js'
 
-const proxiedPaths = [/^\/api\/biometrics(?:\/|$)/, /^\/api\/employees\/[^/]+\/biometrics(?:\/|$)/, /^\/api\/admin\/biometrics(?:\/|$)/]
+const proxiedPaths = [
+  /^\/api\/biometrics(?:\/|$)/,
+  /^\/api\/employees\/[^/]+\/biometrics\/(?:status|reset)\/?$/,
+  /^\/api\/admin\/biometrics(?:\/|$)/,
+]
 
 export async function biometricProxy(req, res, next) {
   if (!env.biometricServiceUrl || !proxiedPaths.some(pattern => pattern.test(req.originalUrl.split('?')[0]))) return next()
