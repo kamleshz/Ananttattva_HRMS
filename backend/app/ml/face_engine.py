@@ -65,15 +65,19 @@ class MiniFASNetV2:
         ]
         if crop.size == 0:
             return False, 0.0
+        # This MiniFASNetV2 ONNX export was trained and exported with raw BGR
+        # float32 pixels.  Normalizing here changes the input distribution and
+        # makes genuine webcam captures look like spoof attempts.
         blob = cv2.resize(crop, (self.width, self.height)).astype(np.float32)
-        blob = np.transpose((blob - 127.5) / 128.0, (2, 0, 1))[None, ...]
+        blob = np.transpose(blob, (2, 0, 1))[None, ...]
         logits = np.asarray(self.session.run(None, {self.input_name: blob})[0], dtype=np.float32).reshape(-1)
         logits -= np.max(logits)
         probabilities = np.exp(logits) / np.sum(np.exp(logits))
         if self.real_class_index >= probabilities.size:
             raise RuntimeError("FACE_ANTI_SPOOF_REAL_CLASS_INDEX exceeds model output")
         score = float(probabilities[self.real_class_index])
-        return score >= self.threshold, score
+        predicted_class = int(np.argmax(probabilities))
+        return predicted_class == self.real_class_index and score >= self.threshold, score
 
 
 class YuNetSFaceEngine:

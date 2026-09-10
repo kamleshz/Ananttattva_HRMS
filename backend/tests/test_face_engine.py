@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.core.database import get_database
 from app.core.errors import AppError
 from app.main import create_app
-from app.ml.face_engine import YuNetSFaceEngine
+from app.ml.face_engine import MiniFASNetV2, YuNetSFaceEngine
 from app.repositories.biometrics import EmbeddingCipher
 
 
@@ -58,6 +58,27 @@ def test_embedding_is_normalized_and_similarity_is_cosine() -> None:
     assert analysis.embedding.shape == (128,)
     assert np.linalg.norm(analysis.embedding) == pytest.approx(1.0)
     assert engine.compare_embeddings(analysis.embedding, analysis.embedding) == pytest.approx(1.0)
+
+
+def test_minifas_uses_exported_raw_bgr_input_and_real_class() -> None:
+    captured: list[np.ndarray] = []
+    adapter = MiniFASNetV2.__new__(MiniFASNetV2)
+    adapter.input_name = "input"
+    adapter.height = adapter.width = 80
+    adapter.threshold = 0.5
+    adapter.real_class_index = 1
+    adapter.session = SimpleNamespace(
+        run=lambda _outputs, inputs: captured.append(inputs["input"]) or [np.array([[0.1, 2.0, 0.2]])]
+    )
+    image = np.full((100, 100, 3), 200, dtype=np.uint8)
+
+    passed, score = adapter.predict(image, (20, 20, 60, 60))
+
+    assert passed is True
+    assert score > 0.5
+    assert captured[0].shape == (1, 3, 80, 80)
+    assert captured[0].dtype == np.float32
+    assert captured[0].min() == captured[0].max() == 200.0
 
 
 def test_encrypted_embedding_round_trip() -> None:
