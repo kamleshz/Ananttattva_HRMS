@@ -31,7 +31,7 @@ The first completed slice provides:
 - immutable authentication audit events;
 - Redis/Celery foundation, Docker image, Compose services, health check, and automated unit tests.
 
-## Running the staged FastAPI service
+## Running the staged FastAPI service locally
 
 From the repository root:
 
@@ -49,6 +49,10 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\uvicorn app.main:app --host 127.0.0.1 --port 7000
 ```
+
+## Production deployment
+
+Production uses a single Render Docker service defined by `render.yaml`. The container starts Express on Render's public `PORT`, FastAPI on the container-only address `127.0.0.1:7001`, and Redis on `127.0.0.1:6379`. Express proxies biometric routes to FastAPI, so the browser and Vercel frontend use only the public Express URL. Do not deploy `backend/app` as a second Render service.
 
 ## Module cutover sequence
 

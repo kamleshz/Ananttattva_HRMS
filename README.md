@@ -1,6 +1,6 @@
 # AT Connect
 
-AT Connect is the HRMS for Ananttattva Private Limited. The current React/Vite + Express/MongoDB application remains runnable while its backend is migrated module-by-module to FastAPI, PyMongo Async, Redis, and Celery.
+AT Connect is the HRMS for Ananttattva Private Limited. The React/Vite frontend uses one public backend URL. In production, one combined Render container runs the Express API, the private FastAPI biometric service, and ephemeral Redis for biometric challenges.
 
 ## Structure
 
@@ -20,29 +20,39 @@ The server-side YuNet/SFace/MiniFASNetV2 rollout, safe existing-data workflow, a
 5. Start the API with `npm run dev:backend`.
 6. In another terminal, start the UI with `npm run dev:frontend`.
 
-The frontend runs at `http://127.0.0.1:7173` and the API runs at `http://127.0.0.1:7000`.
+The frontend runs at `http://127.0.0.1:7173` and the local Express API runs at `http://127.0.0.1:6000`. The combined production image exposes only the Express API; FastAPI listens inside the same container on `127.0.0.1:7001`.
 
 The development seed creates `admin@peoplepulse.local` with password `ChangeMe123!`. Change these values in `backend/.env` for any shared environment.
 
 ## Deploying
 
-### Backend on Render
+### Single backend service on Render
 
-This repository includes a root `render.yaml` that points Render at `backend/`.
+The root `render.yaml` creates one Docker web service. Do not create a second FastAPI service. The image starts:
+
+- Express/Node on Render's public `PORT`;
+- FastAPI ML privately on `127.0.0.1:7001`;
+- Redis privately on `127.0.0.1:6379` for short-lived biometric challenges.
 
 Set these environment variables in Render:
 
 - `MONGODB_URI` = your production MongoDB connection string
+- `MONGODB_DATABASE` = the database used by the Node service (both processes must use the same database)
 - `JWT_SECRET` = a long random secret
+- `REFRESH_TOKEN_SECRET` = a different long random secret
+- `BIOMETRIC_SERVICE_KEY` = a random secret of at least 32 characters
+- `FACE_EMBEDDING_KEY` = a stable Fernet key; never change it after biometric enrollment
 - `CLIENT_URLS` = your Vercel frontend URL, for example `https://your-app.vercel.app`
 - `SEED_ADMIN_EMAIL` = optional production admin email
 - `SEED_ADMIN_PASSWORD` = optional production admin password
 
 Render uses:
 
-- Build command: `npm install`
-- Start command: `npm start`
-- Health check: `/api/health`
+- Runtime: Docker
+- Dockerfile: `backend/Dockerfile`
+- Health check: `/api/ready`
+
+`BIOMETRIC_SERVICE_URL`, `REDIS_URL`, and the internal ports are already defined by `render.yaml`; they should not point to another Render service.
 
 ### Frontend on Vercel
 
@@ -51,16 +61,18 @@ This repository includes a root `vercel.json` that builds `frontend/` and serves
 Set this environment variable in Vercel:
 
 - `VITE_API_URL` = your Render backend URL with `/api`, for example `https://your-api.onrender.com/api`
+- `VITE_BIOMETRIC_API_URL` = the same `/api` URL (or simply `/api` when using a Vercel rewrite/proxy)
+- `VITE_FACE_ENGINE` = `opencv_sface`
 
 Then redeploy the frontend after the backend URL is ready.
 
 ### Recommended order
 
-1. Deploy the backend to Render.
+1. Deploy the single combined backend to Render using `render.yaml`.
 2. Copy the Render public URL.
 3. Set `VITE_API_URL` in Vercel using that Render URL plus `/api`.
 4. Set `CLIENT_URLS` in Render to your Vercel production URL.
-5. Redeploy both once after the env vars are saved.
+5. Redeploy the Render service and Vercel frontend once after the env vars are saved.
 
 ## Biometric attendance
 

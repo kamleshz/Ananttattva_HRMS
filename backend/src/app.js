@@ -72,6 +72,21 @@ app.get('/api/biometric-health', async (_req,res) => {
     return res.json({success:true,data:{integrated:true,ready:false,status:'unavailable',message:'ML biometric service is currently unavailable.'}})
   }
 })
+app.get('/api/ready', async (_req,res) => {
+  if (!env.biometricServiceUrl) {
+    return res.status(503).json({success:false,message:'Combined ML service is not configured.'})
+  }
+  try {
+    const response=await fetch(`${env.biometricServiceUrl}/api/health`,{headers:{'x-biometric-service-key':env.biometricServiceKey},signal:AbortSignal.timeout(env.biometricServiceTimeoutMs)})
+    const payload=await response.json()
+    const face=payload?.services?.faceEngine||{}
+    const ready=Boolean(response.ok&&face.healthy&&face.yunetLoaded&&face.sfaceLoaded&&face.livenessLoaded)
+    return res.status(ready?200:503).json({success:ready,message:ready?'Node API and ML biometric service are ready.':'ML biometric models are not ready.'})
+  } catch (error) {
+    console.error('[readiness] combined ML service unavailable', {code:error?.code||error?.name})
+    return res.status(503).json({success:false,message:'ML biometric service is unavailable.'})
+  }
+})
 app.use('/api/auth', authRoutes)
 app.use('/api/attendance', attendanceRoutes)
 app.use('/api/employees', employeeRoutes)

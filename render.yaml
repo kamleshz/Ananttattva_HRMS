@@ -1,19 +1,30 @@
 services:
   - type: web
     name: peoplepulse-hr-api
-    runtime: node
+    runtime: docker
     rootDir: backend
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /api/health
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/ready
     envVars:
       - key: NODE_ENV
         value: production
+      - key: APP_ENV
+        value: production
+      - key: ML_INTERNAL_PORT
+        value: "7001"
+      - key: BIOMETRIC_SERVICE_URL
+        value: http://127.0.0.1:7001
+      - key: REDIS_URL
+        value: redis://127.0.0.1:6379/0
       - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
         sync: false
       - key: JWT_SECRET
         sync: false
-      - key: BIOMETRIC_SERVICE_URL
+      - key: REFRESH_TOKEN_SECRET
+        sync: false
+      - key: FACE_EMBEDDING_KEY
         sync: false
       - key: BIOMETRIC_SERVICE_KEY
         sync: false
@@ -21,10 +32,20 @@ services:
         value: "15000"
       - key: CLIENT_URLS
         sync: false
+      - key: SEED_ADMIN_ENABLED
+        value: "false"
       - key: SEED_ADMIN_EMAIL
         sync: false
       - key: SEED_ADMIN_PASSWORD
         sync: false
+      - key: FACE_ENGINE
+        value: opencv_sface
+      - key: FACE_DETECTOR
+        value: yunet
+      - key: FACE_RECOGNIZER
+        value: sface
+      - key: FACE_ANTI_SPOOF_ENABLED
+        value: "true"
       - key: MANUAL_ATTENDANCE_REVIEW_THRESHOLD
         value: "3"
       - key: MANUAL_ATTENDANCE_FACE_RETRY_LIMIT
