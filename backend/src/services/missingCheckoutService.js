@@ -1,9 +1,11 @@
 import { Attendance } from '../models/Attendance.js'
+import { AttendanceCorrectionRequest } from '../models/AttendanceCorrectionRequest.js'
 import { Employee } from '../models/Employee.js'
 import { LeaveRequest } from '../models/LeaveRequest.js'
 import { ScheduledEmail } from '../models/ScheduledEmail.js'
 import { User } from '../models/User.js'
 import { Notification } from '../models/Recruitment.js'
+import mongoose from 'mongoose'
 import { endOfLocalDay, startOfLocalDay, atOrganizationTime } from '../utils/date.js'
 import { sendAttendanceEscalation, sendAttendanceEscalationEmails, sendAttendanceMissNotice, sendCheckoutReminder, sendWeeklyHoursShortfall } from './mailService.js'
 import { holidayKeysBetween, isScheduledWorkingDay, organizationDateKey, organizationTimeForKey } from './workingDayService.js'
@@ -414,17 +416,123 @@ export async function processMissingCheckInsAndEscalations(now=new Date()){
   }
   const {start,end}=weekBounds(now),today=startOfLocalDay(now),weekKey=`${organizationDateKey(start)}:${organizationDateKey(new Date(end.getTime()-1))}`
   const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']}}).select('_id firstName lastName employeeCode user manager').lean(),weekHolidays=await holidayKeysBetween(start,end)
-  const attendance=await Attendance.find({date:{$gte:start,$lt:end}}).select('employee date checkIn checkOut missedCheckOut missingCheckout').lean(),leaves=await LeaveRequest.find({status:'approved',dayType:'full_day',startDate:{$lt:end},endDate:{$gte:start}}).select('employee startDate endDate').lean()
+  const rawAttendance=await Attendance.find({date:{$gte:start,$lt:end}}).select('_id employee date checkIn checkOut missedCheckOut missingCheckout exceptionStatus status').lean(),leaves=await LeaveRequest.find({status:'approved',dayType:'full_day',startDate:{$lt:end},endDate:{$gte:start}}).select('employee startDate endDate').lean()
   const adminEmails=(await User.find({isActive:true,role:{$in:['hr_admin','admin','super_admin']}}).select('email').lean()).map(item=>item.email).filter(Boolean)
   for(const employee of employees){
-    const records=attendance.filter(item=>String(item.employee)===String(employee._id)),misses=[]
-    for(let day=new Date(start);day<end&&day<today;day=new Date(day.getTime()+DAY_MS)){if(!isScheduledWorkingDay(day,weekHolidays))continue;const date=organizationDateKey(day),record=records.find(item=>organizationDateKey(item.date)===date),onFullLeave=leaves.some(item=>String(item.employee)===String(employee._id)&&item.startDate<=endOfLocalDay(day)&&item.endDate>=startOfLocalDay(day));if(!record?.checkIn?.time&&!onFullLeave)misses.push(`${date} check-in`);else if(record?.missedCheckOut||record?.checkOut?.source==='system_auto'||(record?.missingCheckout?.reviewAction==='none'&&record?.missingCheckout?.justificationStatus&&record.missingCheckout.justificationStatus!=='approved'))misses.push(`${date} checkout`)}
-    if(misses.length<3||!employee.user||!adminEmails.length)continue
+    if(!employee.user||!adminEmails.length)continue
+    // FIX #2 + #3: buildEscalationMisses with RE-VERIFICATION pass before email.
+    // Filters out Resolved statuses (Fix #1 auto-resolve) and pending/approved correction requests.
+    const escalation = await buildEscalationMisses({ employee, weekStart:start, weekEnd:end, today, rawAttendance, leaves, weekHolidays })
+    const { trueMisses, allTagged, totalTrue } = escalation
+    // Threshold is based on TRUE MISS count only (excludes late-resolved and pending-correction items).
+    if(totalTrue < 3)continue
     const user=await User.findOne({_id:employee.user,isActive:true}).select('_id email'),manager=employee.manager?await User.findOne({employee:employee.manager,isActive:true}).select('email'):null
     if(!user?.email)continue
-    const claim=await claimEmail({key:`attendance-escalation:${weekKey}:${user._id}`,type:'attendance_escalation',period:weekKey,user});await deliver(claim,()=>sendAttendanceEscalation({recipient:user.email,ccRecipients:[manager?.email,...adminEmails].filter(Boolean),employeeName:`${employee.firstName} ${employee.lastName}`.trim(),employeeCode:employee.employeeCode,week:weekKey,misses}))
+    const claim=await claimEmail({key:`attendance-escalation:${weekKey}:${user._id}`,type:'attendance_escalation',period:weekKey,user});await deliver(claim,()=>sendAttendanceEscalation({recipient:user.email,ccRecipients:[manager?.email,...adminEmails].filter(Boolean),employeeName:`${employee.firstName} ${employee.lastName}`.trim(),employeeCode:employee.employeeCode,week:weekKey,misses:trueMisses,allTagged,totalTrue}))
   }
   lastDailyAuditKey=auditKey
+}
+
+/**
+ * buildEscalationMisses — FIX #2 (correction request exclude) + FIX #3 (re-ver pass)
+ *
+ * For a given employee in a given week:
+ *  (a) enumerates candidate misses (check-in absent and not on approved full leave;
+ *      checkout missing/system-auto or exception pending and not review=approved / leave-converted)
+ *  (b) FIX #2: cross-check AttendanceCorrectionRequest for every candidate:
+ *        · status='pending' or 'approved' → exclude from TRUE MISS count, tag [CORRECTION PENDING]
+ *          or [CORRECTION APPROVED] respectively
+ *        · status='rejected' → include as TRUE MISS, tag [CORR REJECTED = MISS]
+ *  (c) FIX #1 (auto-resolved): exceptionStatus.startsWith('Resolved') → exclude TRUE MISS,
+ *        tag [LATE SAME-DAY CHECKOUT] (informational only)
+ *  (d) system leave override converted (reviewAction=approved leaveRequestId set) → exclude,
+ *        tag [AUTO LEAVE CONVERTED] (informational)
+ *
+ * Re-ver is done at the moment of calling — ensures 100% latest DB state used
+ * (not stale snapshotted data from earlier passes of processMissingCheckouts).
+ *
+ * Returns: { trueMisses (raw strings for counter + old mail compat), allTagged (tagged strings for
+ * detailed email new field), totalTrue (len trueMisses for threshold). }
+ */
+export async function buildEscalationMisses({ employee, weekStart, weekEnd, today, rawAttendance, leaves, weekHolidays }) {
+  const records = rawAttendance.filter(item => String(item.employee) === String(employee._id))
+  const candidates = []
+  for(let day = new Date(weekStart); day < weekEnd && day < today; day = new Date(day.getTime() + DAY_MS)) {
+    if(!isScheduledWorkingDay(day, weekHolidays)) continue
+    const date = organizationDateKey(day)
+    const record = records.find(item => organizationDateKey(item.date) === date)
+    const onFullLeave = leaves.some(item =>
+      String(item.employee) === String(employee._id) &&
+      item.startDate <= endOfLocalDay(day) &&
+      item.endDate >= startOfLocalDay(day)
+    )
+    if(!record?.checkIn?.time && !onFullLeave) {
+      candidates.push({ date, type: 'check-in', record: null })
+    } else if(
+      record?.missedCheckOut ||
+      record?.checkOut?.source === 'system_auto' ||
+      (
+        record?.missingCheckout?.reviewAction === 'none' &&
+        record?.missingCheckout?.justificationStatus &&
+        String(record.missingCheckout.justificationStatus) !== 'approved'
+      )
+    ) {
+      candidates.push({ date, type: 'checkout', record })
+    }
+  }
+
+  if(candidates.length === 0) return { trueMisses: [], allTagged: [], totalTrue: 0 }
+
+  // Lookup correction requests (Fix #2): any kind='missing_checkout' or 'other' for this
+  // employee within the week window, grouped by Attendance._id string.
+  const attendanceIds = candidates
+    .map(c => c.record?._id)
+    .filter(Boolean)
+    .map(id => (id && id.toString ? id.toString() : String(id)))
+  const correctionsByAttendance = new Map()
+  if(attendanceIds.length > 0) {
+    const corrections = await AttendanceCorrectionRequest.find({
+      attendance: { $in: attendanceIds.map(id => new mongoose.Types.ObjectId(id)) },
+      kind: { $in: ['missing_checkout', 'other'] }
+    }).select('attendance status requestedCheckoutTime reviewedAt reviewNote').lean()
+    for(const req of corrections) {
+      const key = String(req.attendance)
+      if(!correctionsByAttendance.has(key)) correctionsByAttendance.set(key, [])
+      correctionsByAttendance.get(key).push(req)
+    }
+  }
+
+  const trueMisses = []
+  const allTagged = []
+  for(const cand of candidates) {
+    const base = `${cand.date} ${cand.type}`
+    const attId = cand.record?._id ? (cand.record._id.toString ? cand.record._id.toString() : String(cand.record._id)) : null
+    const correctionRequests = attId ? (correctionsByAttendance.get(attId) || []) : []
+
+    // FIX #1 auto-resolve classification
+    const exceptionResolved = String(cand.record?.exceptionStatus || '').startsWith('Resolved')
+    const autoLeaveConverted =
+      cand.record?.missingCheckout?.reviewAction === 'approved' &&
+      (cand.record?.missingCheckout?.leaveRequestId || String(cand.record?.missingCheckout?.conversionReason || '').toLowerCase().includes('leave'))
+
+    // Fix #2 correction request most relevant status (priority order: approved > pending > rejected)
+    const corrApproved = correctionRequests.some(r => String(r.status) === 'approved')
+    const corrPending = correctionRequests.some(r => String(r.status) === 'pending')
+    const corrRejected = correctionRequests.some(r => String(r.status) === 'rejected')
+
+    let tag = 'TRUE MISS'
+    let countAsTrue = true
+    if(autoLeaveConverted) { tag = 'AUTO LEAVE CONVERTED'; countAsTrue = false }
+    else if(exceptionResolved) { tag = 'LATE SAME-DAY CHECKOUT'; countAsTrue = false }
+    else if(corrApproved) { tag = 'CORRECTION APPROVED'; countAsTrue = false }
+    else if(corrPending) { tag = 'CORRECTION PENDING'; countAsTrue = false }
+    else if(corrRejected) { tag = 'CORR REJECTED = MISS'; countAsTrue = true }
+
+    if(countAsTrue) trueMisses.push(base)
+    allTagged.push(`${base}  [${tag}]`)
+  }
+
+  return { trueMisses, allTagged, totalTrue: trueMisses.length }
 }
 
 export async function processWeeklyHoursCompliance(now=new Date()){

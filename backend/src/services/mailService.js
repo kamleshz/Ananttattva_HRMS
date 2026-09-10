@@ -533,22 +533,29 @@ export async function sendAttendanceMissNotice({ recipient, firstName, date, mis
   return sendGraphEmail({ recipient, subject: `🚨 Attendance exception: ${label}`, html })
 }
 
-export async function sendAttendanceEscalation({ recipient, ccRecipients = [], employeeName, employeeCode, week, misses }) {
+export async function sendAttendanceEscalation({ recipient, ccRecipients = [], employeeName, employeeCode, week, misses, allTagged = null, totalTrue = null }) {
+  const trueCount = Number.isFinite(totalTrue) ? totalTrue : Array.isArray(misses) ? misses.length : 0
+  const breakdownRows = Array.isArray(allTagged) && allTagged.length > 0 ? allTagged : null
   const html = companyEmailTemplate({
     greeting: '🔴  Weekly attendance escalation',
-    summary: `${escapeHtml(employeeName)} has reached ${misses.length} missed check-in/check-out occurrences in the current week and requires HR or Admin attention.`,
+    summary: `${escapeHtml(employeeName)} has ${trueCount} TRUE MISSED check-in/check-out occurrence(s) in the current week and requires HR or Admin attention. Items tagged [LATE SAME-DAY CHECKOUT], [CORRECTION PENDING] or [CORRECTION APPROVED] are NOT counted as true misses.`,
     details: [
       { label: 'Employee', value: `${employeeName} (${employeeCode})`, icon: '👤' },
       { label: 'Week', value: week, icon: '📆' },
-      { label: 'Exceptions', value: misses.join(', '), icon: '⚠️' },
+      { label: 'Exceptions (true miss count)', value: Array.isArray(misses) && misses.length > 0 ? misses.join(', ') : 'None', icon: '⚠️' },
+      ...(breakdownRows ? [{
+        label: 'Exception breakdown (tagged)',
+        value: breakdownRows.join('\n'),
+        icon: '📋'
+      }] : [])
     ],
     actionLabel: 'Open attendance',
     actionUrl: `${env.clientUrl.replace(/\/$/, '')}/attendance`,
     variant: 'danger',
     employeeName,
-    footer: 'HR and Admin should review the exceptions and request corrections where required.',
+    footer: 'HR and Admin should review the exceptions and request corrections where required. Items with [CORRECTION PENDING] tag are awaiting your approve/reject decision — please action before end of week.',
   })
-  return sendGraphEmail({ recipient, ccRecipients, subject: `🔴 Escalation: ${employeeName} (${misses.length} misses)`, html })
+  return sendGraphEmail({ recipient, ccRecipients, subject: `🔴 Escalation: ${employeeName} (${trueCount} true misses)`, html })
 }
 
 export async function sendWeeklyHoursShortfall({ recipient, ccRecipients = [], firstName, employeeName, employeeCode, period, scheduledDays, expectedHours, recordedHours, shortfallHours }) {

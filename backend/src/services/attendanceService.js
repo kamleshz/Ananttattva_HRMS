@@ -62,6 +62,44 @@ export async function checkOut(employee, payload, requestMeta, checkOutTime = ne
   record.earlyCheckoutMinutes=now<shiftEnd?Math.floor((shiftEnd-now)/60000):0
   record.overtimeMinutes=now>shiftEnd?Math.floor((now-shiftEnd)/60000):0
   record.checkoutType = payload.source==='system_auto'?'AUTO_CHECKOUT':payload.source==='hr_correction'?'HR_CORRECTION':'MANUAL_CHECKOUT'
+
+  // FIX #1: Late same-day checkout auto-resolve — employee checked out after shift-end but within
+  // the same local calendar day (00:00..23:59:59). Clear the missing-checkout exception status
+  // so weekly escalation counter does NOT treat this as a real miss (re-verification compatible).
+  const exceptionPending = Boolean(record.missingCheckout?.detectedAt) &&
+    ['Missing Checkout – Justification Pending','Absent – Missing Checkout Overdue'].includes(String(record.exceptionStatus || ''))
+  if (exceptionPending) {
+    const dayStart = startOfLocalDay(record.date)
+    const dayEnd = endOfLocalDay(record.date)
+    if (now >= dayStart && now <= dayEnd) {
+      const resolveReason = now > shiftEnd ? 'late_actual_checkout_same_day' : 'checkout_same_day_after_flag'
+      const prevStatus = record.missingCheckout || {}
+      record.exceptionStatus = `Resolved – ${resolveReason === 'late_actual_checkout_same_day' ? 'Late same-day checkout (auto)' : 'Same-day checkout after detection (auto)'}`
+      record.status = record.attendanceMode === 'wfh' ? 'wfh' : 'present'
+      record.missingCheckout = {
+        ...(prevStatus.toObject ? prevStatus.toObject() : prevStatus),
+        justificationStatus: 'submitted',
+        finalizedAt: new Date(),
+        conversionReason: resolveReason,
+        workingMinutesRestored: Number(record.workingMinutes || 0),
+        reviewNote: `Auto-resolved: actual check-out on ${formatD(now)} at ${formatT(now)}`,
+        history: [
+          ...(prevStatus.history || []),
+          {
+            timestamp: new Date(),
+            status: 'resolved_late_checkout',
+            message: `Actual checkout @ ${formatT(now)} (${resolveReason}). Exception cleared.`,
+            actor: 'system_auto_resolve'
+          }
+        ]
+      }
+      record.completionStatus = Number(record.workingMinutes||0) >= (record.expectedWorkingMinutes||0) ? 'completed' : 'incomplete'
+    }
+  }
+
   await record.save()
   return record
 }
+
+function formatD(date){const d=new Date(date);const y=d.getFullYear();const m=String(d.getMonth()+1).padStart(2,'0');const day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`}
+function formatT(date){const d=new Date(date);return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`}
