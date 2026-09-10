@@ -1,6 +1,6 @@
 const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
 const TOKEN_KEY = "peoplepulse_access_token";
-export const SERVER_FACE_ENABLED = import.meta.env.VITE_FACE_ENGINE === 'uniface';
+export const SERVER_FACE_ENABLED = ['opencv_sface','uniface'].includes(import.meta.env.VITE_FACE_ENGINE);
 const BIOMETRIC_API_URL = (import.meta.env.VITE_BIOMETRIC_API_URL || API_URL).replace(/\/+$/, '');
 
 export function apiUrl(path = "") {
@@ -163,7 +163,9 @@ export const leaveApi = {
     }),
 };
 export const adminApi = { dashboard: () => api("/dashboard/admin") };
+export const systemApi = { biometricHealth: () => api("/biometric-health") };
 export const biometricApi = {
+  health: () => biometricRequest('/biometrics/health'),
   challenge: (mode, attendanceMode = 'office', employeeId) =>
     (SERVER_FACE_ENABLED?biometricRequest:api)("/biometrics/challenge", {
       method: "POST",

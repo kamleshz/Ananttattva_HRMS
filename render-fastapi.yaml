@@ -31,17 +31,25 @@ services:
       - key: MAIL_SENDER_EMAIL
         sync: false
       - key: FACE_ENGINE
-        value: uniface
+        value: opencv_sface
       - key: FACE_DETECTOR
-        value: scrfd_10g
+        value: yunet
       - key: FACE_RECOGNIZER
-        value: arcface_mnet
+        value: sface
       - key: FACE_MODEL_VERSION
-        value: uniface-3.7.1-scrfd10g-arcface-mnet
+        value: opencv-yunet-2023mar-sface-2021dec-minifasnetv2-v1
       - key: FACE_EMBEDDING_KEY
         sync: false
+      - key: BIOMETRIC_SERVICE_KEY
+        sync: false
       - key: FACE_ANTI_SPOOF_ENABLED
-        value: "false"
+        value: "true"
+      - key: FACE_MATCH_THRESHOLD
+        value: "0.363"
+      - key: FACE_LOW_CONFIDENCE_MARGIN
+        value: "0.04"
+      - key: FACE_ANTI_SPOOF_THRESHOLD
+        value: "0.80"
       - key: FACE_ENROLLMENT_CHALLENGE_EXPIRY_SECONDS
         value: "300"
       - key: MANUAL_ATTENDANCE_REVIEW_THRESHOLD

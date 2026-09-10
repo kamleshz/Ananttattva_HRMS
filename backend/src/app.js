@@ -10,6 +10,7 @@ import employeeRoutes from './routes/employeeRoutes.js'
 import dashboardRoutes from './routes/dashboardRoutes.js'
 import leaveRoutes from './routes/leaveRoutes.js'
 import biometricRoutes from './routes/biometricRoutes.js'
+import { biometricProxy } from './middleware/biometricProxy.js'
 import holidayRoutes from './routes/holidayRoutes.js'
 import allowanceRoutes from './routes/allowanceRoutes.js'
 import recruitmentRoutes from './routes/recruitmentRoutes.js'
@@ -56,7 +57,21 @@ app.use(express.json({ limit:'5mb' }))
 app.use(express.urlencoded({ extended:true, limit:'5mb' }))
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'))
 app.use('/api', rateLimit({ windowMs:15*60*1000, limit:500, standardHeaders:'draft-8', legacyHeaders:false }))
+app.use(biometricProxy)
 app.get('/api/health', (_req,res) => res.json({success:true,message:'AT Connect API is healthy',timestamp:new Date().toISOString()}))
+app.get('/api/biometric-health', async (_req,res) => {
+  if (!env.biometricServiceUrl) return res.json({success:true,data:{integrated:false,ready:false,status:'not_configured',message:'ML biometric service is not configured on this deployment.'}})
+  try {
+    const response=await fetch(`${env.biometricServiceUrl}/api/health`,{headers:{'x-biometric-service-key':env.biometricServiceKey},signal:AbortSignal.timeout(env.biometricServiceTimeoutMs)})
+    const payload=await response.json()
+    const face=payload?.services?.faceEngine||{}
+    const ready=Boolean(response.ok&&face.healthy&&face.yunetLoaded&&face.sfaceLoaded&&face.livenessLoaded)
+    return res.json({success:true,data:{integrated:true,ready,status:ready?'ready':'degraded',message:ready?'ML biometric check-in and check-out are ready.':'ML biometric models are configured but not fully ready.',engine:face.engine,modelVersion:payload?.version,yunetLoaded:Boolean(face.yunetLoaded),sfaceLoaded:Boolean(face.sfaceLoaded),livenessLoaded:Boolean(face.livenessLoaded)}})
+  } catch (error) {
+    console.error('[biometric-health] service unavailable', {code:error?.code||error?.name})
+    return res.json({success:true,data:{integrated:true,ready:false,status:'unavailable',message:'ML biometric service is currently unavailable.'}})
+  }
+})
 app.use('/api/auth', authRoutes)
 app.use('/api/attendance', attendanceRoutes)
 app.use('/api/employees', employeeRoutes)

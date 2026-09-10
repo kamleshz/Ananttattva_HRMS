@@ -47,19 +47,31 @@ class Settings(BaseSettings):
     mail_from_name: str = "AT Connect"
     mail_reply_to: str = ""
 
-    face_engine: Literal["uniface"] = "uniface"
-    face_detector: Literal["scrfd_10g", "scrfd_500m"] = "scrfd_10g"
-    face_recognizer: Literal["arcface_mnet", "arcface_resnet"] = "arcface_mnet"
-    face_model_version: str = "uniface-3.7.1-scrfd10g-arcface-mnet"
-    face_match_threshold: float = Field(default=0.45, ge=-1.0, le=1.0)
+    face_engine: Literal["opencv_sface"] = "opencv_sface"
+    face_detector: Literal["yunet"] = "yunet"
+    face_recognizer: Literal["sface"] = "sface"
+    face_model_version: str = "opencv-yunet-2023mar-sface-2021dec-minifasnetv2-v1"
+    face_yunet_model_path: str = "models/face_detection_yunet_2023mar.onnx"
+    face_sface_model_path: str = "models/face_recognition_sface_2021dec.onnx"
+    face_anti_spoof_model_path: str = "models/MiniFASNetV2.onnx"
+    face_match_threshold: float = Field(default=0.363, ge=-1.0, le=1.0)
+    face_low_confidence_margin: float = Field(default=0.04, ge=0.0, le=0.25)
+    face_detection_threshold: float = Field(default=0.90, ge=0.1, le=1.0)
+    face_nms_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     face_min_quality: float = Field(default=0.30, ge=0.0, le=1.0)
-    face_anti_spoof_enabled: bool = False
+    face_min_ratio: float = Field(default=0.06, ge=0.01, le=0.8)
+    face_min_brightness: float = Field(default=45, ge=0, le=255)
+    face_max_brightness: float = Field(default=220, ge=0, le=255)
+    face_min_blur_variance: float = Field(default=80, ge=0)
+    face_anti_spoof_enabled: bool = True
     face_anti_spoof_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    face_anti_spoof_real_class_index: int = Field(default=1, ge=0, le=10)
     face_challenge_expiry_seconds: int = Field(default=30, ge=15, le=120)
     face_enrollment_challenge_expiry_seconds: int = Field(default=300, ge=120, le=900)
     face_verification_expiry_seconds: int = Field(default=90, ge=30, le=300)
     face_max_retries: int = Field(default=2, ge=1, le=5)
     face_embedding_key: SecretStr = SecretStr("")
+    biometric_service_key: SecretStr = SecretStr("")
     face_model_cache_dir: str = ""
     accept_legacy_access_tokens: bool = True
 
@@ -90,6 +102,10 @@ class Settings(BaseSettings):
                 raise ValueError("SEED_ADMIN_PASSWORD must be changed or SEED_ADMIN_ENABLED=false in production")
         if not self.face_embedding_key.get_secret_value():
             raise ValueError("FACE_EMBEDDING_KEY is required in production")
+        if len(self.biometric_service_key.get_secret_value()) < 32:
+            raise ValueError("BIOMETRIC_SERVICE_KEY must contain at least 32 characters in production")
+        if not self.face_anti_spoof_enabled:
+            raise ValueError("FACE_ANTI_SPOOF_ENABLED must be true in production")
         return self
 
     @property

@@ -11,7 +11,7 @@ AT Connect is the HRMS for Ananttattva Private Limited. The current React/Vite +
 
 The staged FastAPI service, migration boundary, audit findings, and module cutover sequence are documented in [docs/FASTAPI_MIGRATION.md](docs/FASTAPI_MIGRATION.md). The backend uses port `7000`; the legacy Express API remains authoritative until each migrated module reaches contract parity.
 
-The server-side UniFace rollout, safe existing-data workflow, rollback procedure, and validation checklist are documented in [docs/UNIFACE_MIGRATION.md](docs/UNIFACE_MIGRATION.md) and [docs/BIOMETRIC_REAL_WORLD_TEST_CHECKLIST.md](docs/BIOMETRIC_REAL_WORLD_TEST_CHECKLIST.md).
+The server-side YuNet/SFace/MiniFASNetV2 rollout, safe existing-data workflow, and deployment procedure are documented in [docs/SFACE_MIGRATION.md](docs/SFACE_MIGRATION.md) and [docs/BIOMETRIC_REAL_WORLD_TEST_CHECKLIST.md](docs/BIOMETRIC_REAL_WORLD_TEST_CHECKLIST.md).
 
 1. Start MongoDB locally, or run `docker compose up -d`.
 2. Copy `backend/.env.example` to `backend/.env` and change `JWT_SECRET`.

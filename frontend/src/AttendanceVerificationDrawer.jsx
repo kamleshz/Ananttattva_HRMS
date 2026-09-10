@@ -361,7 +361,7 @@ export default function AttendanceVerificationDrawer({
       setError(requestError.message);
       if (SERVER_FACE_ENABLED) {
         const code=requestError.code||'UNKNOWN_ERROR';
-        const reasonByCode={FACE_ENGINE_UNAVAILABLE:'BIOMETRIC_SERVICE_UNAVAILABLE',FACE_MODEL_NOT_LOADED:'BIOMETRIC_SERVICE_UNAVAILABLE',BIOMETRIC_NOT_ENROLLED:'BIOMETRIC_SERVICE_UNAVAILABLE',BIOMETRIC_REENROLLMENT_REQUIRED:'BIOMETRIC_SERVICE_UNAVAILABLE',IMAGE_QUALITY_LOW:'POOR_IMAGE_QUALITY',FACE_EMBEDDING_FAILED:'POOR_IMAGE_QUALITY',ANTI_SPOOF_FAILED:'LIVENESS_FAILED',CHALLENGE_EXPIRED:'LIVENESS_FAILED',CHALLENGE_ALREADY_USED:'LIVENESS_FAILED'};
+        const reasonByCode={FACE_ENGINE_UNAVAILABLE:'BIOMETRIC_SERVICE_UNAVAILABLE',FACE_MODEL_NOT_LOADED:'BIOMETRIC_SERVICE_UNAVAILABLE',BIOMETRIC_NOT_ENROLLED:'BIOMETRIC_SERVICE_UNAVAILABLE',BIOMETRIC_REENROLLMENT_REQUIRED:'BIOMETRIC_SERVICE_UNAVAILABLE',NO_FACE_DETECTED:'POOR_IMAGE_QUALITY',MULTIPLE_FACES_DETECTED:'POOR_IMAGE_QUALITY',FACE_TOO_SMALL:'POOR_IMAGE_QUALITY',IMAGE_QUALITY_LOW:'POOR_IMAGE_QUALITY',FACE_EMBEDDING_FAILED:'POOR_IMAGE_QUALITY',ANTI_SPOOF_FAILED:'LIVENESS_FAILED',LIVENESS_FAILED:'LIVENESS_FAILED',CHALLENGE_EXPIRED:'LIVENESS_FAILED',CHALLENGE_ALREADY_USED:'LIVENESS_FAILED'};
         const reasonCode=reasonByCode[code]||code;
         const technical=['BIOMETRIC_SERVICE_UNAVAILABLE','NETWORK_FAILED','LOCATION_FAILED'].includes(reasonCode);
         const attempts=technical?faceAttempts:faceAttempts+1;
@@ -489,7 +489,7 @@ export default function AttendanceVerificationDrawer({
                 </strong>
                 <span>
                   {identityReady
-                    ? "UniFace server match is required before attendance"
+                    ? "Secure server-side SFace match is required before attendance"
                     : "Creating secure face embedding"}
                 </span>
               </div>

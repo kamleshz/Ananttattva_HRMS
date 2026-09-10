@@ -33,12 +33,15 @@ import {
 import Login from "./Login.jsx";
 import {
   attendanceApi,
+  biometricApi,
   dashboardApi,
   employeeApi,
   leaveApi,
   recruitmentApi,
   session,
   workArrangementApi,
+  SERVER_FACE_ENABLED,
+  systemApi,
 } from "./services/api.js";
 import { useLocation, useNavigate } from "./router.jsx";
 import {
@@ -125,6 +128,11 @@ const initials = (user) =>
 
 function Avatar({ children, tone = "teal" }) {
   return <span className={`avatar avatar-${tone} avatar-md`}>{children}</span>;
+}
+
+function MLIntegrationToast({ status }) {
+  const ready=status?.ready===true;
+  return <div className={`ml-ready-toast ${ready?'success':'failure'}`} role="status" aria-live="polite">{ready?<CheckCircle2 size={19}/>:<X size={19}/>}<div><strong>{ready?'ML Model integrated successfully':'ML Model integration is not ready'}</strong><span>{ready?'YuNet, SFace and MiniFASNetV2 check-in/check-out are ready.':status?.message||'The biometric backend or one of its models is unavailable.'}</span></div></div>;
 }
 
 function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path, navigate, pendingRequestCount }) {
@@ -891,6 +899,8 @@ export default function App() {
     [dashboard, setDashboard] = useState(null),
     [loading, setLoading] = useState(Boolean(session.getToken())),
     [menu, setMenu] = useState(false),
+    [mlReadyToast, setMlReadyToast] = useState(false),
+    [mlHealthStatus, setMlHealthStatus] = useState(null),
     [pendingRequestCount, setPendingRequestCount] = useState(0),
     [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem('at-sidebar-collapsed')==='true');
   const navigate = useNavigate(),
@@ -940,8 +950,44 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [user, location.pathname]);
+  useEffect(() => {
+    let cancelled=false;
+    let timer;
+    systemApi.biometricHealth().then(status=>{
+      if(cancelled)return;
+      if(status.ready){
+        console.info('%c[AT Connect ML] ML Model integrated successfully','color:#087e70;font-weight:bold',status);
+      }else{
+        console.error('[AT Connect ML] ML Model integration is not ready',status);
+      }
+      setMlHealthStatus(status);
+      setMlReadyToast(true);
+      timer=window.setTimeout(()=>setMlReadyToast(false),7000);
+    }).catch(()=>{
+      if(cancelled)return;
+      const status={ready:false,message:'The deployed biometric backend could not be reached.'};
+      console.error('[AT Connect ML] ML Model health check failed',status);
+      setMlHealthStatus(status);
+      setMlReadyToast(true);
+      timer=window.setTimeout(()=>setMlReadyToast(false),7000);
+    });
+    return()=>{cancelled=true;if(timer)window.clearTimeout(timer)};
+  }, []);
+  useEffect(() => {
+    if (!user || !SERVER_FACE_ENABLED) return;
+    let cancelled = false;
+    let timer;
+    biometricApi.health().then((health) => {
+      if (!cancelled && health.ready && health.yunetLoaded && health.sfaceLoaded && health.livenessLoaded) {
+        setMlHealthStatus({...health,ready:true});
+        setMlReadyToast(true);
+        timer = window.setTimeout(() => setMlReadyToast(false), 5000);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
+  }, [user]);
   if (location.pathname.startsWith("/public/offers/"))
-    return <PublicOfferPage />;
+    return <><PublicOfferPage />{mlReadyToast&&<MLIntegrationToast status={mlHealthStatus}/>}</>;
   async function authenticated(authUser) {
     setUser(authUser);
     setLoading(true);
@@ -958,14 +1004,14 @@ export default function App() {
   }
   if (loading)
     return (
-      <div className="app-loader">
+      <><div className="app-loader">
         <span className="brand-mark">
           <Sparkles size={18} />
         </span>
         <p>Loading your workspace…</p>
-      </div>
+      </div>{mlReadyToast && <MLIntegrationToast status={mlHealthStatus}/>}</>
     );
-  if (!user) return <Login onAuthenticated={authenticated} />;
+  if (!user) return <><Login onAuthenticated={authenticated} />{mlReadyToast && <MLIntegrationToast status={mlHealthStatus}/>}</>;
   const pages = {
     "/": <HomePage user={user} dashboard={dashboard} />,
     "/my-space": <MySpacePage />,
@@ -997,6 +1043,7 @@ export default function App() {
     );
   return (
     <div className={`app-shell ${sidebarCollapsed?'app-sidebar-collapsed':''}`}>
+      {mlReadyToast && <MLIntegrationToast status={mlHealthStatus}/>}
       <Sidebar
         open={menu}
         close={() => setMenu(false)}

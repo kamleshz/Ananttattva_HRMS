@@ -30,8 +30,14 @@ export const env = {
   manualAttendanceReviewThreshold: Number(process.env.MANUAL_ATTENDANCE_REVIEW_THRESHOLD || 3),
   manualAttendanceFaceRetryLimit: Number(process.env.MANUAL_ATTENDANCE_FACE_RETRY_LIMIT || 2),
   manualAttendanceAllowLocationException: process.env.MANUAL_ATTENDANCE_ALLOW_LOCATION_EXCEPTION !== 'false',
+  biometricServiceUrl: (process.env.BIOMETRIC_SERVICE_URL || '').replace(/\/+$/, ''),
+  biometricServiceKey: process.env.BIOMETRIC_SERVICE_KEY || '',
+  biometricServiceTimeoutMs: Number(process.env.BIOMETRIC_SERVICE_TIMEOUT_MS || 15000),
 }
 
 if (env.nodeEnv === 'production' && env.jwtSecret.includes('development')) {
   throw new Error('JWT_SECRET must be configured in production')
+}
+if (env.nodeEnv === 'production' && env.biometricServiceUrl && env.biometricServiceKey.length < 32) {
+  throw new Error('BIOMETRIC_SERVICE_KEY must be at least 32 characters when the biometric proxy is enabled')
 }

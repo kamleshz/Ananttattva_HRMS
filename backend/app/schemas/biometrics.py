@@ -77,6 +77,11 @@ class BiometricStatus(BiometricModel):
     updated_at: datetime | None = None
     recent_verification_failure_count: int = 0
     manual_attendance_count: int = 0
+    last_verification_at: datetime | None = None
+    last_verification_result: str | None = None
+    last_similarity_score: float | None = None
+    last_liveness_score: float | None = None
+    last_failure_reason: str | None = None
 
 
 class MigrationResult(BiometricModel):

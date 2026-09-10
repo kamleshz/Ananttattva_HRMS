@@ -107,7 +107,21 @@ def create_app(enable_lifespan: bool = True) -> FastAPI:
     @app.get("/api/health", tags=["System"])
     async def health() -> dict[str, Any]:
         face_health = face_engine_manager.health()
-        return {"success": True, "message": "AT Connect API is healthy", "timestamp": datetime.now(UTC).isoformat(), "services": {"faceEngine": "healthy" if face_health["healthy"] else "degraded"}}
+        database_healthy = False
+        try:
+            await database_manager.get_database().command("ping")
+            database_healthy = True
+        except Exception:
+            database_healthy = False
+        return {
+            "success": True,
+            "message": "AT Connect biometric service is healthy"
+            if face_health["healthy"] and database_healthy
+            else "AT Connect biometric service is degraded",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "version": app.version,
+            "services": {"database": {"healthy": database_healthy}, "faceEngine": face_health},
+        }
 
     app.include_router(api_router, prefix="/api")
     return app

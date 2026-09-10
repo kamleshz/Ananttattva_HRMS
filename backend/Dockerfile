@@ -13,6 +13,7 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY app ./app
+RUN python -m app.scripts.download_face_models
 USER atconnect
 EXPOSE 7000
 

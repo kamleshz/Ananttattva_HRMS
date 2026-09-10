@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.core.database import get_database
 from app.core.errors import AppError
 from app.main import create_app
-from app.ml.face_engine import UniFaceEngine
+from app.ml.face_engine import YuNetSFaceEngine
 from app.repositories.biometrics import EmbeddingCipher
 
 
@@ -23,10 +23,15 @@ def image_data() -> str:
     return "data:image/jpeg;base64," + base64.b64encode(encoded).decode()
 
 
-def engine_with(faces: list[SimpleNamespace]) -> UniFaceEngine:
-    engine = UniFaceEngine.__new__(UniFaceEngine)
-    engine.settings = Settings(app_env="test", face_min_quality=0.1, _env_file=None)
-    engine.analyzer = SimpleNamespace(analyze=lambda _image: faces)
+def engine_with(faces: list[np.ndarray]) -> YuNetSFaceEngine:
+    engine = YuNetSFaceEngine.__new__(YuNetSFaceEngine)
+    engine.settings = Settings(app_env="test", face_min_quality=0.1, face_min_blur_variance=0, _env_file=None)
+    engine.detector = SimpleNamespace(
+        setInputSize=lambda _size: None, detect=lambda _image: (None, np.asarray(faces) if faces else None)
+    )
+    engine.recognizer = SimpleNamespace(
+        alignCrop=lambda image, _face: image, feature=lambda _image: np.arange(1, 129, dtype=np.float32)[None, :]
+    )
     engine.anti_spoof = None
     return engine
 
@@ -38,19 +43,19 @@ def error_code(error: AppError) -> str:
 def test_analyze_rejects_no_face_and_multiple_faces() -> None:
     with pytest.raises(AppError) as missing:
         engine_with([]).analyze(image_data())
-    assert error_code(missing.value) == "FACE_NOT_DETECTED"
+    assert error_code(missing.value) == "NO_FACE_DETECTED"
 
-    face = SimpleNamespace(embedding=np.ones(512), bbox=np.array([120, 70, 520, 430]), confidence=0.99)
+    face = np.array([120, 70, 400, 360, 180, 160, 400, 160, 290, 250, 210, 340, 370, 340, 0.99], dtype=np.float32)
     with pytest.raises(AppError) as multiple:
         engine_with([face, face]).analyze(image_data())
-    assert error_code(multiple.value) == "MULTIPLE_FACES"
+    assert error_code(multiple.value) == "MULTIPLE_FACES_DETECTED"
 
 
 def test_embedding_is_normalized_and_similarity_is_cosine() -> None:
-    face = SimpleNamespace(embedding=np.arange(1, 513), bbox=np.array([120, 70, 520, 430]), confidence=0.99)
+    face = np.array([120, 70, 400, 360, 180, 160, 400, 160, 290, 250, 210, 340, 370, 340, 0.99], dtype=np.float32)
     engine = engine_with([face])
     analysis = engine.analyze(image_data())
-    assert analysis.embedding.shape == (512,)
+    assert analysis.embedding.shape == (128,)
     assert np.linalg.norm(analysis.embedding) == pytest.approx(1.0)
     assert engine.compare_embeddings(analysis.embedding, analysis.embedding) == pytest.approx(1.0)
 

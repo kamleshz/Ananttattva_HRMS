@@ -37,18 +37,41 @@ def metadata(request: Request) -> dict[str, str | None]:
 
 
 @router.post("/challenge", response_model=SuccessResponse[ChallengeResult])
-async def challenge(payload: ChallengeRequest, user: CurrentUser, service: BiometricServiceDep) -> SuccessResponse[ChallengeResult]:
+async def challenge(
+    payload: ChallengeRequest, user: CurrentUser, service: BiometricServiceDep
+) -> SuccessResponse[ChallengeResult]:
     return SuccessResponse(data=await service.create_challenge(user, payload))
 
 
 @router.post("/enroll", response_model=SuccessResponse[BiometricStatus])
-async def enroll(payload: EnrollmentRequest, request: Request, user: CurrentUser, service: BiometricServiceDep) -> SuccessResponse[BiometricStatus]:
+async def enroll(
+    payload: EnrollmentRequest, request: Request, user: CurrentUser, service: BiometricServiceDep
+) -> SuccessResponse[BiometricStatus]:
     return SuccessResponse(data=await service.enroll(user, payload, metadata(request)))
 
 
 @router.post("/verify", response_model=SuccessResponse[VerificationResult])
-async def verify(payload: VerificationRequest, request: Request, user: CurrentUser, service: BiometricServiceDep) -> SuccessResponse[VerificationResult]:
+async def verify(
+    payload: VerificationRequest, request: Request, user: CurrentUser, service: BiometricServiceDep
+) -> SuccessResponse[VerificationResult]:
     return SuccessResponse(data=await service.verify(user, payload, metadata(request)))
+
+
+@router.get("/health", response_model=SuccessResponse[dict[str, Any]])
+async def biometric_health(_: CurrentUser, service: BiometricServiceDep) -> SuccessResponse[dict[str, Any]]:
+    health = service.manager.health()
+    return SuccessResponse(
+        data={
+            "ready": bool(
+                health["healthy"] and health["yunetLoaded"] and health["sfaceLoaded"] and health["livenessLoaded"]
+            ),
+            "engine": health["engine"],
+            "modelVersion": service.settings.face_model_version,
+            "yunetLoaded": health["yunetLoaded"],
+            "sfaceLoaded": health["sfaceLoaded"],
+            "livenessLoaded": health["livenessLoaded"],
+        }
+    )
 
 
 @router.get("/me/status", response_model=SuccessResponse[BiometricStatus])
@@ -68,41 +91,79 @@ async def request_re_enrollment(
     employee_id = user.get("employee")
     if not employee_id:
         raise AppError(409, "No employee profile is linked to this account")
-    reviewers = await database.users.find({"role": {"$in": ["super_admin", "hr_admin"]}, "isActive": True}, {"_id": 1}).to_list(length=100)
+    reviewers = await database.users.find(
+        {"role": {"$in": ["super_admin", "hr_admin"]}, "isActive": True}, {"_id": 1}
+    ).to_list(length=100)
     for reviewer in reviewers:
         await database.notifications.update_one(
             {"recipient": reviewer["_id"], "dedupeKey": f"biometric-reenroll:{employee_id}"},
-            {"$setOnInsert": {"recipient": reviewer["_id"], "dedupeKey": f"biometric-reenroll:{employee_id}", "type": "Biometric Re-enrollment", "title": "Biometric re-enrollment requested", "message": "An employee requested live UniFace enrollment.", "employee": employee_id}},
+            {
+                "$setOnInsert": {
+                    "recipient": reviewer["_id"],
+                    "dedupeKey": f"biometric-reenroll:{employee_id}",
+                    "type": "Biometric Re-enrollment",
+                    "title": "Biometric re-enrollment requested",
+                    "message": "An employee requested live SFace enrollment.",
+                    "employee": employee_id,
+                }
+            },
             upsert=True,
         )
-    await AuditRepository(database).record(action="BIOMETRIC_REENROLLMENT_REQUESTED", entity_type="Employee", entity_id=str(employee_id), actor_user_id=str(user["_id"]), actor_employee_id=str(employee_id), role=user.get("role"), **metadata(request))
+    await AuditRepository(database).record(
+        action="BIOMETRIC_REENROLLMENT_REQUESTED",
+        entity_type="Employee",
+        entity_id=str(employee_id),
+        actor_user_id=str(user["_id"]),
+        actor_employee_id=str(employee_id),
+        role=user.get("role"),
+        **metadata(request),
+    )
     return MessageResponse(message="Your re-enrollment request was sent to HR.")
 
 
 @admin_router.get("/employees/{employee_id}/biometrics/status", response_model=SuccessResponse[BiometricStatus])
-async def employee_status(employee_id: str, _: BiometricAdmin, service: BiometricServiceDep) -> SuccessResponse[BiometricStatus]:
+async def employee_status(
+    employee_id: str, _: BiometricAdmin, service: BiometricServiceDep
+) -> SuccessResponse[BiometricStatus]:
     return SuccessResponse(data=await service.status(employee_id))
 
 
 @admin_router.post("/employees/{employee_id}/biometrics/reset", response_model=MessageResponse)
 async def reset_biometrics(
-    employee_id: str, payload: ResetBiometricRequest, request: Request, user: BiometricAdmin,
-    service: BiometricServiceDep, database: Annotated[AsyncDatabase[dict[str, Any]], Depends(get_database)],
+    employee_id: str,
+    payload: ResetBiometricRequest,
+    request: Request,
+    user: BiometricAdmin,
+    service: BiometricServiceDep,
+    database: Annotated[AsyncDatabase[dict[str, Any]], Depends(get_database)],
 ) -> MessageResponse:
     if not ObjectId.is_valid(employee_id) or not await service.repository.employee(employee_id):
         raise AppError(404, "Employee not found")
     await service.repository.reset(employee_id)
-    await AuditRepository(database).record(action="BIOMETRIC_RESET", entity_type="Employee", entity_id=employee_id, actor_user_id=str(user["_id"]), actor_employee_id=str(user.get("employee") or "") or None, role=user.get("role"), metadata={"confirmation": payload.confirmation}, **metadata(request))
-    return MessageResponse(message="UniFace biometric access was reset. Legacy data was preserved.")
+    await AuditRepository(database).record(
+        action="BIOMETRIC_RESET",
+        entity_type="Employee",
+        entity_id=employee_id,
+        actor_user_id=str(user["_id"]),
+        actor_employee_id=str(user.get("employee") or "") or None,
+        role=user.get("role"),
+        metadata={"confirmation": payload.confirmation},
+        **metadata(request),
+    )
+    return MessageResponse(message="SFace biometric access was reset. Legacy data was preserved.")
 
 
 @admin_router.post("/admin/biometrics/migrate/{employee_id}", response_model=SuccessResponse[MigrationResult])
-async def migrate_employee(employee_id: str, request: Request, user: BiometricAdmin, service: BiometricServiceDep) -> SuccessResponse[MigrationResult]:
+async def migrate_employee(
+    employee_id: str, request: Request, user: BiometricAdmin, service: BiometricServiceDep
+) -> SuccessResponse[MigrationResult]:
     return SuccessResponse(data=await service.migrate(user, employee_id, metadata(request)))
 
 
 @admin_router.post("/admin/biometrics/migrate-batch", response_model=SuccessResponse[list[MigrationResult]])
-async def migrate_batch(payload: BatchMigrationRequest, request: Request, user: BiometricAdmin, service: BiometricServiceDep) -> SuccessResponse[list[MigrationResult]]:
+async def migrate_batch(
+    payload: BatchMigrationRequest, request: Request, user: BiometricAdmin, service: BiometricServiceDep
+) -> SuccessResponse[list[MigrationResult]]:
     return SuccessResponse(data=await service.migrate_batch(user, payload, metadata(request)))
 
 

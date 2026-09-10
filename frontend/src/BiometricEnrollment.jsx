@@ -24,7 +24,7 @@ export default function BiometricEnrollment({ value, onChange, employeeId }) {
   async function start(){
     setLoading(true);setError('')
     try{
-      if(SERVER_FACE_ENABLED&&!employeeId)throw new Error('Create the employee record before starting UniFace enrollment.')
+      if(SERVER_FACE_ENABLED&&!employeeId)throw new Error('Create the employee record before starting secure SFace enrollment.')
       const [mediaStream,landmarker,identity,challenge]=await Promise.all([
         navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}),
         loadFaceLandmarker(),SERVER_FACE_ENABLED?Promise.resolve(null):loadFaceIdentityModel(),

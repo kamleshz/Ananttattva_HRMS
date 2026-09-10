@@ -20,7 +20,7 @@ def measurements(rows: list[tuple[str, float]], threshold: float) -> tuple[float
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Calibrate the UniFace cosine match threshold")
+    parser = argparse.ArgumentParser(description="Calibrate the OpenCV SFace cosine match threshold")
     parser.add_argument("csv_file", type=Path)
     parser.add_argument("--minimum", type=float, default=0.20)
     parser.add_argument("--maximum", type=float, default=0.80)
