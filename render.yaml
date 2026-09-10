@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: peoplepulse-hr-api
+    name: ananttattva-hrms
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
