@@ -66,7 +66,10 @@ class Settings(BaseSettings):
     face_anti_spoof_enabled: bool = True
     face_anti_spoof_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     face_anti_spoof_real_class_index: int = Field(default=1, ge=0, le=10)
-    face_challenge_expiry_seconds: int = Field(default=30, ge=15, le=120)
+    # The browser performs a neutral pose, a random liveness action, and a
+    # final stable capture before submission.  Thirty seconds is too short on
+    # normal devices and causes an otherwise successful flow to expire.
+    face_challenge_expiry_seconds: int = Field(default=120, ge=15, le=120)
     face_enrollment_challenge_expiry_seconds: int = Field(default=300, ge=120, le=900)
     face_verification_expiry_seconds: int = Field(default=90, ge=30, le=300)
     face_max_retries: int = Field(default=2, ge=1, le=5)
