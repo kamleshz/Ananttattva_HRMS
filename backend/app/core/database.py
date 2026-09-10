@@ -34,14 +34,15 @@ class DatabaseManager:
 
     async def ensure_indexes(self) -> None:
         database = self.get_database()
-        await database.users.create_index([("email", ASCENDING)], unique=True, name="users_email_unique")
-        await database.employees.create_index([("employeeCode", ASCENDING)], unique=True, name="employees_code_unique")
-        await database.auditLogs.create_index([("timestamp", DESCENDING)], name="audit_timestamp")
+        # Use MongoDB's canonical names so these calls reuse indexes already
+        # created by the authoritative Mongoose models in the shared database.
+        await database.users.create_index([("email", ASCENDING)], unique=True)
+        await database.employees.create_index([("employeeCode", ASCENDING)], unique=True)
+        await database.auditLogs.create_index([("timestamp", ASCENDING)])
         await database.auditLogs.create_index(
             [("entityType", ASCENDING), ("entityId", ASCENDING), ("timestamp", DESCENDING)],
-            name="audit_entity_timeline",
         )
-        await database.employees.create_index([("faceBiometric.migrationStatus", ASCENDING)], name="employee_biometric_migration")
+        await database.employees.create_index([("faceBiometric.migrationStatus", ASCENDING)])
 
 
 database_manager = DatabaseManager()
