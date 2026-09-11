@@ -22,37 +22,119 @@ import offboardingRoutes from './routes/offboardingRoutes.js'
 import { errorHandler, notFound } from './middleware/error.js'
 
 export const app = express()
-const productionClientOrigins = ['https://ananttattva-hrms.vercel.app']
-const allowedClientOrigins = [...new Set([...env.clientUrls, ...productionClientOrigins].flatMap((value) => {
-  const url = new URL(value)
-  if (env.nodeEnv !== 'development') return [url.origin]
-  if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return [url.origin]
 
-  const alias = new URL(url.origin)
-  alias.hostname = url.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1'
-  return [url.origin, alias.origin]
-}))]
+// -----------------------------------------------------------------------------
+// CORS: whitelist + trusted regex fallback for Vercel/Render previews & prod
+// -----------------------------------------------------------------------------
+const productionClientOrigins = [
+  'https://ananttattva-hrms.vercel.app',
+  'https://ananttattva-hrms.onrender.com',
+  'https://atconnect.ananttattva.com',
+]
+const trustedOriginRegexes = [
+  /^https:\/\/[-a-z0-9]+--ananttattva-hrms\.vercel\.app$/i,   // Vercel preview deployments (<deploy>--<project>.vercel.app)
+  /^https:\/\/[-a-z0-9]+\.ananttattva-hrms\.vercel\.app$/i,   // Vercel branch previews (branch-project.vercel.app)
+  /^https:\/\/[-a-z0-9]+\.ananttattva-hrms\.onrender\.com$/i, // Render previews
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i,            // Any local dev port (3000 / 5173 / 7173 / 8080)
+]
+const urlOrigin = (value) => {
+  try { return new URL(value).origin } catch { return null }
+}
+const flatClientOrigins = env.clientUrls
+  .map(urlOrigin)
+  .filter(Boolean)
+const allowedClientOrigins = [...new Set([
+  ...flatClientOrigins,
+  ...productionClientOrigins,
+  ...(env.nodeEnv === 'development'
+    ? flatClientOrigins.flatMap((origin) => {
+        const u = new URL(origin)
+        if (u.hostname === '127.0.0.1' || u.hostname === 'localhost') {
+          const alias = new URL(origin)
+          alias.hostname = u.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1'
+          return [origin, alias.origin]
+        }
+        return [origin]
+      })
+    : flatClientOrigins),
+])]
+const originAllowed = (origin) => {
+  if (!origin) return true  // curl / server-to-server / same-origin no-origin requests
+  if (allowedClientOrigins.includes(origin)) return true
+  return trustedOriginRegexes.some((regex) => regex.test(origin))
+}
+const corsOptions = {
+  exposedHeaders: ['Content-Disposition'],
+  credentials: true,
+  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+  allowedHeaders: ['Accept','Authorization','Content-Type','If-None-Match','x-biometric-service-key','x-requested-with','sentry-trace','baggage'],
+  origin(origin, callback) {
+    // Callback rule pattern: allow (null, true) OR reject (null, false) — NEVER throw new Error
+    // because helmet + middleware stack can swallow stack & cause preflight 500 instead of clean 204.
+    return callback(null, originAllowed(origin))
+  },
+  optionsSuccessStatus: 204,
+  preflightContinue: false,
+}
 
 app.set('trust proxy', 1)
-app.use(helmet())
-app.use(cors({
-  exposedHeaders: ['Content-Disposition'],
-  origin(origin, callback) {
-    if (!origin || allowedClientOrigins.includes(origin)) return callback(null, true)
-    if (env.nodeEnv === 'development') {
-      try {
-        const url = new URL(origin)
-        if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost') && url.protocol === 'http:') {
-          return callback(null, true)
-        }
-      } catch {
-        return callback(new Error(`Origin ${origin} is not allowed by CORS`))
-      }
-    }
-    return callback(new Error(`Origin ${origin} is not allowed by CORS`))
+
+// Helmet with relaxed CSP (required for vercel.app ↔ onrender.com cross-origin XHR)
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'","'unsafe-inline'"],
+      styleSrc: ["'self'","'unsafe-inline'","https://fonts.gstatic.com","https://fonts.googleapis.com"],
+      fontSrc: ["'self'","data:","https://fonts.gstatic.com"],
+      imgSrc: ["'self'","data:","blob:"],
+      connectSrc: ["'self'","https:","wss:"], // allow any HTTPS (Vercel/Render) + biometric service
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: env.nodeEnv === 'production' ? [] : null,
+    },
   },
-  credentials: true,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow public-profile JSON to be loaded across origins
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: env.nodeEnv === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+  frameguard: { action: 'deny' },
+  hidePoweredBy: true,
+  noSniff: true,
+  permittedCrossDomainPolicies: { policy: 'none' },
+  xssFilter: true,
+  dnsPrefetchControl: { allow: true },
+  ieNoOpen: true,
+  originAgentCluster: true,
 }))
+
+// OPTIONS preflight -> EXPLICIT GLOBAL 204 handler before ANY other route runs.
+// Ensures even if origin rejected, 204 with ACAO header sent (not 500/No-Access-*).
+app.options('*', cors(corsOptions))
+app.use(cors(corsOptions))
+
+// Additional safety: always re-apply Access-Control headers after route handler runs
+// (protects against notFound/errorHandler clearing CORS state before response).
+app.use((req, res, next) => {
+  if (req.headers.origin) {
+    const allowed = originAllowed(req.headers.origin)
+    res.setHeader('Vary', 'Origin')
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Origin', req.headers.origin)
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
+      res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Accept,Authorization,Content-Type,If-None-Match,x-biometric-service-key,x-requested-with')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition')
+      res.setHeader('Access-Control-Max-Age', '7200')
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', 'null')
+    }
+  }
+  next()
+})
+
 app.use(express.json({ limit:'5mb' }))
 app.use(express.urlencoded({ extended:true, limit:'5mb' }))
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'))
