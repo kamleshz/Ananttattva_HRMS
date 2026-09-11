@@ -24,17 +24,11 @@ const MIS_ROLES=['super_admin','admin','hr_admin','finance_admin']
 const DAY_MS=86_400_000
 
 function resolveCompanyLogo() {
-  // PREFER backend LOCAL ASSET FIRST because Render/Docker backend process does NOT
-  // include frontend/public folder. Backend/src/assets is copied into backend image
-  // so ALWAYS available at runtime — no ENOENT, logo renders in PDF always.
   const candidates = [
-    // 1) Backend bundled asset (src/assets copied into Docker — #1 priority)
     path.resolve(process.cwd(), 'src', 'assets', 'ananttattva-logo.svg'),
     fileURLToPath(new URL('../assets/ananttattva-logo.svg', import.meta.url)),
     path.resolve(process.cwd(), 'assets', 'ananttattva-logo.svg'),
-    // 2) Legacy PNG in backend assets (if user copies JPG/PNG later)
     path.resolve(process.cwd(), 'src', 'assets', 'Screenshot 2026-09-08 121937.png'),
-    // 3) Monorepo local dev (only works if backend launched from project-root parent)
     path.resolve(process.cwd(), '..', 'frontend', 'public', 'ananttattva-logo.svg'),
     path.resolve(process.cwd(), '..', 'frontend', 'public', 'Screenshot 2026-09-08 121937.png'),
     path.resolve(process.cwd(), 'frontend', 'public', 'ananttattva-logo.svg'),
@@ -48,23 +42,33 @@ function resolveCompanyLogo() {
 }
 const COMPANY_LOGO = resolveCompanyLogo()
 
-async function logoPdfSource(logoPath) {
-  if (!logoPath) return { ok: false }
-  const ext = path.extname(logoPath).toLowerCase()
+function resolveCompanyTrishulIcon() {
+  const candidates = [
+    path.resolve(process.cwd(), 'src', 'assets', 'ananttattva-trishul-icon.svg'),
+    fileURLToPath(new URL('../assets/ananttattva-trishul-icon.svg', import.meta.url)),
+    path.resolve(process.cwd(), 'assets', 'ananttattva-trishul-icon.svg'),
+  ]
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p } catch (_) { /* ignore */ }
+  }
+  return null
+}
+const COMPANY_TRISHUL_ICON = resolveCompanyTrishulIcon()
+
+async function iconPdfSource(iconPath) {
+  if (!iconPath) return { ok: false }
+  const ext = path.extname(iconPath).toLowerCase()
   try {
     if (ext === '.svg' && _sharp) {
-      const png = await _sharp(logoPath).resize({ width: 700, withoutEnlargement: true }).png().toBuffer()
+      const png = await _sharp(iconPath).resize({ height: 62, withoutEnlargement: true }).png().toBuffer()
       return { ok: true, src: png, format: 'png' }
     }
     if (['.png','.jpg','.jpeg'].includes(ext)) {
-      return { ok: true, src: logoPath, format: ext.slice(1) }
+      return { ok: true, src: iconPath, format: ext.slice(1) }
     }
-    if (ext === '.svg') {
-      return { ok: false, reason: 'sharp missing' }
-    }
-    return { ok: false, reason: 'unsupported format' }
+    return { ok: false }
   } catch (err) {
-    console.warn('[PDF] logo convert failed:', err.message)
+    console.warn('[PDF] icon convert failed:', err.message)
     return { ok: false, reason: err.message }
   }
 }
@@ -322,20 +326,44 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const PAGE_RIGHT = 812
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
-      const logo = await logoPdfSource(COMPANY_LOGO)
-      if (logo.ok) {
-        doc.image(logo.src, PAGE_LEFT, 20, { width: 170 })
-      } else {
-        // Branded fallback — mimic logo with colored text (no blank top-left)
-        doc.save()
-        doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(26).text('ANANT', PAGE_LEFT + 10, 22, { characterSpacing: -0.5 })
-        doc.fillColor('#111827').font('Helvetica').fontSize(22).text('TATTVA', PAGE_LEFT + 12, 46, { characterSpacing: 2 })
-        doc.strokeColor('#0f766e').lineWidth(1.2).moveTo(PAGE_LEFT + 4, 70).lineTo(PAGE_LEFT + 166, 70).stroke()
-        doc.restore()
+      // Composite logo rendering (100% tofu-free on Render Docker + all systems):
+      //   • Trishul icon = pure vector paths, converted to PNG via sharp (no fonts).
+      //   • Brand name text = drawn via PDFKit built-in Helvetica (PDF spec guarantees
+      //     Latin glyphs; does NOT depend on system fontconfig).
+      // This avoids the earlier sharp + SVG <text> failure where ANANT/TATTVA rendered
+      // as empty boxes (tofus) because the container lacked usable font files.
+      doc.save()
+      const trishul = await iconPdfSource(COMPANY_TRISHUL_ICON)
+      const ICON_X = PAGE_LEFT + 4
+      const ICON_Y = 18
+      let textStartX = ICON_X + 4
+      if (trishul.ok) {
+        try {
+          doc.image(trishul.src, ICON_X, ICON_Y, { height: 62 })
+          textStartX = ICON_X + 74
+        } catch (imgErr) {
+          console.warn('[PDF] trishul icon image embed failed:', imgErr.message)
+          textStartX = PAGE_LEFT + 10
+        }
       }
+      // Brand words always drawn via Helvetica to guarantee glyphs (no tofus).
+      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(26)
+        .text('ANANT', textStartX, 22, { characterSpacing: -0.2, lineGap: 0 })
+      doc.fillColor('#111827').font('Helvetica').fontSize(21)
+        .text('TATTVA', textStartX + 2, 48, { characterSpacing: 5.5, lineGap: 0 })
+      doc.strokeColor('#0f766e').lineWidth(1.2)
+        .moveTo(PAGE_LEFT + 4, 72).lineTo(Math.max(textStartX + 162, PAGE_LEFT + 170), 72).stroke()
+      doc.restore()
     } catch (logoErr) {
-      console.warn('[PDF] logo embed skipped:', logoErr.message)
-      doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(20).text('ANANTTATTVA', PAGE_LEFT, 28)
+      console.warn('[PDF] composite logo render fallback triggered:', logoErr.message)
+      doc.save()
+      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(26)
+        .text('ANANT', PAGE_LEFT + 10, 22, { characterSpacing: -0.5 })
+      doc.fillColor('#111827').font('Helvetica').fontSize(22)
+        .text('TATTVA', PAGE_LEFT + 12, 46, { characterSpacing: 2 })
+      doc.strokeColor('#0f766e').lineWidth(1.2)
+        .moveTo(PAGE_LEFT + 4, 70).lineTo(PAGE_LEFT + 166, 70).stroke()
+      doc.restore()
     }
 
     doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 78)

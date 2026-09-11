@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 96" role="img" aria-label="Anant Tattva Trishul">
+  <g fill="none" stroke="#f97316" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 48 C 43 48, 51 16, 79 16 C 102 16, 102 80, 79 80 C 51 80, 43 48, 4 48 Z"/>
+    <path d="M50 48 H 103"/>
+    <circle cx="79" cy="48" r="6" fill="#f97316" stroke="none"/>
+  </g>
+</svg>
