@@ -1,5 +1,7 @@
 import { Router } from 'express'
 import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import fs from 'node:fs'
 import PDFDocument from 'pdfkit'
 import { z } from 'zod'
 import { authenticate, authorize } from '../middleware/auth.js'
@@ -17,7 +19,22 @@ router.use(authenticate)
 
 const MIS_ROLES=['super_admin','admin','hr_admin','finance_admin']
 const DAY_MS=86_400_000
-const COMPANY_LOGO=fileURLToPath(new URL('../../../frontend/public/Screenshot 2026-09-08 121937.png',import.meta.url))
+
+function resolveCompanyLogo() {
+  const candidates = [
+    path.resolve(process.cwd(), '..', 'frontend', 'public', 'ananttattva-logo.svg'),
+    path.resolve(process.cwd(), '..', 'frontend', 'public', 'Screenshot 2026-09-08 121937.png'),
+    path.resolve(process.cwd(), 'frontend', 'public', 'ananttattva-logo.svg'),
+    path.resolve(process.cwd(), 'frontend', 'public', 'Screenshot 2026-09-08 121937.png'),
+    fileURLToPath(new URL('../../../frontend/public/ananttattva-logo.svg', import.meta.url)),
+    fileURLToPath(new URL('../../../frontend/public/Screenshot 2026-09-08 121937.png', import.meta.url)),
+  ]
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p } catch (_) { /* ignore */ }
+  }
+  return null
+}
+const COMPANY_LOGO = resolveCompanyLogo()
 
 function formatMinutesToHoursMinutes(totalMinutes) {
   const hours = Math.floor(totalMinutes / 60)
@@ -195,33 +212,74 @@ async function attendanceMis(query){
   return {from:range.from,to:range.to,label:range.label,targetMinutes:{fullDay:FULL_DAY_MINUTES,halfDay:HALF_DAY_MINUTES},fullDayHoursMinutes:formatMinutesToHoursMinutes(FULL_DAY_MINUTES),halfDayHoursMinutes:formatMinutesToHoursMinutes(HALF_DAY_MINUTES),summary,rows,policy}
 }
 
-router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>res.json({success:true,data:await attendanceMis(req.query)})))
-router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>{
-  const report=await attendanceMis(req.query),doc=new PDFDocument({size:'A4',layout:'landscape',margin:30})
-  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="attendance-mis-${report.from}-to-${report.to}.pdf"`);doc.pipe(res)
-  doc.image(COMPANY_LOGO,30,22,{width:165})
-  doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD',30,72)
-  doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`,30,96)
-  const columns=[['Employee',30,130],['ID',160,55],['Department',215,125],['10:15',340,42],['10:30',382,42],['Full',424,45],['Half (App)',469,52],['Incomplete',521,65],['Completed\nHours',586,65],['Complied\nHours',651,65],['Leave <8:30',716,50],['Leave=8:30',766,45],['Leave>8:30',811,42]]
-  const drawHeader=headerY=>{doc.rect(30,headerY,824,46).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.2);columns.forEach(([label,x,width],index)=>doc.text(label,x+4,headerY+(index>=3&&index<=7?28:index>=9&&index<=12?10:18),{width:width-7,align:index>=3?'center':'left',lineGap:1}));doc.text('LATE ARRIVAL',340,headerY+7,{width:84,align:'center'});doc.text('COMPLETED DAYS',424,headerY+7,{width:162,align:'center'})}
-  let y=125
-  drawHeader(y)
-  y+=46
-  for(const [index,row] of report.rows.entries()){
-    if(y>520){doc.addPage();y=35;drawHeader(y);y+=46}
-    doc.rect(30,y,824,25).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(8.8)
-    const values=[
-      row.name,row.employeeCode,row.department,
-      String(row.lateAt1015),String(row.lateAt1030),
-      String(row.fullDays),String(row.halfDays),String(row.incompleteHalfDays),
-      `${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,
-      `${Math.floor(row.compliedMinutes/60)}h ${String(row.compliedMinutes%60).padStart(2,'0')}m`,
-      String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)
-    ]
-    columns.forEach(([,x,width],i)=>doc.text(values[i],x+5,y+8,{width:width-8,ellipsis:true}));y+=25
+router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>{
+  try {
+    const data = await attendanceMis(req.query)
+    res.json({success:true,data})
+  } catch (err) {
+    console.error('[attendanceMis JSON] error:', err.message, err.stack)
+    const message = err instanceof HttpError ? err.message : (err.message || 'Failed to generate report')
+    res.status(err instanceof HttpError ? err.statusCode : 200).json({
+      success: false,
+      message,
+      data: {
+        from: req.query.from || '', to: req.query.to || '', label: 'Report unavailable',
+        targetMinutes: { fullDay: 510, halfDay: 255 },
+        fullDayHoursMinutes: '8h 30m', halfDayHoursMinutes: '4h 15m',
+        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,totalMinutes:0,compliedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
+        rows: [], policy: null
+      }
+    })
   }
-  doc.fillColor('#64748b').fontSize(8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  COMPLIED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,30,560,{width:780})
-  doc.end()
+}))
+router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>{
+  let report
+  try {
+    report = await attendanceMis(req.query)
+  } catch (err) {
+    console.error('[attendanceMis PDF] report generation error:', err.message)
+    const message = err instanceof HttpError ? err.message : (err.message || 'Failed to generate report')
+    return res.status(err instanceof HttpError ? err.statusCode : 500).json({ success: false, message })
+  }
+  try {
+    const doc=new PDFDocument({size:'A4',layout:'landscape',margin:30})
+    res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="attendance-mis-${report.from}-to-${report.to}.pdf"`);doc.pipe(res)
+    try {
+      if (COMPANY_LOGO) doc.image(COMPANY_LOGO,30,22,{width:165})
+    } catch (logoErr) {
+      console.warn('[PDF] logo embed skipped:', logoErr.message)
+      doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(20).text('ANANTTATTVA',30,28)
+    }
+    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD',30,72)
+    doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`,30,96)
+    const columns=[['Employee',30,130],['ID',160,55],['Department',215,125],['10:15',340,42],['10:30',382,42],['Full',424,45],['Half (App)',469,52],['Incomplete',521,65],['Completed\nHours',586,65],['Complied\nHours',651,65],['Leave <8:30',716,50],['Leave=8:30',766,45],['Leave>8:30',811,42]]
+    const drawHeader=headerY=>{doc.rect(30,headerY,824,46).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.2);columns.forEach(([label,x,width],index)=>doc.text(label,x+4,headerY+(index>=3&&index<=7?28:index>=9&&index<=12?10:18),{width:width-7,align:index>=3?'center':'left',lineGap:1}));doc.text('LATE ARRIVAL',340,headerY+7,{width:84,align:'center'});doc.text('COMPLETED DAYS',424,headerY+7,{width:162,align:'center'})}
+    let y=125
+    drawHeader(y)
+    y+=46
+    for(const [index,row] of report.rows.entries()){
+      if(y>520){doc.addPage();y=35;drawHeader(y);y+=46}
+      doc.rect(30,y,824,25).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(8.8)
+      const values=[
+        row.name,row.employeeCode,row.department,
+        String(row.lateAt1015),String(row.lateAt1030),
+        String(row.fullDays),String(row.halfDays),String(row.incompleteHalfDays),
+        `${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,
+        `${Math.floor(row.compliedMinutes/60)}h ${String(row.compliedMinutes%60).padStart(2,'0')}m`,
+        String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)
+      ]
+      columns.forEach(([,x,width],i)=>doc.text(values[i],x+5,y+8,{width:width-8,ellipsis:true}));y+=25
+    }
+    doc.fillColor('#64748b').fontSize(8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  COMPLIED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,30,560,{width:780})
+    doc.end()
+  } catch (pdfErr) {
+    console.error('[attendanceMis PDF] render error:', pdfErr.message, pdfErr.stack)
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: pdfErr.message || 'Failed to generate PDF' })
+    } else {
+      try { pdfDoc && pdfDoc.end() } catch (_) { /* ignore */ }
+    }
+  }
 }))
 router.get('/biometric-health',authorize('super_admin','hr_admin','it_admin'),asyncHandler(async(req,res)=>{
   const input=z.object({from:z.coerce.date().optional(),to:z.coerce.date().optional(),reason:z.string().max(80).optional(),riskLevel:z.enum(['normal','high']).optional()}).parse(req.query)

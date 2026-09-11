@@ -3035,23 +3035,37 @@ export function ReportsPage() {
   useEffect(() => {
     setData(null); setError("");
     if (from > to) return setError("From date must be on or before To date.");
-    reportsApi.attendanceMis(from, to).then(setData).catch((requestError) => setError(requestError.message));
+    reportsApi.attendanceMis(from, to).then((payload) => {
+      setData(payload);
+      if (payload && payload._warnMessage) setError(payload._warnMessage);
+    }).catch((requestError) => {
+      console.warn('[Reports] fetch warning (fallback skeleton):', requestError.message);
+      setError(requestError.message);
+      setData({
+        from, to, label: `${from} to ${to}`,
+        targetMinutes: { fullDay: 510, halfDay: 255 },
+        fullDayHoursMinutes: '8h 30m', halfDayHoursMinutes: '4h 15m',
+        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,totalMinutes:0,compliedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
+        rows: [], policy: null
+      });
+    });
   }, [from, to]);
   const hours = (minutes) => `${Math.floor((minutes || 0) / 60)}h ${String((minutes || 0) % 60).padStart(2, "0")}m`;
   async function exportPdf() {
-    setExporting(true); setError("");
+    setExporting(true); const prevError = error; setError("");
     try {
       const { blob, fileName } = await reportsApi.attendanceMisPdf(from, to);
       const url = URL.createObjectURL(blob), link = document.createElement("a");
       link.href = url; link.download = fileName?.endsWith('.pdf') ? fileName : `attendance-mis-${from}-to-${to}.pdf`; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
-    } catch (requestError) { setError(requestError.message); } finally { setExporting(false); }
+    } catch (requestError) { setError(requestError.message); } finally { setExporting(false); if (!error) setError(prevError); }
   }
   return <div className="mis-dashboard">
     <header className="mis-header">
-      <div className="mis-brand"><img src="/Screenshot%202026-09-08%20121937.png" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Date-range employee working-hours MIS</p></div></div>
+      <div className="mis-brand"><img src="/ananttattva-logo.svg" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Date-range employee working-hours MIS</p></div></div>
       <div className="mis-controls"><label>From date<input type="date" value={from} max={to} onChange={(event)=>setFrom(event.target.value)}/></label><label>To date<input type="date" value={to} min={from} max={today} onChange={(event)=>setTo(event.target.value)}/></label><button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
     </header>
-    {error?<StateMessage error>{error}</StateMessage>:!data?<StateMessage>Loading attendance MIS…</StateMessage>:<>
+    {!data ? <StateMessage>Loading attendance MIS…</StateMessage> : <>
+      {error && <StateMessage error>{error}</StateMessage>}
       <section className="mis-summary">
         {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Full days',data.summary.fullDays,'complete'],['Half days (applied leave)',data.summary.halfDays,'equal'],['Incomplete half (late 3-day rule)',data.summary.incompleteHalfDays,'less'],['Applied full-leave days',data.summary.leaveAppliedFullDays||0,'neutral'],['Applied half-leave days',data.summary.leaveAppliedHalfDays||0,'equal'],['Completed working hours',hours(data.summary.totalMinutes),'hours'],['Complied working hours (leave-aware)',hours(data.summary.compliedMinutes||0),'more'],['Leave before 8:30',data.summary.lessThanTarget,'less'],['Leave on 8:30',data.summary.equalToTarget,'equal'],['Leave after 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
       </section>
@@ -3062,7 +3076,7 @@ export function ReportsPage() {
         const fullH = Math.floor(fullMins / 60), fullM = fullMins % 60;
         const halfH = Math.floor(halfMins / 60), halfM_f = halfMins % 60;
         return <>Targets: <strong>Full day {fullH}h {String(fullM).padStart(2, "0")}m</strong> · <strong>Half day (applied leave only) {halfH}h {String(halfM_f).padStart(2, "0")}m</strong> · <em style={{color:'#0f766e'}}>Complied hours: full-leave days skipped; applied half-day capped @ half-day target; normal days capped @ full-day target.</em></>;
-      })()}</p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th className="mis-group-heading" colSpan="3">Completed Days</th><th rowSpan="2">Completed working hours</th><th rowSpan="2">Complied working hours (leave-aware)</th><th rowSpan="2">Leave before 8:30</th><th rowSpan="2">Leave on 8:30</th><th rowSpan="2">Leave after 8:30</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th><th>Full day</th><th>Half day (applied leave)</th><th>Incomplete half (late 3-day rule)</th></tr></thead><tbody>{data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.fullDays}</td><td>{row.halfDays}</td><td><b className="mis-count less">{row.incompleteHalfDays}</b></td><td><strong>{hours(row.totalMinutes)}</strong></td><td><strong style={{color:'#0f766e'}}>{hours(row.compliedMinutes||0)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
+      })()}</p></div><div className="data-table-wrap"><table className="data-table mis-table"><thead><tr><th rowSpan="2">Employee</th><th rowSpan="2">Employee ID</th><th rowSpan="2">Department</th><th className="mis-group-heading" colSpan="2">Late Arrival</th><th className="mis-group-heading" colSpan="3">Completed Days</th><th rowSpan="2">Completed working hours</th><th rowSpan="2">Complied working hours (leave-aware)</th><th rowSpan="2">Leave before 8:30</th><th rowSpan="2">Leave on 8:30</th><th rowSpan="2">Leave after 8:30</th></tr><tr className="mis-subhead"><th>10:15</th><th>10:30</th><th>Full day</th><th>Half day (applied leave)</th><th>Incomplete half (late 3-day rule)</th></tr></thead><tbody>{data.rows.length === 0 ? <tr><td colSpan="14" className="mis-empty-row">No attendance records for this date range.</td></tr> : data.rows.map(row=><tr key={row.employeeId}><td><strong>{row.name}</strong><small>{row.designation}</small></td><td>{row.employeeCode}</td><td>{row.department}</td><td><b className="mis-count late">{row.lateAt1015}</b></td><td><b className="mis-count late">{row.lateAt1030}</b></td><td>{row.fullDays}</td><td>{row.halfDays}</td><td><b className="mis-count less">{row.incompleteHalfDays}</b></td><td><strong>{hours(row.totalMinutes)}</strong></td><td><strong style={{color:'#0f766e'}}>{hours(row.compliedMinutes||0)}</strong></td><td><b className="mis-count less">{row.lessThanTarget}</b></td><td><b className="mis-count equal">{row.equalToTarget}</b></td><td><b className="mis-count more">{row.moreThanTarget}</b></td></tr>)}</tbody></table></div></section>
     </>}
   </div>;
 }
