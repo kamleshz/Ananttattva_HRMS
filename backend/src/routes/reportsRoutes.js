@@ -11,7 +11,7 @@ import { FaceAttendanceRequest } from '../models/FaceAttendanceRequest.js'
 import { LeaveRequest } from '../models/LeaveRequest.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
-import { dateFromKey, organizationDateKey } from '../services/workingDayService.js'
+import { dateFromKey, organizationDateKey, isScheduledWorkingDay, holidayKeysBetween } from '../services/workingDayService.js'
 import { getAttendancePolicy } from '../services/attendancePolicyService.js'
 
 let _sharp = null
@@ -121,8 +121,9 @@ function buildLeaveAppliedMap(range, approvedLeaves) {
 
 async function attendanceMis(query){
   const range=reportRange(query)
+  const holidayKeys = await holidayKeysBetween(range.start, new Date(range.end.getTime() - DAY_MS))
   const [employees,records,approvedLeaves,policy]=await Promise.all([
-    Employee.find({employeeStatus:{$in:['active','notice_period']}}).select('employeeCode firstName lastName department designation').sort({firstName:1,lastName:1}).lean(),
+    Employee.find({employeeStatus:{$in:['active','notice_period']}}).select('employeeCode firstName lastName department designation dateOfJoining employeeStatus').sort({firstName:1,lastName:1}).lean(),
     Attendance.find({date:{$gte:range.start,$lt:range.end}}).select('employee date workingMinutes lateMinutes status halfDayReason checkIn checkOut attendanceDayType expectedWorkingMinutes completionStatus missedCheckOut').lean(),
     LeaveRequest.find({status:'approved',dayType:{$in:['full_day','half_day']},startDate:{$lt:range.end},endDate:{$gte:range.start}}).select('employee startDate endDate dayType').lean(),
     getAttendancePolicy(),
@@ -132,6 +133,15 @@ async function attendanceMis(query){
   const leaveAppliedMap=buildLeaveAppliedMap(range, approvedLeaves)
   const byEmployee=new Map()
   for(const record of records){const key=String(record.employee);const list=byEmployee.get(key)||[];list.push(record);byEmployee.set(key,list)}
+
+  // Precompute scheduled working date-keys in range (across all employees same calendar).
+  // Uses isScheduledWorkingDay logic built-in: Sun off, 1st/3rd Sat off, 2nd/4th/5th Sat on, Mon-Fri on, not in holidayKeys (public hols off).
+  const scheduledWorkingDateKeys = []
+  for (let day = new Date(range.start); day < range.end; day = new Date(day.getTime() + DAY_MS)) {
+    if (isScheduledWorkingDay(day, holidayKeys)) scheduledWorkingDateKeys.push(organizationDateKey(day))
+  }
+  const scheduledWorkingSet = new Set(scheduledWorkingDateKeys)
+
   const rows=employees.map(employee=>{
     const empId = String(employee._id)
     const items=byEmployee.get(empId)||[]
@@ -162,8 +172,25 @@ async function attendanceMis(query){
       return{...item,halfDay,target,leaveAppliedFull:leaveAppliedFullDayKeys.has(dk),leaveAppliedHalf}
     })
 
-    // Raw Completed Working Hours = sum of actual punches (user can still see he worked those hours even if on full leave)
-    const totalMinutes=classified.reduce((sum,item)=>sum+Number(item.workingMinutes||0),0)
+    // TOTAL WORKING HOURS (EXPECTED) per calendar + employee approved leaves.
+    // Rule (per user): count every scheduled-working day in filter range:
+    //  - If employee applied APPROVED full-day leave → target 0 (remove from expected)
+    //  - If employee applied APPROVED half-day leave → target = HALF_DAY_MINUTES (only half expected).
+    //  - Otherwise normal working day → FULL_DAY_MINUTES.
+    // Weekends (Sun / 1st,3rd Sat) + public holidays never added → 0 automatically because scheduledWorkingSet only contains working days.
+    let expectedWorkingMinutes = 0
+    let fullWorkingDaysExpected = 0
+    let halfWorkingDaysExpected = 0
+    let fullLeaveDaysSkippedFromExpected = 0
+    for (const dk of scheduledWorkingDateKeys) {
+      if (leaveAppliedFullDayKeys.has(dk)) { fullLeaveDaysSkippedFromExpected++; continue /* Rule: full leave applied, expected 0 */ }
+      if (leaveAppliedHalfDayKeys.has(dk)) { expectedWorkingMinutes += HALF_DAY_MINUTES; halfWorkingDaysExpected++; continue }
+      expectedWorkingMinutes += FULL_DAY_MINUTES
+      fullWorkingDaysExpected++
+    }
+
+    // Raw completed punches (kept for debug but not primary UI col now)
+    const rawActualMinutes=classified.reduce((sum,item)=>sum+Number(item.workingMinutes||0),0)
 
     // Classified completed days (backward compat + user requested distinction):
     // fullDays = items where target=FULL day (no applied leave half-day AND attendanceDayType not half)
@@ -186,26 +213,30 @@ async function attendanceMis(query){
     const lateAt1030=items.filter(item=>Number(item.lateMinutes)>15).length
     const legacyLate=items.filter(item=>!Number(item.lateMinutes)&&(item.status==='late'||item.halfDayReason==='three_late_arrivals')).length
 
-    // COMPLIED WORKING MINUTES (leave-aware + capped by full/half day target per user rules):
+    // COMPLETED WORKING HOURS (ACTUAL leave-aware) = the NEW name for what used to be COMPLIED HOURS
+    // (3-rule per user original "Complied" request, now the primary actuals metric).
     // Rules:
     // 1) If employee APPLIED full-day leave → DO NOT CONSIDER that day (entirely skip — no credit, no debit)
     // 2) If employee APPLIED half-day leave (via LeaveRequest) → cap actual working minutes AT HALF_DAY_MINUTES (255).
-    //    If user clocked more than 255, they only get 255 for complied tally (since half leave applied).
-    //    If they clocked less (e.g. only morning 180) → they get actual 180 (shortfall is theirs own, but not capped upward).
-    // 3) Normal day (no leave applied) → cap actual AT FULL_DAY_MINUTES target so extra overtime doesn't double inflate complied figure.
-    // 4) Skip weekend / holiday day if no punches: handled implicitly because completed list only has punches.
-    let compliedMinutes = 0
-    let leaveAppliedFullDaysSkipped = 0
+    //    If user clocked more than 255, they only get 255 for tally (since half leave applied).
+    //    If they clocked less → get actual (shortfall is theirs).
+    // 3) Normal day (no leave applied) → cap actual AT FULL_DAY_MINUTES target so extra overtime doesn't double inflate.
+    let completedWorkingMinutes = 0
     for (const item of classified) {
       const actual = Number(item.workingMinutes||0)
-      if (item.leaveAppliedFull) { leaveAppliedFullDaysSkipped++; continue /* Rule 1 */ }
-      if (item.leaveAppliedHalf) { compliedMinutes += Math.min(actual, HALF_DAY_MINUTES); continue /* Rule 2 */ }
-      compliedMinutes += Math.min(actual, FULL_DAY_MINUTES) /* Rule 3 */
+      if (item.leaveAppliedFull) continue /* Rule 1 */
+      if (item.leaveAppliedHalf) { completedWorkingMinutes += Math.min(actual, HALF_DAY_MINUTES); continue /* Rule 2 */ }
+      completedWorkingMinutes += Math.min(actual, FULL_DAY_MINUTES) /* Rule 3 */
     }
 
-    // Summary counters: how many leave days were applied by employee (used for MIS cards summary)
+    // Leave counter summary (cards + MIS cols)
     const leaveAppliedFullDaysCount = leaveAppliedFullDayKeys.size
     const leaveAppliedHalfDaysCount = leaveAppliedHalfDayKeys.size
+
+    // Target-comparison (Leave before/on/after 8:30 — cols at far right, unchanged)
+    const lessThanTarget=classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)<item.target).length
+    const equalToTarget=classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)===item.target).length
+    const moreThanTarget=classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)>item.target).length
 
     return {
       employeeId:employee._id,
@@ -218,13 +249,19 @@ async function attendanceMis(query){
       lateArrivals:lateAt1015+lateAt1030+legacyLate,
       completedDays:classified.length,
       fullDays,halfDays,incompleteHalfDays,
-      totalMinutes,
-      compliedMinutes,
+      // -- Working hours pair (NEW primary cols as requested Sept 11) --
+      expectedWorkingMinutes,          // "Total Working Hours" (per calendar + leaves) → LEFT col of pair
+      completedWorkingMinutes,         // "Completed Working Hours" (actual, leave-aware 3-rule cap) → RIGHT col of pair
+      // -- legacy / debug keepers (not in UI table, safe to keep) --
+      rawActualMinutes,
+      fullLeaveDaysSkippedExpected: fullLeaveDaysSkippedFromExpected,
+      expectedBreakdown: { fullWorkingDaysExpected, halfWorkingDaysExpected, fullLeaveDaysSkipped: fullLeaveDaysSkippedFromExpected },
+      // -- counters for summary chips --
       leaveAppliedFullDays: leaveAppliedFullDaysCount,
       leaveAppliedHalfDays: leaveAppliedHalfDaysCount,
-      lessThanTarget:classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)<item.target).length,
-      equalToTarget:classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)===item.target).length,
-      moreThanTarget:classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)>item.target).length
+      lessThanTarget,
+      equalToTarget,
+      moreThanTarget
     }
   })
   const summary=rows.reduce((result,row)=>({
@@ -234,15 +271,16 @@ async function attendanceMis(query){
     fullDays:result.fullDays+row.fullDays,
     halfDays:result.halfDays+row.halfDays,
     incompleteHalfDays:result.incompleteHalfDays+row.incompleteHalfDays,
-    totalMinutes:result.totalMinutes+row.totalMinutes,
-    compliedMinutes:(result.compliedMinutes||0)+row.compliedMinutes,
+    // NEW pair aggregate
+    expectedWorkingMinutes: (result.expectedWorkingMinutes||0) + row.expectedWorkingMinutes,
+    completedWorkingMinutes:(result.completedWorkingMinutes||0) + row.completedWorkingMinutes,
     leaveAppliedFullDays:(result.leaveAppliedFullDays||0)+row.leaveAppliedFullDays,
     leaveAppliedHalfDays:(result.leaveAppliedHalfDays||0)+row.leaveAppliedHalfDays,
     lessThanTarget:result.lessThanTarget+row.lessThanTarget,
     equalToTarget:result.equalToTarget+row.equalToTarget,
     moreThanTarget:result.moreThanTarget+row.moreThanTarget
-  }),{employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,totalMinutes:0,compliedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
-  return {from:range.from,to:range.to,label:range.label,targetMinutes:{fullDay:FULL_DAY_MINUTES,halfDay:HALF_DAY_MINUTES},fullDayHoursMinutes:formatMinutesToHoursMinutes(FULL_DAY_MINUTES),halfDayHoursMinutes:formatMinutesToHoursMinutes(HALF_DAY_MINUTES),summary,rows,policy}
+  }),{employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
+  return {from:range.from,to:range.to,label:range.label,targetMinutes:{fullDay:FULL_DAY_MINUTES,halfDay:HALF_DAY_MINUTES},fullDayHoursMinutes:formatMinutesToHoursMinutes(FULL_DAY_MINUTES),halfDayHoursMinutes:formatMinutesToHoursMinutes(HALF_DAY_MINUTES),summary,rows,policy,scheduledWorkingDays:scheduledWorkingDateKeys.length}
 }
 
 router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>{
@@ -259,7 +297,7 @@ router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)
         from: req.query.from || '', to: req.query.to || '', label: 'Report unavailable',
         targetMinutes: { fullDay: 510, halfDay: 255 },
         fullDayHoursMinutes: '8h 30m', halfDayHoursMinutes: '4h 15m',
-        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,totalMinutes:0,compliedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
+        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
         rows: [], policy: null
       }
     })
@@ -314,8 +352,8 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
       ['Full',422,40],
       ['Half (App)',462,46],
       ['Incomplete',508,54],
-      ['Completed\nHours',562,60],
-      ['Complied\nHours',622,60],
+      ['Total\nHours',562,60],
+      ['Completed\nHours',622,60],
       ['Leave <8:30',682,44],
       ['Leave=8:30',726,44],
       ['Leave>8:30',770,42],  // ends at 812 (A4 right-margin line)
@@ -348,14 +386,14 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
         row.name,row.employeeCode,row.department,
         String(row.lateAt1015),String(row.lateAt1030),
         String(row.fullDays),String(row.halfDays),String(row.incompleteHalfDays),
-        `${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,
-        `${Math.floor(row.compliedMinutes/60)}h ${String(row.compliedMinutes%60).padStart(2,'0')}m`,
+        `${Math.floor(row.expectedWorkingMinutes/60)}h ${String(row.expectedWorkingMinutes%60).padStart(2,'0')}m`,
+        `${Math.floor(row.completedWorkingMinutes/60)}h ${String(row.completedWorkingMinutes%60).padStart(2,'0')}m`,
         String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)
       ]
       columns.forEach(([,x,width],i)=>doc.text(values[i],x+4,y+8,{width:width-8,ellipsis:true}))
       y+=25
     }
-    doc.fillColor('#64748b').fontSize(7.8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  COMPLIED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,PAGE_LEFT,560,{width:PAGE_USABLE})
+    doc.fillColor('#64748b').fontSize(7.8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  TOTAL HOURS: Calendar scheduled-working days (Sun + 1st/3rd Sat + public holidays excluded); full applied leave = 0, half applied leave = half target, normal = full target.  ·  COMPLETED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,PAGE_LEFT,560,{width:PAGE_USABLE})
     doc.end()
   } catch (pdfErr) {
     console.error('[attendanceMis PDF] render error:', pdfErr.message, pdfErr.stack)
