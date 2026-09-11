@@ -16,7 +16,7 @@ const candidateSchema = new mongoose.Schema({
   dateOfBirth: Date, gender: String, currentCity: String, address: String, preferredLocation: String, pan: { type: String, uppercase: true, trim: true, sparse: true, index: true },
   jobOpening: { type: objectId, ref: 'JobOpening' }, position: { type: String, required: true }, department: { type: String, required: true, index: true }, designation: String,
   employmentType: { type: String, enum: ['Permanent','Probation','Contract','Internship','Consultant'], default: 'Permanent' }, workLocation: String,
-  hiringManager: { type: objectId, ref: 'User' }, recruiter: { type: objectId, ref: 'User' }, source: { type: String, default: 'Other', index: true }, expectedJoiningDate: Date,
+  hiringManager: { type: objectId, ref: 'User' }, recruiter: { type: objectId, ref: 'User' }, source: { type: String, enum: ['LinkedIn','Naukri.com','Indeed','Referral','Direct Walk-in','Email','Campus','Consultant','WhatsApp','Employee Portal','Other'], default: 'Other', index: true }, expectedJoiningDate: Date,
   totalExperience: { type: Number, default: 0 }, relevantExperience: { type: Number, default: 0 }, currentCompany: String, currentDesignation: String,
   currentCTC: Number, expectedCTC: Number, noticePeriod: String, lastWorkingDate: Date, negotiableNoticePeriod: Boolean, skills: [String], qualification: String,
   employmentStatus: { type: String, enum: ['Employed','Serving Notice Period','Unemployed','Fresher'], default: 'Fresher' }, notes: String,
@@ -60,11 +60,37 @@ const offerSchema = new mongoose.Schema({
 
 const approvalSchema = new mongoose.Schema({ offer:{ type:objectId, ref:'OfferLetter', required:true, index:true }, candidate:{ type:objectId, ref:'Candidate', required:true }, version:Number, status:{ type:String, enum:['Pending','Approved','Changes Requested','Rejected'], default:'Pending', index:true }, submittedBy:{ type:objectId, ref:'User' }, reviewedBy:{ type:objectId, ref:'User' }, remarks:String, reviewedAt:Date }, { timestamps:true, collection:'offerApprovals' })
 const templateSchema = new mongoose.Schema({ name:{ type:String, required:true }, company:String, branch:String, employmentType:String, headerLogo:String, companyAddress:String, authorizedSignatory:String, signature:String, footer:String, terms:String, emailSubject:String, emailBody:String, isActive:{ type:Boolean, default:true }, createdBy:{ type:objectId, ref:'User' } }, { timestamps:true, collection:'offerTemplates' })
-const jobOpeningSchema = new mongoose.Schema({ code:String, title:{ type:String, required:true }, department:String, designation:String, employmentType:String, location:String, hiringManager:{ type:objectId, ref:'User' }, openings:Number, status:{ type:String, default:'Open' } }, { timestamps:true, collection:'jobOpenings' })
+const jobOpeningSchema = new mongoose.Schema({ code:String, title:{ type:String, required:true }, department:String, designation:String, employmentType:String, location:String, hiringManager:{ type:objectId, ref:'User' }, openings:Number, status:{ type:String, enum:['Open','On Hold','Closed','Filled'], default:'Open' }, minExperience:Number, maxExperience:Number, minAnnualCTC:Number, maxAnnualCTC:Number, acceptableNoticeDays:{ type:Number, default:30 }, mandatorySkills:[{ name:String, weight:{ type:Number, default:10 } }], goodToHaveSkills:[String], description:String, qualificationRequired:String }, { timestamps:true, collection:'jobOpenings' })
 const communicationSchema = new mongoose.Schema({ candidate:{ type:objectId, ref:'Candidate' }, offer:{ type:objectId, ref:'OfferLetter' }, type:String, recipient:String, subject:String, status:String, providerMessageId:String, sentBy:{ type:objectId, ref:'User' } }, { timestamps:true, collection:'candidateCommunications' })
 const settingsSchema = new mongoose.Schema({ key:{ type:String, unique:true }, value:mongoose.Schema.Types.Mixed, updatedBy:{ type:objectId, ref:'User' } }, { timestamps:true, collection:'recruitmentSettings' })
 const notificationSchema = new mongoose.Schema({ recipient:{ type:objectId, ref:'User', required:true, index:true }, type:String, title:String, message:String, candidate:{ type:objectId, ref:'Candidate' }, offer:{ type:objectId, ref:'OfferLetter' }, employee:{ type:objectId, ref:'Employee' }, dedupeKey:{type:String,index:true,sparse:true}, readAt:Date }, { timestamps:true, collection:'notifications' })
 notificationSchema.index({recipient:1,dedupeKey:1},{unique:true,sparse:true})
+
+const screeningChecklistSchema = new mongoose.Schema({
+  candidate:{ type:objectId, ref:'Candidate', required:true, unique:true, index:true },
+  items:[{
+    checkId:{ type:String, enum:['resume_valid','contactable','min_exp_meet','notice_ok','current_ctc_band','expected_ctc_acceptable','location_match','mandatory_skills_60pct','red_flags_clear'], required:true },
+    weight:{ type:Number, required:true },
+    status:{ type:String, enum:['Pass','Fail','N/A'], required:true },
+    hrNote:String,
+    autoFilled:{ type:Boolean, default:false }
+  }],
+  overallScore:{ type:Number, min:0, max:100 },
+  hrOverrideScore:{ type:Number, min:0, max:100 },
+  completedAt:Date,
+  completedBy:{ type:objectId, ref:'User' },
+  rejectionReason:String,
+  suggestedNextAction:{ type:String, enum:['Shortlist','Hold','Reject'] }
+}, { timestamps:true, collection:'screeningChecklists' })
+
+const rejectionLogSchema = new mongoose.Schema({
+  candidate:{ type:objectId, ref:'Candidate', required:true, index:true },
+  fromStage:{ type:String, required:true },
+  toStage:{ type:String, required:true },
+  reason:{ type:String, enum:['Experience mismatch','Skill mismatch','CTC expectations too high','Notice period too long','Location mismatch','Failed interview rounds','Academic backlog / marks','Document verification failed','Candidate declined offer','Candidate no-show','Duplicate profile','Other'], required:true },
+  noteText:String,
+  rejectedBy:{ type:objectId, ref:'User', required:true }
+}, { timestamps:true, collection:'rejectionLogs' })
 
 export const Candidate = mongoose.model('Candidate', candidateSchema)
 export const Interview = mongoose.model('Interview', interviewSchema)
@@ -78,3 +104,5 @@ export const JobOpening = mongoose.model('JobOpening', jobOpeningSchema)
 export const CandidateCommunication = mongoose.model('CandidateCommunication', communicationSchema)
 export const RecruitmentSetting = mongoose.model('RecruitmentSetting', settingsSchema)
 export const Notification = mongoose.model('Notification', notificationSchema)
+export const ScreeningChecklist = mongoose.model('ScreeningChecklist', screeningChecklistSchema)
+export const CandidateRejection = mongoose.model('CandidateRejection', rejectionLogSchema)

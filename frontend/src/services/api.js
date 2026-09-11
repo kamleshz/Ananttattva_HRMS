@@ -319,6 +319,13 @@ export const recruitmentApi = {
   notifications: () => api("/recruitment/notifications"),
   startOnboarding: (id) =>
     api(`/recruitment/candidates/${id}/start-onboarding`, { method: "POST" }),
+  openPositions: () => api("/recruitment/open-positions"),
+  createOpenPosition: (data) =>
+    api("/recruitment/open-positions", { method: "POST", body: JSON.stringify(data) }),
+  updateOpenPosition: (id, data) =>
+    api(`/recruitment/open-positions/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteOpenPosition: (id) =>
+    api(`/recruitment/open-positions/${id}`, { method: "DELETE" }),
 };
 export const organizationApi = {
   publicProfile: () => api('/organization/public-profile'),

@@ -92,6 +92,7 @@ const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", 
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
+    ["Open Positions", "/recruitment/open-positions"],
     ["Interview Details", "/recruitment/interviews"],
     ["Candidates", "/recruitment/candidates"],
     ["Interview Calendar", "/recruitment/calendar"],
@@ -100,6 +101,7 @@ const recruitmentNavigation = {
   ],
   super_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
+    ["Open Positions", "/recruitment/open-positions"],
     ["Interview Details", "/recruitment/interviews"],
     ["Candidates", "/recruitment/candidates"],
     ["Selected Candidates", "/recruitment/selected"],
@@ -110,6 +112,7 @@ const recruitmentNavigation = {
   ],
   admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
+    ["Open Positions", "/recruitment/open-positions"],
     ["Interview Details", "/recruitment/interviews"],
     ["Candidates", "/recruitment/candidates"],
     ["Selected Candidates", "/recruitment/selected"],

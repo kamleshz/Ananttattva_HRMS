@@ -7,7 +7,7 @@ import { HttpError } from '../utils/httpError.js'
 import { User } from '../models/User.js'
 import { Employee } from '../models/Employee.js'
 import { OrganizationProfile } from '../models/Organization.js'
-import { Candidate, CandidateActivity, CandidateCommunication, CandidateDocument, Interview, InterviewFeedback, JobOpening, Notification, OfferApproval, OfferLetter, OfferTemplate, RecruitmentSetting } from '../models/Recruitment.js'
+import { Candidate, CandidateActivity, CandidateCommunication, CandidateDocument, CandidateRejection, Interview, InterviewFeedback, JobOpening, Notification, OfferApproval, OfferLetter, OfferTemplate, RecruitmentSetting, ScreeningChecklist } from '../models/Recruitment.js'
 import { candidateStages, createPublicOfferToken, generateOfferPdf, notifyRoles, recordActivity, validateCandidateTransition } from '../services/recruitmentService.js'
 import { sendGraphEmail } from '../services/mailService.js'
 import { env } from '../config/env.js'
@@ -74,6 +74,45 @@ router.patch('/candidates/:id/status', authorize(...hrRoles), asyncHandler(async
   await recordActivity(req,{action:'Candidate Stage Changed',candidate:candidate._id,oldValues:{stage:old},newValues:{stage},message:`Moved from ${old} to ${stage}`})
   res.json({success:true,data:candidate})
 }))
+router.post('/candidates/:id/transition', authorize(...hrRoles), asyncHandler(async (req,res) => {
+  const input=z.object({toStage:z.string().min(1),notes:optionalString,rejection:z.object({reason:z.enum(['Experience mismatch','Skill mismatch','CTC expectations too high','Notice period too long','Location mismatch','Failed interview rounds','Academic backlog / marks','Document verification failed','Candidate declined offer','Candidate no-show','Duplicate profile','Other']),noteText:optionalString}).optional()}).parse(req.body)
+  const candidate=await Candidate.findById(req.params.id)
+  if(!candidate) throw new HttpError(404,'Candidate not found')
+  const fromStage=candidate.currentStage
+  validateCandidateTransition(fromStage,input.toStage,req.user.role)
+  candidate.currentStage=input.toStage
+  candidate.updatedBy=req.user._id
+  if(input.toStage==='Rejected'||input.rejection){
+    candidate.status='Rejected'
+    candidate.rejection={reason:input.rejection?.reason,rejectedBy:req.user._id,rejectedAt:new Date(),noteText:input.rejection?.noteText}
+    await CandidateRejection.create({candidate:candidate._id,fromStage,toStage:input.toStage,reason:input.rejection?.reason||'Other',noteText:input.rejection?.noteText||input.notes,rejectedBy:req.user._id})
+  }
+  await candidate.save()
+  await recordActivity(req,{action:'Candidate Stage Transition',candidate:candidate._id,oldValues:{stage:fromStage},newValues:{stage:input.toStage,notes:input.notes},message:`Transitioned from ${fromStage} to ${input.toStage}${input.notes?`: ${input.notes}`:''}`})
+  res.json({success:true,data:candidate})
+}))
+router.post('/candidates/:id/screening-checklist', authorize(...hrRoles), asyncHandler(async (req,res) => {
+  const defaultWeights={resume_valid:10,contactable:10,min_exp_meet:15,notice_ok:15,current_ctc_band:15,expected_ctc_acceptable:10,location_match:10,mandatory_skills_60pct:20,red_flags_clear:0}
+  const validCheckIds=Object.keys(defaultWeights)
+  const itemSchema=z.object({checkId:z.enum(validCheckIds),weight:z.number().nonnegative().optional(),status:z.enum(['Pass','Fail','N/A']),hrNote:optionalString,autoFilled:z.boolean().optional()})
+  const input=z.object({items:z.array(itemSchema).min(1)}).parse(req.body)
+  const candidate=await Candidate.findById(req.params.id)
+  if(!candidate) throw new HttpError(404,'Candidate not found')
+  const items=input.items.map(it=>({...it,weight:it.weight!=null?it.weight:defaultWeights[it.checkId]}))
+  let totalWeight=0, earnedWeight=0
+  for(const it of items){
+    if(it.status!=='N/A'){ totalWeight+=it.weight; if(it.status==='Pass') earnedWeight+=it.weight }
+  }
+  const overallScore=totalWeight>0?Math.round((earnedWeight/totalWeight)*100):0
+  let suggestedNextAction='Hold'
+  if(overallScore>=80) suggestedNextAction='Shortlist'
+  else if(overallScore<50) suggestedNextAction='Reject'
+  const checklist=await ScreeningChecklist.findOneAndUpdate({candidate:candidate._id},{candidate:candidate._id,items,overallScore,completedAt:new Date(),completedBy:req.user._id,suggestedNextAction},{new:true,upsert:true,runValidators:true,setDefaultsOnInsert:true})
+  if(candidate.currentStage==='New Candidate'||candidate.currentStage==='Screening'){ candidate.currentStage=suggestedNextAction==='Reject'?'Rejected':suggestedNextAction==='Shortlist'?'Shortlisted':'Screening'; candidate.updatedBy=req.user._id; await candidate.save() }
+  if(suggestedNextAction==='Reject'){ await CandidateRejection.create({candidate:candidate._id,fromStage:candidate.currentStage,toStage:'Rejected',reason:'Other',noteText:'Auto-rejected by screening checklist score',rejectedBy:req.user._id}) }
+  await recordActivity(req,{action:'Screening Checklist Completed',candidate:candidate._id,message:`Screening score: ${overallScore}/100, suggested action: ${suggestedNextAction}`})
+  res.json({success:true,data:{score:overallScore,action:suggestedNextAction,checklist}})
+}))
 router.post('/candidates/:id/documents', authorize(...hrRoles), upload.single('file'), asyncHandler(async (req,res) => {
   if(!req.file) throw new HttpError(422,'A PDF or image document is required')
   const candidate=await Candidate.findById(req.params.id); if(!candidate) throw new HttpError(404,'Candidate not found')
@@ -128,6 +167,8 @@ router.get('/offer-templates', authorize(...hrRoles), asyncHandler(async (_req,r
 router.post('/offer-templates', authorize('super_admin'), asyncHandler(async (req,res)=>res.status(201).json({success:true,data:await OfferTemplate.create({...req.body,createdBy:req.user._id})})))
 router.get('/job-openings', authorize(...hrRoles), asyncHandler(async (_req,res)=>res.json({success:true,data:await JobOpening.find().sort({createdAt:-1})})))
 router.post('/job-openings', authorize(...hrRoles), asyncHandler(async (req,res)=>res.status(201).json({success:true,data:await JobOpening.create(req.body)})))
+router.put('/job-openings/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{const item=await JobOpening.findByIdAndUpdate(req.params.id,req.body,{new:true,runValidators:true});if(!item)throw new HttpError(404,'Job opening not found');res.json({success:true,data:item})}))
+router.delete('/job-openings/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{const item=await JobOpening.findByIdAndDelete(req.params.id);if(!item)throw new HttpError(404,'Job opening not found');res.json({success:true,data:{message:'Job opening deleted successfully'}})}))
 router.get('/reports/summary', authorize('super_admin'), asyncHandler(async (_req,res)=>{const [sources,departments,stages]=await Promise.all([Candidate.aggregate([{$group:{_id:'$source',count:{$sum:1}}}]),Candidate.aggregate([{$group:{_id:'$department',count:{$sum:1}}}]),Candidate.aggregate([{$group:{_id:'$currentStage',count:{$sum:1}}}])]);res.json({success:true,data:{sources,departments,stages}})}))
 router.get('/settings', authorize('super_admin'), asyncHandler(async (_req,res)=>res.json({success:true,data:await RecruitmentSetting.find()})))
 router.put('/settings/:key', authorize('super_admin'), asyncHandler(async (req,res)=>res.json({success:true,data:await RecruitmentSetting.findOneAndUpdate({key:req.params.key},{value:req.body.value,updatedBy:req.user._id},{new:true,upsert:true})})))

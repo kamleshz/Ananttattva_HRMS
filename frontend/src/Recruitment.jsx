@@ -1,26 +1,39 @@
 import { useEffect, useState } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
+  Briefcase,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  DollarSign,
   Download,
   ExternalLink,
+  File,
   FileCheck2,
   FileText,
+  Grip,
   Mail,
   MapPin,
+  PauseCircle,
+  Pencil,
   Phone,
+  PlayCircle,
   Plus,
+  Save,
   Search,
   Send,
   ShieldCheck,
   Star,
+  Trash,
+  Trash2,
+  UploadCloud,
   UserCheck,
   UserRound,
   UsersRound,
@@ -53,6 +66,49 @@ const stages = [
   "Onboarding Pending",
   "Joined",
   "Rejected",
+];
+const stageClassMap = {
+  "New Candidate": "stage-new",
+  "Screening": "stage-screening",
+  "Shortlisted": "stage-shortlisted",
+  "Interview Scheduled": "stage-interview",
+  "Interview In Progress": "stage-interview",
+  "Interview Completed": "stage-assessment",
+  "Selected": "stage-selected",
+  "Offer Draft": "stage-offer",
+  "Pending Super Admin Approval": "stage-offer-approval",
+  "Approved": "stage-offer-pending",
+  "Offer Sent": "stage-offer",
+  "Offer Viewed": "stage-reference",
+  "Offer Accepted": "stage-selected",
+  "Onboarding Pending": "stage-onboarding",
+  "Joined": "stage-joined",
+  "Rejected": "stage-rejected",
+  "Hold": "stage-hold",
+};
+const screeningChecklistItems = [
+  "Resume/CV completeness and quality",
+  "Minimum experience criteria met",
+  "Educational qualification verified",
+  "Mandatory technical skills present",
+  "Communication / language proficiency",
+  "Cultural fit indicators review",
+  "Notice period acceptable (≤ 90 days)",
+  "CTC expectations within budget range",
+  "Location / work arrangement preference match",
+];
+const rejectionReasons = [
+  "Skill mismatch",
+  "Experience mismatch",
+  "Salary expectations too high",
+  "Notice period too long",
+  "Location mismatch",
+  "Qualification insufficient",
+  "Cultural fit concerns",
+  "Failed assessment or test",
+  "Background verification failed",
+  "Candidate withdrew application",
+  "Position placed on hold",
 ];
 const sources = [
   "Job Portal",
@@ -169,6 +225,7 @@ function CandidateForm({ onClose, onCreated }) {
       pan: "",
       position: "",
       department: "",
+      jobOpening: "",
       designation: "",
       employmentType: "Permanent",
       workLocation: "",
@@ -186,267 +243,420 @@ function CandidateForm({ onClose, onCreated }) {
       notes: "",
     }),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [validationErrors, setValidationErrors] = useState({}),
+    [isDragging, setIsDragging] = useState(false),
+    [resumeFile, setResumeFile] = useState(null),
+    [resumeMeta, setResumeMeta] = useState(null),
+    [resumeError, setResumeError] = useState(""),
+    [openPositionsList, setOpenPositionsList] = useState([]);
   const update = (key, value) => setForm({ ...form, [key]: value });
-  async function submit(event) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const pos = await recruitmentApi.openPositions();
+        if (Array.isArray(pos)) setOpenPositionsList(pos);
+      } catch (_) {}
+    })();
+  }, []);
+
+  const acceptResumeTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword", "application/rtf", "text/rtf"];
+  const acceptResumeExts = [".pdf", ".docx", ".doc", ".rtf"];
+  const maxResumeSize = 5 * 1024 * 1024;
+
+  function isValidResumeName(name) {
+    const n = name.toLowerCase();
+    return acceptResumeExts.some((e) => n.endsWith(e));
+  }
+
+  async function countPdfPages(file) {
     try {
-      const data = await recruitmentApi.createCandidate({
-        ...form,
-        totalExperience: Number(form.totalExperience),
-        relevantExperience: Number(form.relevantExperience),
-        currentCTC: Number(form.currentCTC),
-        expectedCTC: Number(form.expectedCTC),
-        skills: form.skills
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean),
+      const ab = await file.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let s = "";
+      for (let i = 0; i < Math.min(bytes.length, 200000); i++) s += String.fromCharCode(bytes[i]);
+      const matches = [...s.matchAll(/\/Type\s*\/Pages[^/]*?\/Count\s+(\d+)/g)];
+      if (!matches.length) return "N/A";
+      let count = 0;
+      matches.forEach((m) => {
+        const c = parseInt(m[1], 10);
+        if (!isNaN(c) && c > count) count = c;
       });
+      return count || "N/A";
+    } catch (_) {
+      return "N/A";
+    }
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  function humanType(file) {
+    const n = file.name.toLowerCase();
+    if (n.endsWith(".pdf")) return "PDF";
+    if (n.endsWith(".docx")) return "DOCX";
+    if (n.endsWith(".doc")) return "DOC";
+    if (n.endsWith(".rtf")) return "RTF";
+    return file.type || "File";
+  }
+
+  async function handleResumeFile(file) {
+    setResumeError("");
+    if (!file) return;
+    if (file.size > maxResumeSize) {
+      setResumeError(`File exceeds 5MB limit (${formatSize(file.size)})`);
+      return;
+    }
+    const typeOk = acceptResumeTypes.includes(file.type) || isValidResumeName(file.name);
+    if (!typeOk) {
+      setResumeError("Only PDF, DOCX, DOC, and RTF files are accepted");
+      return;
+    }
+    const pages = file.name.toLowerCase().endsWith(".pdf") ? await countPdfPages(file) : "N/A";
+    setResumeFile(file);
+    setResumeMeta({
+      name: file.name,
+      size: formatSize(file.size),
+      type: humanType(file),
+      pages: String(pages),
+    });
+  }
+
+  const onDragEnter = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const onDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const onDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); };
+  const onDragStop = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); };
+  const onDrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); setIsDragging(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) handleResumeFile(f);
+  };
+  const onFileInput = (e) => {
+    const f = e.target.files?.[0];
+    if (f) handleResumeFile(f);
+    e.target.value = "";
+  };
+  const removeResume = () => { setResumeFile(null); setResumeMeta(null); setResumeError(""); };
+
+  function validateForScreening() {
+    const errs = {};
+    if (!form.firstName.trim()) errs.firstName = "First name required";
+    if (!form.lastName.trim()) errs.lastName = "Last name required";
+    if (!form.email.trim() || !/^\S+@\S+\.\S+$/.test(form.email)) errs.email = "Valid email required";
+    if (!form.mobile.trim() || !/^[0-9+\-\s()]{7,}$/.test(form.mobile)) errs.mobile = "Valid mobile required";
+    if (!form.position.trim()) errs.position = "Position required";
+    if (!form.department.trim()) errs.department = "Department required";
+    if (!form.jobOpening.trim()) errs.jobOpening = "Job opening required";
+    if (!form.source.trim()) errs.source = "Source required";
+    if (form.totalExperience === "" || form.totalExperience === null || Number(form.totalExperience) < 0) errs.totalExperience = "Experience required";
+    if (!form.currentCompany.trim()) errs.currentCompany = "Current company required";
+    if (!form.noticePeriod.trim()) errs.noticePeriod = "Notice period required";
+    if (!resumeFile) errs.resume = "Resume file required for screening";
+    setValidationErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  async function saveAsDraft() {
+    setBusy(true); setError(""); setValidationErrors({});
+    try {
+      const payload = {
+        ...form,
+        currentStage: "New Candidate",
+        totalExperience: Number(form.totalExperience) || 0,
+        relevantExperience: Number(form.relevantExperience) || 0,
+        currentCTC: Number(form.currentCTC) || 0,
+        expectedCTC: Number(form.expectedCTC) || 0,
+        skills: form.skills.split(",").map((x) => x.trim()).filter(Boolean),
+      };
+      const data = await recruitmentApi.createCandidate(payload);
+      if (data?._id && resumeFile) {
+        try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+      }
       onCreated(data);
     } catch (e) {
-      setError(e.message);
+      setError(e.message || "Failed to save draft");
     } finally {
       setBusy(false);
     }
   }
+
+  async function submitForScreening() {
+    if (!validateForScreening()) return;
+    setBusy(true); setError("");
+    try {
+      const payload = {
+        ...form,
+        currentStage: "Screening",
+        totalExperience: Number(form.totalExperience) || 0,
+        relevantExperience: Number(form.relevantExperience) || 0,
+        currentCTC: Number(form.currentCTC) || 0,
+        expectedCTC: Number(form.expectedCTC) || 0,
+        skills: form.skills.split(",").map((x) => x.trim()).filter(Boolean),
+      };
+      const data = await recruitmentApi.createCandidate(payload);
+      if (data?._id && resumeFile) {
+        try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+      }
+      onCreated(data);
+    } catch (e) {
+      setError(e.message || "Failed to submit candidate");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Drawer
       title="Add candidate"
-      subtitle="Create a complete candidate profile"
+      subtitle="Create candidate and upload resume"
       onClose={onClose}
       wide
     >
-      <form className="recruitment-form" onSubmit={submit}>
+      <div className="recruitment-form">
         <FormSection title="Personal details">
           <div className="form-grid three">
-            <Field label="First name *">
+            <Field label={<><span className="rec-label">First name</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.firstName}
-                onChange={(e) => update("firstName", e.target.value)}
-                required
+                onChange={(e) => { update("firstName", e.target.value); if (validationErrors.firstName) setValidationErrors({...validationErrors, firstName:""}); }}
+                style={validationErrors.firstName?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.firstName && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.firstName}</small>}
             </Field>
-            <Field label="Middle name">
-              <input
-                value={form.middleName}
-                onChange={(e) => update("middleName", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Middle name</span>}>
+              <input value={form.middleName} onChange={(e) => update("middleName", e.target.value)} />
             </Field>
-            <Field label="Last name *">
+            <Field label={<><span className="rec-label">Last name</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.lastName}
-                onChange={(e) => update("lastName", e.target.value)}
-                required
+                onChange={(e) => { update("lastName", e.target.value); if (validationErrors.lastName) setValidationErrors({...validationErrors, lastName:""}); }}
+                style={validationErrors.lastName?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.lastName && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.lastName}</small>}
             </Field>
-            <Field label="Personal email *">
+            <Field label={<><span className="rec-label">Personal email</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 type="email"
                 value={form.email}
-                onChange={(e) => update("email", e.target.value)}
-                required
+                onChange={(e) => { update("email", e.target.value); if (validationErrors.email) setValidationErrors({...validationErrors, email:""}); }}
+                style={validationErrors.email?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.email && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.email}</small>}
             </Field>
-            <Field label="Mobile number *">
+            <Field label={<><span className="rec-label">Mobile number</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.mobile}
-                onChange={(e) => update("mobile", e.target.value)}
-                required
+                onChange={(e) => { update("mobile", e.target.value); if (validationErrors.mobile) setValidationErrors({...validationErrors, mobile:""}); }}
+                style={validationErrors.mobile?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.mobile && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.mobile}</small>}
             </Field>
-            <Field label="Alternate mobile">
-              <input
-                value={form.alternateMobile}
-                onChange={(e) => update("alternateMobile", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Alternate mobile</span>}>
+              <input value={form.alternateMobile} onChange={(e) => update("alternateMobile", e.target.value)} />
             </Field>
-            <Field label="Current city">
-              <input
-                value={form.currentCity}
-                onChange={(e) => update("currentCity", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Current city</span>}>
+              <input value={form.currentCity} onChange={(e) => update("currentCity", e.target.value)} />
             </Field>
-            <Field label="Preferred location">
-              <input
-                value={form.preferredLocation}
-                onChange={(e) => update("preferredLocation", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Preferred location</span>}>
+              <input value={form.preferredLocation} onChange={(e) => update("preferredLocation", e.target.value)} />
             </Field>
-            <Field label="PAN">
-              <input
-                value={form.pan}
-                onChange={(e) => update("pan", e.target.value)}
-              />
+            <Field label={<span className="rec-label">PAN</span>}>
+              <input value={form.pan} onChange={(e) => update("pan", e.target.value)} />
             </Field>
-            <Field label="Current address" className="span-three">
-              <textarea
-                value={form.address}
-                onChange={(e) => update("address", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Current address</span>} className="span-three">
+              <textarea value={form.address} onChange={(e) => update("address", e.target.value)} />
             </Field>
           </div>
         </FormSection>
+
         <FormSection title="Position details">
           <div className="form-grid three">
-            <Field label="Position applied for *">
+            <Field label={<><span className="rec-label">Position applied for</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.position}
-                onChange={(e) => update("position", e.target.value)}
-                required
+                onChange={(e) => { update("position", e.target.value); if (validationErrors.position) setValidationErrors({...validationErrors, position:""}); }}
+                style={validationErrors.position?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.position && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.position}</small>}
             </Field>
-            <Field label="Department *">
+            <Field label={<><span className="rec-label">Department</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.department}
-                onChange={(e) => update("department", e.target.value)}
-                required
+                onChange={(e) => { update("department", e.target.value); if (validationErrors.department) setValidationErrors({...validationErrors, department:""}); }}
+                style={validationErrors.department?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.department && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.department}</small>}
             </Field>
-            <Field label="Designation">
-              <input
-                value={form.designation}
-                onChange={(e) => update("designation", e.target.value)}
-              />
+            <Field label={<><span className="rec-label">Job Opening</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+              {openPositionsList.length ? (
+                <select
+                  value={form.jobOpening}
+                  onChange={(e) => { update("jobOpening", e.target.value); if (validationErrors.jobOpening) setValidationErrors({...validationErrors, jobOpening:""}); }}
+                  style={validationErrors.jobOpening?{borderColor:"#dc2626"}:undefined}
+                >
+                  <option value="">Select opening</option>
+                  {openPositionsList.map((p) => (
+                    <option key={p._id || p.id || p.position} value={p._id || p.id || p.position}>
+                      {p.position} {p.department ? `· ${p.department}` : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={form.jobOpening}
+                  placeholder="Enter or select opening"
+                  onChange={(e) => { update("jobOpening", e.target.value); if (validationErrors.jobOpening) setValidationErrors({...validationErrors, jobOpening:""}); }}
+                  style={validationErrors.jobOpening?{borderColor:"#dc2626"}:undefined}
+                />
+              )}
+              {validationErrors.jobOpening && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.jobOpening}</small>}
             </Field>
-            <Field label="Employment type">
-              <select
-                value={form.employmentType}
-                onChange={(e) => update("employmentType", e.target.value)}
-              >
-                {[
-                  "Permanent",
-                  "Probation",
-                  "Contract",
-                  "Internship",
-                  "Consultant",
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
+            <Field label={<span className="rec-label">Designation</span>}>
+              <input value={form.designation} onChange={(e) => update("designation", e.target.value)} />
+            </Field>
+            <Field label={<span className="rec-label">Employment type</span>}>
+              <select value={form.employmentType} onChange={(e) => update("employmentType", e.target.value)}>
+                {["Permanent","Probation","Contract","Internship","Consultant"].map((x) => (<option key={x}>{x}</option>))}
               </select>
             </Field>
-            <Field label="Work location">
-              <input
-                value={form.workLocation}
-                onChange={(e) => update("workLocation", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Work location</span>}>
+              <input value={form.workLocation} onChange={(e) => update("workLocation", e.target.value)} />
             </Field>
-            <Field label="Source">
+            <Field label={<><span className="rec-label">Source</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <select
                 value={form.source}
-                onChange={(e) => update("source", e.target.value)}
+                onChange={(e) => { update("source", e.target.value); if (validationErrors.source) setValidationErrors({...validationErrors, source:""}); }}
+                style={validationErrors.source?{borderColor:"#dc2626"}:undefined}
               >
-                {sources.map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
+                {sources.map((x) => (<option key={x}>{x}</option>))}
               </select>
+              {validationErrors.source && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.source}</small>}
             </Field>
           </div>
         </FormSection>
+
         <FormSection title="Experience & compensation">
           <div className="form-grid three">
-            <Field label="Total experience (years)">
+            <Field label={<><span className="rec-label">Total experience (yrs)</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
-                type="number"
-                min="0"
-                step=".5"
+                type="number" min="0" step=".5"
                 value={form.totalExperience}
-                onChange={(e) => update("totalExperience", e.target.value)}
+                onChange={(e) => { update("totalExperience", e.target.value); if (validationErrors.totalExperience) setValidationErrors({...validationErrors, totalExperience:""}); }}
+                style={validationErrors.totalExperience?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.totalExperience && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.totalExperience}</small>}
             </Field>
-            <Field label="Relevant experience">
-              <input
-                type="number"
-                min="0"
-                step=".5"
-                value={form.relevantExperience}
-                onChange={(e) => update("relevantExperience", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Relevant experience</span>}>
+              <input type="number" min="0" step=".5" value={form.relevantExperience} onChange={(e) => update("relevantExperience", e.target.value)} />
             </Field>
-            <Field label="Current company">
+            <Field label={<><span className="rec-label">Current company</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.currentCompany}
-                onChange={(e) => update("currentCompany", e.target.value)}
+                onChange={(e) => { update("currentCompany", e.target.value); if (validationErrors.currentCompany) setValidationErrors({...validationErrors, currentCompany:""}); }}
+                style={validationErrors.currentCompany?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.currentCompany && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.currentCompany}</small>}
             </Field>
-            <Field label="Current designation">
-              <input
-                value={form.currentDesignation}
-                onChange={(e) => update("currentDesignation", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Current designation</span>}>
+              <input value={form.currentDesignation} onChange={(e) => update("currentDesignation", e.target.value)} />
             </Field>
-            <Field label="Current CTC">
-              <input
-                type="number"
-                min="0"
-                value={form.currentCTC}
-                onChange={(e) => update("currentCTC", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Current CTC (LPA)</span>}>
+              <input type="number" min="0" step=".5" value={form.currentCTC} onChange={(e) => update("currentCTC", e.target.value)} />
             </Field>
-            <Field label="Expected CTC">
-              <input
-                type="number"
-                min="0"
-                value={form.expectedCTC}
-                onChange={(e) => update("expectedCTC", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Expected CTC (LPA)</span>}>
+              <input type="number" min="0" step=".5" value={form.expectedCTC} onChange={(e) => update("expectedCTC", e.target.value)} />
             </Field>
-            <Field label="Notice period">
+            <Field label={<><span className="rec-label">Notice period</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
               <input
                 value={form.noticePeriod}
-                onChange={(e) => update("noticePeriod", e.target.value)}
+                placeholder="e.g. 30 days, Immediate"
+                onChange={(e) => { update("noticePeriod", e.target.value); if (validationErrors.noticePeriod) setValidationErrors({...validationErrors, noticePeriod:""}); }}
+                style={validationErrors.noticePeriod?{borderColor:"#dc2626"}:undefined}
               />
+              {validationErrors.noticePeriod && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{validationErrors.noticePeriod}</small>}
             </Field>
-            <Field label="Qualification">
-              <input
-                value={form.qualification}
-                onChange={(e) => update("qualification", e.target.value)}
-              />
+            <Field label={<span className="rec-label">Qualification</span>}>
+              <input value={form.qualification} onChange={(e) => update("qualification", e.target.value)} />
             </Field>
-            <Field label="Employment status">
-              <select
-                value={form.employmentStatus}
-                onChange={(e) => update("employmentStatus", e.target.value)}
-              >
-                {[
-                  "Employed",
-                  "Serving Notice Period",
-                  "Unemployed",
-                  "Fresher",
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
+            <Field label={<span className="rec-label">Employment status</span>}>
+              <select value={form.employmentStatus} onChange={(e) => update("employmentStatus", e.target.value)}>
+                {["Employed","Serving Notice Period","Unemployed","Fresher"].map((x) => (<option key={x}>{x}</option>))}
               </select>
             </Field>
-            <Field label="Skills (comma separated)" className="span-three">
-              <input
-                value={form.skills}
-                onChange={(e) => update("skills", e.target.value)}
-                placeholder="React, Node.js, MongoDB"
-              />
+            <Field label={<span className="rec-label">Skills (comma separated)</span>} className="span-three">
+              <input value={form.skills} onChange={(e) => update("skills", e.target.value)} placeholder="React, Node.js, MongoDB" />
             </Field>
           </div>
         </FormSection>
+
         <FormSection title="Additional notes">
-          <Field label="Internal notes">
-            <textarea
-              rows="4"
-              value={form.notes}
-              onChange={(e) => update("notes", e.target.value)}
-            />
+          <Field label={<span className="rec-label">Internal notes</span>}>
+            <textarea rows="4" value={form.notes} onChange={(e) => update("notes", e.target.value)} />
           </Field>
         </FormSection>
+
+        <FormSection title="Resume upload">
+          <div
+            className={`resume-dropzone${isDragging ? " dragging" : ""}`}
+            onDragEnter={onDragEnter}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            onDragEnd={onDragStop}
+          >
+            <input
+              type="file"
+              id="resume-file-input"
+              accept=".pdf,.docx,.doc,.rtf"
+              style={{display:"none"}}
+              onChange={onFileInput}
+            />
+            <UploadCloud size={42} color={isDragging ? "#f97316" : "#0f766e"} strokeWidth={1.5} />
+            <div style={{marginTop:14}}>
+              <strong style={{fontSize:15,color:"#0f172a",fontWeight:700,display:"block"}}>
+                {isDragging ? "Drop resume here…" : "Drag & drop resume file"}
+              </strong>
+              <span style={{fontSize:12,color:"#64748b",marginTop:6,display:"block"}}>
+                or <label htmlFor="resume-file-input" style={{color:"#0f766e",fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>browse files</label> — PDF/DOCX/DOC/RTF · max 5MB
+              </span>
+            </div>
+          </div>
+          {validationErrors.resume && <p className="file-error-note">{validationErrors.resume}</p>}
+          {resumeError && <p className="file-error-note">{resumeError}</p>}
+          {resumeMeta && (
+            <div className="file-meta-card">
+              <span className="file-meta-icon"><File size={20} color="#0f766e" /></span>
+              <div className="file-meta-body">
+                <strong className="file-meta-name">{resumeMeta.name}</strong>
+                <span className="file-meta-info">
+                  {resumeMeta.size} · {resumeMeta.type} {resumeMeta.pages !== "N/A" ? `· ${resumeMeta.pages} pages` : ""}
+                </span>
+              </div>
+              <button type="button" className="file-meta-delete" onClick={removeResume} title="Remove resume">
+                <X size={16} />
+              </button>
+            </div>
+          )}
+        </FormSection>
+
         {error && <p className="form-error">{error}</p>}
-        <div className="drawer-form-actions">
-          <button type="button" className="secondary-button" onClick={onClose}>
+
+        <div className="add-candidate-actions">
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button className="primary-button" disabled={busy}>
-            {busy ? "Creating…" : "Add candidate"} <ArrowRightIcon />
+          <button type="button" className="btn-draft" onClick={saveAsDraft} disabled={busy}>
+            <Save size={15} /> Save as Draft
+          </button>
+          <button type="button" className="btn-screening" onClick={submitForScreening} disabled={busy}>
+            <PlayCircle size={15} /> {busy ? "Submitting…" : "Submit & Start Screening"}
           </button>
         </div>
-      </form>
+      </div>
     </Drawer>
   );
 }
@@ -459,6 +669,122 @@ function FormSection({ title, children }) {
       <h3>{title}</h3>
       {children}
     </section>
+  );
+}
+
+function ChipsInput({ value = [], onChange, placeholder = "Type and press Enter", variant = "mandatory" }) {
+  const [inputText, setInputText] = useState("");
+  const addChip = () => {
+    const t = inputText.trim();
+    if (!t) return;
+    if (!value.includes(t)) onChange([...value, t]);
+    setInputText("");
+  };
+  const removeChip = (chip) => onChange(value.filter((x) => x !== chip));
+  return (
+    <div className="chips-input-wrapper">
+      <div
+        className={`chips-input-container${variant === "mandatory" ? " mandatory-wrap" : " good-wrap"}`}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) e.currentTarget.querySelector(".chips-native-input")?.focus();
+        }}
+      >
+        {value.map((chip) => (
+          <span key={chip} className={`skill-chip ${variant}`}>
+            {chip}
+            <button type="button" onClick={(e) => { e.stopPropagation(); removeChip(chip); }}>
+              <X size={12} />
+            </button>
+          </span>
+        ))}
+        <input
+          type="text"
+          className="chips-native-input"
+          value={inputText}
+          placeholder={value.length ? "" : placeholder}
+          onChange={(e) => setInputText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") {
+              e.preventDefault();
+              addChip();
+            } else if (e.key === "Backspace" && !inputText && value.length) {
+              removeChip(value[value.length - 1]);
+            }
+          }}
+          onBlur={(e) => { addChip(); }}
+        />
+      </div>
+      <small className="chips-hint">Press Enter or comma to add · Backspace to remove last</small>
+    </div>
+  );
+}
+
+function RejectionDialog({ candidateId, onClose, onSubmitted }) {
+  const [reason, setReason] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async () => {
+    if (!reason) { setError("Rejection reason is required"); return; }
+    setBusy(true); setError("");
+    try {
+      await recruitmentApi.reject(candidateId, { reason, remarks, sendEmailNotification: false });
+      if (onSubmitted) onSubmitted();
+      onClose();
+    } catch (e) {
+      setError(e.message || "Failed to reject candidate");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Drawer
+      title="Reject Candidate"
+      subtitle="Selection of rejection reason is mandatory"
+      onClose={onClose}
+    >
+      <div style={{padding:"4px 20px 20px"}}>
+        <div className="rejection-dialog-body">
+          <label className="rejection-field-label">
+            <span className="rec-label">Rejection reason</span> <sup style={{color:"#dc2626"}}>*</sup>
+          </label>
+          <select
+            value={reason}
+            onChange={(e) => { setReason(e.target.value); if (error) setError(""); }}
+            style={error ? {borderColor:"#dc2626"} : undefined}
+            className="rejection-select"
+          >
+            <option value="">Select a reason</option>
+            {rejectionReasons.map((r) => (<option key={r} value={r}>{r}</option>))}
+          </select>
+          {error && <small style={{color:"#dc2626",fontSize:11,marginTop:6,display:"block"}}>{error}</small>}
+
+          <label className="rejection-field-label">
+            <span className="rec-label">Additional remarks (optional)</span>
+          </label>
+          <textarea
+            className="rejection-textarea"
+            rows={4}
+            placeholder="Optional context for the candidate record…"
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+          />
+        </div>
+        <div className="drawer-form-actions" style={{marginTop:20}}>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            style={{background:"linear-gradient(135deg,#dc2626 0%,#b91c1c 100%)",border:"none"}}
+            disabled={busy || !reason}
+            onClick={submit}
+          >
+            {busy ? "Processing…" : "Confirm Rejection"}
+          </button>
+        </div>
+      </div>
+    </Drawer>
   );
 }
 
@@ -1066,8 +1392,8 @@ function RecruitmentDashboard({ onAdd }) {
           </div>
         </div>
         <div className="pipeline-board">
-          {stages.slice(0, 13).map((stage) => (
-            <div key={stage}>
+          {stages.slice(0, 14).map((stage) => (
+            <div key={stage} className={stageClassMap[stage] || "stage-new"}>
               <span>{stage}</span>
               <strong>{data?.stageCounts?.[stage] || 0}</strong>
               <i />
@@ -1137,13 +1463,57 @@ function RecruitmentDashboard({ onAdd }) {
   );
 }
 
+function TablePaginationTop({ page, totalItems, pageSize, onChange }) {
+  const pages = Math.ceil(totalItems / pageSize);
+  if (pages <= 1) return null;
+  const start = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+  return (
+    <nav className="table-pagination-top" aria-label="Table pagination top">
+      <span>
+        Showing {start}–{end} of {totalItems}
+      </span>
+      <div>
+        <button
+          onClick={() => onChange(Math.max(1, page - 1))}
+          disabled={page === 1}
+          aria-label="Previous page"
+        >
+          ‹
+        </button>
+        {Array.from({ length: Math.min(5, pages) }, (_, i) => {
+          const n = Math.max(1, Math.min(pages - 4, page - 2)) + i;
+          return (
+            <button
+              key={n}
+              className={n === page ? "active" : ""}
+              onClick={() => onChange(n)}
+            >
+              {n}
+            </button>
+          );
+        })}
+        <button
+          onClick={() => onChange(Math.min(pages, page + 1))}
+          disabled={page === pages}
+          aria-label="Next page"
+        >
+          ›
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 function CandidatesView({ selectedOnly = false, onAdd }) {
   const navigate = useNavigate();
   const [items, setItems] = useState([]),
     [search, setSearch] = useState(""),
     [schedule, setSchedule] = useState(null),
     [selecting, setSelecting] = useState(null),
-    [offer, setOffer] = useState(null);
+    [offer, setOffer] = useState(null),
+    [page, setPage] = useState(1),
+    [pageSize] = useState(10);
   const load = () => recruitmentApi.candidates(search).then(setItems);
   useEffect(() => {
     recruitmentApi.candidates().then(setItems);
@@ -1163,6 +1533,7 @@ function CandidatesView({ selectedOnly = false, onAdd }) {
         ].includes(x.currentStage),
       )
     : items;
+  const pagedItems = shown.slice((page - 1) * pageSize, page * pageSize);
   return (
     <>
       <PageHeader
@@ -1180,37 +1551,87 @@ function CandidatesView({ selectedOnly = false, onAdd }) {
         )}
       </PageHeader>
       <section className="recruitment-card">
-        <div className="candidate-toolbar">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              load();
-            }}
-          >
-            <Search size={16} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, email, mobile or candidate ID"
-            />
-          </form>
-          <select>
-            <option>All departments</option>
-          </select>
-          <select>
-            <option>All stages</option>
-            {stages.map((x) => (
-              <option key={x}>{x}</option>
-            ))}
-          </select>
+        <div className="candidates-toolbar-wrap">
+          <div className="candidates-toolbar-left">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                load();
+                setPage(1);
+              }}
+            >
+              <Search size={16} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, email, mobile or candidate ID"
+              />
+            </form>
+            <select>
+              <option>All departments</option>
+            </select>
+            <select>
+              <option>All stages</option>
+              {stages.map((x) => (
+                <option key={x}>{x}</option>
+              ))}
+            </select>
+          </div>
+          <TablePaginationTop
+            page={page}
+            totalItems={shown.length}
+            pageSize={pageSize}
+            onChange={setPage}
+          />
         </div>
         <CandidateTable
-          items={shown}
+          items={pagedItems}
           onView={(item) => navigate(`/recruitment/candidates/${item._id}`)}
           onSchedule={setSchedule}
           onSelect={setSelecting}
           onOffer={setOffer}
         />
+        <nav className="table-pagination" aria-label="Table pagination">
+          <span>
+            Showing {(page - 1) * pageSize + 1}–
+            {Math.min(page * pageSize, shown.length)} of {shown.length}
+          </span>
+          <div>
+            <button
+              onClick={() => setPage(Math.max(1, page - 1))}
+              disabled={page === 1}
+            >
+              ‹
+            </button>
+            {Array.from(
+              { length: Math.min(5, Math.ceil(shown.length / pageSize)) },
+              (_, i) => {
+                const n =
+                  Math.max(
+                    1,
+                    Math.min(Math.ceil(shown.length / pageSize) - 4, page - 2),
+                  ) + i;
+                return (
+                  <button
+                    key={n}
+                    className={n === page ? "active" : ""}
+                    onClick={() => setPage(n)}
+                  >
+                    {n}
+                  </button>
+                );
+              },
+            )}
+            <button
+              onClick={() =>
+                setPage(Math.min(Math.ceil(shown.length / pageSize), page + 1))
+              }
+              disabled={page === Math.ceil(shown.length / pageSize)}
+            >
+              ›
+            </button>
+          </div>
+        </nav>
       </section>
       {schedule && (
         <ScheduleForm
@@ -1807,7 +2228,15 @@ function CandidateProfile({ user }) {
     [schedule, setSchedule] = useState(false),
     [selecting, setSelecting] = useState(false),
     [offer, setOffer] = useState(false),
-    [message, setMessage] = useState("");
+    [message, setMessage] = useState(""),
+    [checklistAnswers, setChecklistAnswers] = useState(() => {
+      const init = {};
+      screeningChecklistItems.forEach((_, i) => { init[i] = ""; });
+      return init;
+    }),
+    [hrNote, setHrNote] = useState(""),
+    [rejectOpen, setRejectOpen] = useState(false),
+    [stageActionBusy, setStageActionBusy] = useState(false);
   const load = () => recruitmentApi.candidate(id).then(setData);
   useEffect(() => {
     recruitmentApi.candidate(id).then(setData);
@@ -1815,19 +2244,38 @@ function CandidateProfile({ user }) {
   if (!data)
     return <div className="state-message">Loading candidate profile…</div>;
   const c = data.candidate;
-  async function reject() {
-    const reason = window.prompt("Rejection reason");
-    if (!reason) return;
+  const setAnswer = (idx, val) => setChecklistAnswers({ ...checklistAnswers, [idx]: val });
+  let yesCount = 0;
+  Object.values(checklistAnswers).forEach((v) => { if (v === "Yes") yesCount++; });
+  const screeningScore = Math.max(0, Math.min(100, Math.round((yesCount / screeningChecklistItems.length) * 100)));
+  const scoreClass = screeningScore >= 80 ? "score-green" : screeningScore >= 50 ? "score-amber" : "score-red";
+  const inScreening = c.currentStage === "Screening" || c.currentStage === "New Candidate";
+  async function moveToShortlisted() {
+    setStageActionBusy(true); setMessage("");
     try {
-      await recruitmentApi.reject(c._id, {
-        reason,
-        remarks: "",
-        sendEmail: false,
+      await recruitmentApi.changeStage(c._id, "Shortlisted", {
+        screeningScore,
+        screeningChecklist: checklistAnswers,
+        screeningHrNote: hrNote,
       });
+      setMessage("Candidate moved to Shortlisted.");
       load();
-    } catch (e) {
-      setMessage(e.message);
-    }
+    } catch (e) { setMessage(e.message || "Failed to update stage"); }
+    finally { setStageActionBusy(false); }
+  }
+  async function holdInScreening() {
+    setStageActionBusy(true); setMessage("");
+    try {
+      await recruitmentApi.changeStage(c._id, "Hold", {
+        holdReason: "Screening hold",
+        screeningScore,
+        screeningChecklist: checklistAnswers,
+        screeningHrNote: hrNote,
+      });
+      setMessage("Candidate placed on hold in Screening.");
+      load();
+    } catch (e) { setMessage(e.message || "Failed to hold"); }
+    finally { setStageActionBusy(false); }
   }
   async function onboard() {
     try {
@@ -1909,7 +2357,7 @@ function CandidateProfile({ user }) {
               Start onboarding
             </button>
           )}
-          <button className="secondary-button danger" onClick={reject}>
+          <button className="secondary-button danger" onClick={() => setRejectOpen(true)}>
             <XCircle size={15} /> Reject
           </button>
         </div>
@@ -1988,6 +2436,125 @@ function CandidateProfile({ user }) {
           </section>
         </div>
         <aside>
+          <section className="screening-checklist-card" style={{position: inScreening ? "sticky" : "static", top: inScreening ? 24 : undefined, marginBottom: 16}}>
+            <div className="screening-score-wrap">
+              <div className="screening-score-label">
+                <span>SCREENING SCORE</span>
+                <strong>Auto-calculated · {yesCount}/{screeningChecklistItems.length} Yes</strong>
+              </div>
+              <div className={`screening-score-badge ${scoreClass}`}>
+                <span style={{fontSize: 26, fontWeight: 800, letterSpacing: -0.5}}>{screeningScore}</span>
+                <small style={{fontSize: 11, fontWeight: 600, opacity: 0.8}}>/ 100</small>
+              </div>
+            </div>
+
+            <div style={{padding:"0 18px 18px"}}>
+              {!inScreening ? (
+                <div style={{
+                  padding: 14, borderRadius: 10,
+                  background: "#f1f5f9", border: "1px solid #e2e8f0",
+                  fontSize: 12.5, color: "#64748b", lineHeight: 1.6,
+                  textAlign: "center",
+                }}>
+                  <AlertCircle size={18} color="#64748b" style={{verticalAlign:"middle", marginRight:6}} />
+                  Screening checklist applies only in <strong style={{color:"#334155"}}>New Candidate / Screening</strong> stages. Current: <strong style={{color:"#0f766e"}}>{c.currentStage}</strong>
+                </div>
+              ) : (
+                <>
+                  <div className="screening-checklist-rows">
+                    {screeningChecklistItems.map((item, idx) => (
+                      <div className="checklist-row" key={idx}>
+                        <span className="checklist-item-name">{idx + 1}. {item}</span>
+                        <div className="checklist-radios">
+                          <label className={`radio-yes ${checklistAnswers[idx] === "Yes" ? "selected" : ""}`}>
+                            <input
+                              type="radio"
+                              name={`check-${idx}`}
+                              value="Yes"
+                              checked={checklistAnswers[idx] === "Yes"}
+                              onChange={() => setAnswer(idx, "Yes")}
+                            />
+                            <span>Yes</span>
+                          </label>
+                          <label className={`radio-no ${checklistAnswers[idx] === "No" ? "selected" : ""}`}>
+                            <input
+                              type="radio"
+                              name={`check-${idx}`}
+                              value="No"
+                              checked={checklistAnswers[idx] === "No"}
+                              onChange={() => setAnswer(idx, "No")}
+                            />
+                            <span>No</span>
+                          </label>
+                          <label className={`radio-na ${checklistAnswers[idx] === "NA" ? "selected" : ""}`}>
+                            <input
+                              type="radio"
+                              name={`check-${idx}`}
+                              value="NA"
+                              checked={checklistAnswers[idx] === "NA"}
+                              onChange={() => setAnswer(idx, "NA")}
+                            />
+                            <span>N/A</span>
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{marginTop: 18}}>
+                    <label style={{fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, color: "#64748b", textTransform: "uppercase", marginBottom: 6, display: "block"}}>
+                      HR Note
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="Observations, context, or internal remarks on screening…"
+                      style={{
+                        width: "100%",
+                        minHeight: 76,
+                        padding: "10px 12px",
+                        border: "1.5px solid #e2e8f0",
+                        borderRadius: 8,
+                        fontSize: 13,
+                        color: "#0f172a",
+                        resize: "vertical",
+                        outline: "none",
+                        fontFamily: "inherit",
+                      }}
+                      onFocus={(e) => { e.target.style.borderColor = "#0f766e"; }}
+                      onBlur={(e) => { e.target.style.borderColor = "#e2e8f0"; }}
+                      value={hrNote}
+                      onChange={(e) => setHrNote(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="screening-action-buttons" style={{marginTop: 20}}>
+                    <button
+                      className="btn-shortlist"
+                      disabled={stageActionBusy}
+                      onClick={moveToShortlisted}
+                    >
+                      <UserCheck size={15} /> Move to Shortlisted
+                    </button>
+                    <button
+                      className="btn-hold-screening"
+                      disabled={stageActionBusy}
+                      onClick={holdInScreening}
+                    >
+                      <PauseCircle size={15} /> Hold in Screening
+                    </button>
+                    <button
+                      className="btn-reject-candidate"
+                      disabled={stageActionBusy}
+                      onClick={() => setRejectOpen(true)}
+                    >
+                      <XCircle size={15} /> Reject Candidate
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
           <section className="recruitment-card">
             <h2>Activity timeline</h2>
             <div className="activity-timeline">
@@ -2035,6 +2602,16 @@ function CandidateProfile({ user }) {
           onDone={() => {
             setOffer(false);
             navigate("/recruitment/offers");
+          }}
+        />
+      )}
+      {rejectOpen && (
+        <RejectionDialog
+          candidateId={c._id}
+          onClose={() => setRejectOpen(false)}
+          onSubmitted={() => {
+            setRejectOpen(false);
+            load();
           }}
         />
       )}
@@ -2622,6 +3199,478 @@ export function PublicOfferPage() {
   );
 }
 
+function OpenPositionsPage() {
+  const [positions, setPositions] = useState([]),
+    [loading, setLoading] = useState(true),
+    [errorMsg, setErrorMsg] = useState(""),
+    [search, setSearch] = useState(""),
+    [statusFilter, setStatusFilter] = useState("All"),
+    [page, setPage] = useState(1),
+    [pageSize] = useState(10),
+    [modalOpen, setModalOpen] = useState(false),
+    [editingPosition, setEditingPosition] = useState(null);
+
+  const emptyForm = {
+    position: "",
+    department: "",
+    hiringManager: "",
+    employmentType: "Permanent",
+    workLocation: "",
+    status: "Open",
+    minExperience: 0,
+    maxExperience: 10,
+    minCTC: 3,
+    maxCTC: 20,
+    noticePeriodDays: 30,
+    mandatorySkills: [],
+    goodToHaveSkills: [],
+    description: "",
+    openings: 1,
+  };
+  const [formData, setFormData] = useState(emptyForm);
+  const [formBusy, setFormBusy] = useState(false),
+    [formError, setFormError] = useState(""),
+    [formValidate, setFormValidate] = useState({});
+
+  const loadPositions = async () => {
+    setLoading(true); setErrorMsg("");
+    try {
+      const list = await recruitmentApi.openPositions();
+      if (Array.isArray(list)) setPositions(list);
+      else setPositions([]);
+    } catch (e) {
+      setErrorMsg(e.message || "Failed to load positions");
+      setPositions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { loadPositions(); }, []);
+
+  const filtered = positions.filter((p) => {
+    if (statusFilter !== "All" && String(p.status || "Open").toLowerCase() !== statusFilter.toLowerCase()) return false;
+    if (search) {
+      const s = search.toLowerCase();
+      const hay = `${p.position || ""} ${p.department || ""} ${p.hiringManager || ""}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+  const totalItems = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const pagedItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { if (page > totalPages) setPage(1); }, [totalPages, page]);
+
+  const openNew = () => { setEditingPosition(null); setFormData(emptyForm); setFormError(""); setFormValidate({}); setModalOpen(true); };
+  const openEdit = (pos) => {
+    setEditingPosition(pos);
+    setFormData({
+      position: pos.position || "",
+      department: pos.department || "",
+      hiringManager: pos.hiringManager || "",
+      employmentType: pos.employmentType || "Permanent",
+      workLocation: pos.workLocation || "",
+      status: pos.status || "Open",
+      minExperience: pos.minExperience ?? 0,
+      maxExperience: pos.maxExperience ?? 10,
+      minCTC: pos.minCTC ?? pos.minSalary ?? 3,
+      maxCTC: pos.maxCTC ?? pos.maxSalary ?? 20,
+      noticePeriodDays: pos.noticePeriodDays ?? pos.noticeDays ?? 30,
+      mandatorySkills: Array.isArray(pos.mandatorySkills) ? pos.mandatorySkills : [],
+      goodToHaveSkills: Array.isArray(pos.goodToHaveSkills) ? pos.goodToHaveSkills : [],
+      description: pos.description || pos.jobDescription || "",
+      openings: pos.openings ?? pos.headcount ?? 1,
+    });
+    setFormError(""); setFormValidate({}); setModalOpen(true);
+  };
+  const closeModal = () => { setModalOpen(false); };
+
+  const updateForm = (key, value) => {
+    setFormData({ ...formData, [key]: value });
+    if (formValidate[key]) setFormValidate({ ...formValidate, [key]: "" });
+  };
+
+  const validatePositionForm = () => {
+    const errs = {};
+    if (!String(formData.position || "").trim()) errs.position = "Position title required";
+    if (!String(formData.department || "").trim()) errs.department = "Department required";
+    if (!String(formData.hiringManager || "").trim()) errs.hiringManager = "Hiring manager required";
+    const mn = Number(formData.minExperience);
+    const mx = Number(formData.maxExperience);
+    if (isNaN(mn) || mn < 0) errs.minExperience = "Min experience required";
+    if (isNaN(mx) || mx < mn) errs.maxExperience = "Max must be >= min";
+    const mnC = Number(formData.minCTC);
+    const mxC = Number(formData.maxCTC);
+    if (isNaN(mnC) || mnC < 0) errs.minCTC = "Min CTC required";
+    if (isNaN(mxC) || mxC < mnC) errs.maxCTC = "Max CTC must be >= min";
+    const nd = Number(formData.noticePeriodDays);
+    if (isNaN(nd) || nd < 0) errs.noticePeriodDays = "Notice days required";
+    setFormValidate(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  const submitPosition = async () => {
+    if (!validatePositionForm()) return;
+    setFormBusy(true); setFormError("");
+    try {
+      const payload = {
+        ...formData,
+        minExperience: Number(formData.minExperience),
+        maxExperience: Number(formData.maxExperience),
+        minCTC: Number(formData.minCTC),
+        maxCTC: Number(formData.maxCTC),
+        noticePeriodDays: Number(formData.noticePeriodDays),
+        openings: Number(formData.openings) || 1,
+      };
+      if (editingPosition) {
+        await recruitmentApi.updateOpenPosition(editingPosition._id || editingPosition.id, payload);
+      } else {
+        await recruitmentApi.createOpenPosition(payload);
+      }
+      setModalOpen(false);
+      loadPositions();
+    } catch (e) {
+      setFormError(e.message || "Failed to save position");
+    } finally {
+      setFormBusy(false);
+    }
+  };
+
+  const deletePosition = async (pos) => {
+    if (!window.confirm(`Delete position "${pos.position}"? This cannot be undone.`)) return;
+    try {
+      await recruitmentApi.deleteOpenPosition(pos._id || pos.id);
+      loadPositions();
+    } catch (e) {
+      setErrorMsg(e.message || "Failed to delete position");
+    }
+  };
+
+  return (
+    <>
+      <PageHeader
+        title="Open Positions"
+        description="Manage job openings, requirements, and hiring status."
+      >
+        <button className="btn-new-position" onClick={openNew}>
+          <Plus size={15} /> New Position
+        </button>
+      </PageHeader>
+
+      {errorMsg && <p className="recruitment-notice" style={{background:"#fef2f2",color:"#991b1b",border:"1px solid #fecaca"}}>{errorMsg}</p>}
+
+      <section className="recruitment-card">
+        <div className="positions-toolbar">
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+            <div className="search-form-wrap" style={{display:"inline-flex",alignItems:"center",position:"relative"}}>
+              <Search size={14} style={{position:"absolute",left:11,color:"#64748b"}} />
+              <input
+                placeholder="Search position or department…"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                style={{padding:"9px 12px 9px 34px",border:"1.5px solid #e2e8f0",borderRadius:9,minWidth:270,fontSize:13,outline:"none"}}
+                onFocus={(e)=>{e.target.style.borderColor="#0f766e";}}
+                onBlur={(e)=>{e.target.style.borderColor="#e2e8f0";}}
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              style={{padding:"9px 12px",border:"1.5px solid #e2e8f0",borderRadius:9,fontSize:13,outline:"none",minWidth:140}}
+            >
+              {["All","Open","Paused","Closed","Urgent"].map((s)=>(<option key={s}>{s}</option>))}
+            </select>
+          </div>
+          <TablePaginationTop
+            page={page}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onChange={setPage}
+          />
+        </div>
+
+        <div className="open-positions-wrap" style={{marginTop:16}}>
+          {loading ? (
+            <div className="state-message">Loading open positions…</div>
+          ) : !filtered.length ? (
+            <Empty
+              icon={Briefcase}
+              title="No open positions"
+              text="Create the first job opening to begin screening candidates."
+            />
+          ) : (
+            <>
+              <table className="open-positions-table">
+                <thead>
+                  <tr>
+                    <th>Position</th>
+                    <th>Department</th>
+                    <th>Hiring Manager</th>
+                    <th>Min Exp</th>
+                    <th>Max Exp</th>
+                    <th>Min CTC</th>
+                    <th>Max CTC</th>
+                    <th>Notice Days</th>
+                    <th>Status</th>
+                    <th style={{textAlign:"right"}}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedItems.map((p) => {
+                    const stat = String(p.status || "Open").toLowerCase();
+                    return (
+                      <tr key={p._id || p.id || p.position}>
+                        <td>
+                          <div className="position-cell">
+                            <span className="position-icon-wrap"><Briefcase size={16} color="#0f766e" /></span>
+                            <div>
+                              <strong style={{fontSize:14,color:"#0f172a",fontWeight:700,display:"block",lineHeight:1.3}}>{p.position}</strong>
+                              <small style={{fontSize:11.5,color:"#64748b",marginTop:2,display:"block"}}>
+                                {p.openings > 1 ? `${p.openings} openings` : "1 opening"} · {p.employmentType || "Permanent"}
+                              </small>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{fontSize:13,color:"#334155",fontWeight:600}}>{p.department || "—"}</td>
+                        <td style={{fontSize:13,color:"#334155"}}>{p.hiringManager || "—"}</td>
+                        <td>
+                          <span className="exp-range">{p.minExperience ?? 0} yrs</span>
+                        </td>
+                        <td>
+                          <span className="exp-range">{p.maxExperience ?? 0} yrs</span>
+                        </td>
+                        <td>
+                          <span className="salary-range">₹{p.minCTC ?? p.minSalary ?? 0} L</span>
+                        </td>
+                        <td>
+                          <span className="salary-range">₹{p.maxCTC ?? p.maxSalary ?? 0} L</span>
+                        </td>
+                        <td style={{fontSize:13,color:"#334155",fontWeight:600}}>{p.noticePeriodDays ?? p.noticeDays ?? "—"}d</td>
+                        <td>
+                          <span className={`pos-status status-${stat}`}>
+                            <i /> {p.status || "Open"}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="row-actions" style={{justifyContent:"flex-end"}}>
+                            <button title="Edit position" onClick={() => openEdit(p)}>
+                              <Pencil size={14} />
+                            </button>
+                            <button title="Delete position" style={{color:"#dc2626"}} onClick={() => deletePosition(p)}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              <div className="table-pagination" style={{marginTop:14}}>
+                {(() => {
+                  const start = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+                  const end = Math.min(page * pageSize, totalItems);
+                  const pages = [];
+                  let from = Math.max(1, page - 2);
+                  let to = Math.min(totalPages, from + 4);
+                  if (to - from < 4) from = Math.max(1, to - 4);
+                  for (let i = from; i <= to; i++) pages.push(i);
+                  return (
+                    <>
+                      <span className="table-pagination-info">Showing <b>{start}</b>–<b>{end}</b> of <b>{totalItems}</b></span>
+                      <nav>
+                        <button disabled={page === 1} onClick={() => setPage(page - 1)}>
+                          <ChevronLeft size={14} />
+                        </button>
+                        {pages.map((p) => (
+                          <button
+                            key={p}
+                            className={p === page ? "active" : ""}
+                            onClick={() => setPage(p)}
+                          >
+                            {p}
+                          </button>
+                        ))}
+                        <button disabled={page === totalPages || totalPages === 0} onClick={() => setPage(page + 1)}>
+                          <ChevronRight size={14} />
+                        </button>
+                      </nav>
+                    </>
+                  );
+                })()}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+
+      {modalOpen && (
+        <Drawer
+          title={editingPosition ? "Edit Position" : "New Position"}
+          subtitle={editingPosition ? "Update role requirements and hiring details." : "Define role, requirements, and hiring manager."}
+          onClose={closeModal}
+          wide
+        >
+          <div style={{padding:"0 22px 22px"}}>
+            <div className="position-section-heading">
+              <span className="pos-section-icon"><Briefcase size={18} /></span>
+              <div>
+                <h3 className="rec-heading-md">{editingPosition ? "Edit Job Opening" : "Create Job Opening"}</h3>
+                <p className="rec-label-lg" style={{marginTop:4,display:"block"}}>All fields marked <sup style={{color:"#dc2626",fontSize:11}}>*</sup> are mandatory.</p>
+              </div>
+            </div>
+
+            <div className="position-form-grid">
+              <Field label={<><span className="rec-label">Position title</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  placeholder="e.g. Senior Frontend Engineer"
+                  value={formData.position}
+                  onChange={(e) => updateForm("position", e.target.value)}
+                  style={formValidate.position?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.position && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.position}</small>}
+              </Field>
+              <Field label={<><span className="rec-label">Department</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  placeholder="e.g. Engineering, HR"
+                  value={formData.department}
+                  onChange={(e) => updateForm("department", e.target.value)}
+                  style={formValidate.department?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.department && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.department}</small>}
+              </Field>
+              <Field label={<><span className="rec-label">Hiring Manager</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  placeholder="Name of hiring lead"
+                  value={formData.hiringManager}
+                  onChange={(e) => updateForm("hiringManager", e.target.value)}
+                  style={formValidate.hiringManager?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.hiringManager && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.hiringManager}</small>}
+              </Field>
+
+              <Field label={<span className="rec-label">Employment type</span>}>
+                <select value={formData.employmentType} onChange={(e) => updateForm("employmentType", e.target.value)}>
+                  {["Permanent","Probation","Contract","Internship","Consultant"].map((e) => (<option key={e}>{e}</option>))}
+                </select>
+              </Field>
+              <Field label={<span className="rec-label">Work location</span>}>
+                <input placeholder="e.g. Bengaluru (Hybrid)" value={formData.workLocation} onChange={(e) => updateForm("workLocation", e.target.value)} />
+              </Field>
+              <Field label={<span className="rec-label">Status</span>}>
+                <select value={formData.status} onChange={(e) => updateForm("status", e.target.value)}>
+                  {["Open","Urgent","Paused","Closed"].map((e) => (<option key={e}>{e}</option>))}
+                </select>
+              </Field>
+
+              <Field label={<><span className="rec-label">Min experience (yrs)</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  type="number" min="0" step="0.5"
+                  value={formData.minExperience}
+                  onChange={(e) => updateForm("minExperience", e.target.value)}
+                  style={formValidate.minExperience?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.minExperience && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.minExperience}</small>}
+              </Field>
+              <Field label={<><span className="rec-label">Max experience (yrs)</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  type="number" min="0" step="0.5"
+                  value={formData.maxExperience}
+                  onChange={(e) => updateForm("maxExperience", e.target.value)}
+                  style={formValidate.maxExperience?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.maxExperience && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.maxExperience}</small>}
+              </Field>
+              <Field label={<span className="rec-label">Headcount (openings)</span>}>
+                <input type="number" min="1" step="1" value={formData.openings} onChange={(e) => updateForm("openings", e.target.value)} />
+              </Field>
+
+              <Field label={<><span className="rec-label">Min CTC (LPA)</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  type="number" min="0" step="0.5"
+                  value={formData.minCTC}
+                  onChange={(e) => updateForm("minCTC", e.target.value)}
+                  style={formValidate.minCTC?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.minCTC && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.minCTC}</small>}
+              </Field>
+              <Field label={<><span className="rec-label">Max CTC (LPA)</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  type="number" min="0" step="0.5"
+                  value={formData.maxCTC}
+                  onChange={(e) => updateForm("maxCTC", e.target.value)}
+                  style={formValidate.maxCTC?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.maxCTC && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.maxCTC}</small>}
+              </Field>
+              <Field label={<><span className="rec-label">Notice period (days)</span> <sup style={{color:"#dc2626"}}>*</sup></>}>
+                <input
+                  type="number" min="0" step="1"
+                  value={formData.noticePeriodDays}
+                  onChange={(e) => updateForm("noticePeriodDays", e.target.value)}
+                  style={formValidate.noticePeriodDays?{borderColor:"#dc2626"}:undefined}
+                />
+                {formValidate.noticePeriodDays && <small style={{color:"#dc2626",fontSize:11,marginTop:4,display:"block"}}>{formValidate.noticePeriodDays}</small>}
+              </Field>
+
+              <div className="full-width">
+                <Field label={<><span className="rec-label">Mandatory skills</span> <sup style={{color:"#0f766e",fontSize:11}}>★</sup></>}>
+                  <ChipsInput
+                    value={formData.mandatorySkills}
+                    onChange={(v) => updateForm("mandatorySkills", v)}
+                    variant="mandatory"
+                    placeholder="Enter mandatory skills (e.g. React, TypeScript)"
+                  />
+                </Field>
+              </div>
+
+              <div className="full-width">
+                <Field label={<span className="rec-label">Good-to-have skills</span>}>
+                  <ChipsInput
+                    value={formData.goodToHaveSkills}
+                    onChange={(v) => updateForm("goodToHaveSkills", v)}
+                    variant="good-to-have"
+                    placeholder="Enter bonus skills (e.g. AWS, Docker)"
+                  />
+                </Field>
+              </div>
+
+              <div className="full-width">
+                <Field label={<span className="rec-label">Job description</span>}>
+                  <textarea
+                    rows={6}
+                    placeholder="Role summary, key responsibilities, and expectations…"
+                    value={formData.description}
+                    onChange={(e) => updateForm("description", e.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
+
+            {formError && <p className="form-error">{formError}</p>}
+
+            <div className="drawer-form-actions" style={{marginTop:10}}>
+              <button type="button" className="secondary-button" onClick={closeModal} disabled={formBusy}>
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                style={{background:"linear-gradient(135deg,#0f766e 0%,#059669 100%)",border:"none"}}
+                onClick={submitPosition}
+                disabled={formBusy}
+              >
+                <Save size={15} style={{display:"inline-block",verticalAlign:"middle",marginRight:6}} />
+                {formBusy ? "Saving…" : (editingPosition ? "Update Position" : "Create Position")}
+              </button>
+            </div>
+          </div>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
 export default function RecruitmentPage({ user }) {
   const path = useLocation().pathname;
   const [add, setAdd] = useState(false);
@@ -2630,6 +3679,8 @@ export default function RecruitmentPage({ user }) {
   let content;
   if (path === "/recruitment" || path === "/recruitment/dashboard")
     content = <RecruitmentDashboard onAdd={() => setAdd(true)} />;
+  else if (path === "/recruitment/open-positions")
+    content = <OpenPositionsPage />;
   else if (path === "/recruitment/candidates")
     content = <CandidatesView onAdd={() => setAdd(true)} />;
   else if (path === "/recruitment/selected")
