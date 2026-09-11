@@ -110,9 +110,11 @@ app.use(helmet({
   originAgentCluster: true,
 }))
 
-// OPTIONS preflight -> EXPLICIT GLOBAL 204 handler before ANY other route runs.
-// Ensures even if origin rejected, 204 with ACAO header sent (not 500/No-Access-*).
-app.options('*', cors(corsOptions))
+// CORS (including OPTIONS preflight). `app.use(cors(...))` automatically handles
+// OPTIONS method 204 responses — NO need for standalone `app.options('*', ...)` which
+// breaks Express 5 path-to-regexp v7 (bare '*' is invalid; must be `/*` or `/(.*)`).
+// If origin is rejected, cors package returns 204 with Access-Control-Allow-Origin: null
+// (per W3C spec); post-route middleware below re-applies headers before final response.
 app.use(cors(corsOptions))
 
 // Additional safety: always re-apply Access-Control headers after route handler runs
