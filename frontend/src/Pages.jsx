@@ -1278,9 +1278,9 @@ function LeaveDrawer({ close, saved, balance }) {
     }
   }
   return (
-    <div className="drawer-layer">
+    <div className="drawer-layer leave-modal-layer">
       <button className="drawer-backdrop" onClick={close} />
-      <aside className="form-drawer leave-drawer">
+      <aside className="form-drawer leave-drawer leave-modal-card">
         <div className="drawer-heading">
           <div>
             <p className="eyebrow">New request</p>

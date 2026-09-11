@@ -2194,3 +2194,13 @@ button,input,select,textarea{font-family:inherit}button{transition:background-co
 .soft-badge.amber{background:#fffbeb;color:#92400e;border:1px solid #fcd34d}
 .soft-badge.blue{background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe}
 .soft-badge.purple{background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe}
+/* Leave Apply → Centered POPUP / MODAL (instead of side drawer) */
+.leave-modal-layer{display:grid;place-items:center;padding:24px}
+.leave-modal-layer .drawer-backdrop{background:rgba(15,23,42,.52)!important;backdrop-filter:blur(3px)!important}
+.leave-modal-card{position:relative;inset:auto;right:auto!important;top:auto!important;width:min(680px,96vw)!important;max-width:680px!important;height:auto!important;max-height:92vh!important;padding:28px 30px 22px!important;border-radius:18px!important;border:1px solid #e2e8f0!important;border-left:1px solid #e2e8f0!important;box-shadow:0 30px 80px rgba(14,35,33,.28),0 8px 24px rgba(14,35,33,.12)!important;overflow:hidden auto;animation:leaveModalIn .22s cubic-bezier(.22,1,.36,1)!important;background:#fff}
+.leave-modal-card form{display:flex!important;flex-direction:column!important;gap:16px!important;padding-top:18px!important}
+.leave-modal-card form .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;width:100%}
+.leave-modal-card form .leave-day-type{margin:0}
+.leave-modal-card form .leave-preview-card{width:100%}
+@keyframes leaveModalIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:700px){.leave-modal-card{padding:22px 18px!important;border-radius:14px!important}.leave-modal-card form .form-row{grid-template-columns:1fr}}
