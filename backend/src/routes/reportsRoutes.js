@@ -60,7 +60,7 @@ async function iconPdfSource(iconPath) {
   const ext = path.extname(iconPath).toLowerCase()
   try {
     if (ext === '.svg' && _sharp) {
-      const png = await _sharp(iconPath).resize({ height: 62, withoutEnlargement: true }).png().toBuffer()
+      const png = await _sharp(iconPath).resize({ height: 72, withoutEnlargement: true }).png().toBuffer()
       return { ok: true, src: png, format: 'png' }
     }
     if (['.png','.jpg','.jpeg'].includes(ext)) {
@@ -327,47 +327,49 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
       // Composite logo rendering (100% tofu-free on Render Docker + all systems):
-      //   • Trishul icon = pure vector paths, converted to PNG via sharp (no fonts).
-      //   • Brand name text = drawn via PDFKit built-in Helvetica (PDF spec guarantees
+      //   • Trishul + separator icon = pure vector paths, converted to PNG via sharp
+      //     (no fonts involved). Matches exact design: spear + open "3"-curve trishul,
+      //     2 beads, thick vertical "|" separator bar.
+      //   • Brand words = drawn via PDFKit built-in Helvetica (PDF spec guarantees
       //     Latin glyphs; does NOT depend on system fontconfig).
       // This avoids the earlier sharp + SVG <text> failure where ANANT/TATTVA rendered
       // as empty boxes (tofus) because the container lacked usable font files.
+      // NOTE: User's actual logo does NOT have an emerald underline stroke below
+      // brand words — so we intentionally removed the old #0f766e accent line.
       doc.save()
       const trishul = await iconPdfSource(COMPANY_TRISHUL_ICON)
-      const ICON_X = PAGE_LEFT + 4
-      const ICON_Y = 18
-      let textStartX = ICON_X + 4
+      const ICON_X = PAGE_LEFT
+      const ICON_Y = 12
+      let textStartX = ICON_X + 8
       if (trishul.ok) {
         try {
-          doc.image(trishul.src, ICON_X, ICON_Y, { height: 62 })
-          textStartX = ICON_X + 74
+          doc.image(trishul.src, ICON_X, ICON_Y, { height: 72 })
+          // Trishul icon aspect ratio ~ 342:220 (w:h); height 72 → width ≈ 112pt
+          textStartX = ICON_X + 120
         } catch (imgErr) {
           console.warn('[PDF] trishul icon image embed failed:', imgErr.message)
-          textStartX = PAGE_LEFT + 10
+          textStartX = PAGE_LEFT + 12
         }
       }
       // Brand words always drawn via Helvetica to guarantee glyphs (no tofus).
-      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(26)
-        .text('ANANT', textStartX, 22, { characterSpacing: -0.2, lineGap: 0 })
-      doc.fillColor('#111827').font('Helvetica').fontSize(21)
-        .text('TATTVA', textStartX + 2, 48, { characterSpacing: 5.5, lineGap: 0 })
-      doc.strokeColor('#0f766e').lineWidth(1.2)
-        .moveTo(PAGE_LEFT + 4, 72).lineTo(Math.max(textStartX + 162, PAGE_LEFT + 170), 72).stroke()
+      // ANANT = orange bold larger, TATTVA = black smaller, offset right (under N..T zone).
+      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
+        .text('ANANT', textStartX, 18, { characterSpacing: 2, lineGap: 0 })
+      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
+        .text('TATTVA', textStartX + 22, 48, { characterSpacing: 8, lineGap: 0 })
       doc.restore()
     } catch (logoErr) {
       console.warn('[PDF] composite logo render fallback triggered:', logoErr.message)
       doc.save()
-      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(26)
-        .text('ANANT', PAGE_LEFT + 10, 22, { characterSpacing: -0.5 })
-      doc.fillColor('#111827').font('Helvetica').fontSize(22)
-        .text('TATTVA', PAGE_LEFT + 12, 46, { characterSpacing: 2 })
-      doc.strokeColor('#0f766e').lineWidth(1.2)
-        .moveTo(PAGE_LEFT + 4, 70).lineTo(PAGE_LEFT + 166, 70).stroke()
+      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
+        .text('ANANT', PAGE_LEFT + 10, 18, { characterSpacing: 2 })
+      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
+        .text('TATTVA', PAGE_LEFT + 32, 48, { characterSpacing: 8 })
       doc.restore()
     }
 
-    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 78)
-    doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 102)
+    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 96)
+    doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 120)
 
     // 13 columns — width sum = EXACT 782, right edge = 812 (no overflow, no clipped cols).
     // Format: [label, x, width]
@@ -403,11 +405,11 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
       doc.text('LATE ARRIVAL',342,headerY+7,{width:80,align:'center'})
       doc.text('COMPLETED DAYS',422,headerY+7,{width:140,align:'center'})
     }
-    let y=130
+    let y=148
     drawHeader(y)
     y+=46
     for(const [index,row] of report.rows.entries()){
-      if(y>520){doc.addPage();y=35;drawHeader(y);y+=46}
+      if(y>520){doc.addPage();y=53;drawHeader(y);y+=46}
       doc.rect(PAGE_LEFT,y,PAGE_USABLE,25).fill(index%2?'#f8fafc':'#ffffff')
       doc.fillColor('#334155').font('Helvetica').fontSize(8.5)
       const values=[
