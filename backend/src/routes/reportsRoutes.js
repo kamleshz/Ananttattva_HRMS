@@ -14,6 +14,9 @@ import { HttpError } from '../utils/httpError.js'
 import { dateFromKey, organizationDateKey } from '../services/workingDayService.js'
 import { getAttendancePolicy } from '../services/attendancePolicyService.js'
 
+let _sharp = null
+try { _sharp = (await import('sharp')).default } catch (_) { /* sharp optional */ }
+
 const router=Router()
 router.use(authenticate)
 
@@ -21,11 +24,20 @@ const MIS_ROLES=['super_admin','admin','hr_admin','finance_admin']
 const DAY_MS=86_400_000
 
 function resolveCompanyLogo() {
+  // PREFER backend LOCAL ASSET FIRST because Render/Docker backend process does NOT
+  // include frontend/public folder. Backend/src/assets is copied into backend image
+  // so ALWAYS available at runtime — no ENOENT, logo renders in PDF always.
   const candidates = [
+    // 1) Backend bundled asset (src/assets copied into Docker — #1 priority)
+    path.resolve(process.cwd(), 'src', 'assets', 'ananttattva-logo.svg'),
+    fileURLToPath(new URL('../assets/ananttattva-logo.svg', import.meta.url)),
+    path.resolve(process.cwd(), 'assets', 'ananttattva-logo.svg'),
+    // 2) Legacy PNG in backend assets (if user copies JPG/PNG later)
+    path.resolve(process.cwd(), 'src', 'assets', 'Screenshot 2026-09-08 121937.png'),
+    // 3) Monorepo local dev (only works if backend launched from project-root parent)
     path.resolve(process.cwd(), '..', 'frontend', 'public', 'ananttattva-logo.svg'),
     path.resolve(process.cwd(), '..', 'frontend', 'public', 'Screenshot 2026-09-08 121937.png'),
     path.resolve(process.cwd(), 'frontend', 'public', 'ananttattva-logo.svg'),
-    path.resolve(process.cwd(), 'frontend', 'public', 'Screenshot 2026-09-08 121937.png'),
     fileURLToPath(new URL('../../../frontend/public/ananttattva-logo.svg', import.meta.url)),
     fileURLToPath(new URL('../../../frontend/public/Screenshot 2026-09-08 121937.png', import.meta.url)),
   ]
@@ -35,6 +47,27 @@ function resolveCompanyLogo() {
   return null
 }
 const COMPANY_LOGO = resolveCompanyLogo()
+
+async function logoPdfSource(logoPath) {
+  if (!logoPath) return { ok: false }
+  const ext = path.extname(logoPath).toLowerCase()
+  try {
+    if (ext === '.svg' && _sharp) {
+      const png = await _sharp(logoPath).resize({ width: 700, withoutEnlargement: true }).png().toBuffer()
+      return { ok: true, src: png, format: 'png' }
+    }
+    if (['.png','.jpg','.jpeg'].includes(ext)) {
+      return { ok: true, src: logoPath, format: ext.slice(1) }
+    }
+    if (ext === '.svg') {
+      return { ok: false, reason: 'sharp missing' }
+    }
+    return { ok: false, reason: 'unsupported format' }
+  } catch (err) {
+    console.warn('[PDF] logo convert failed:', err.message)
+    return { ok: false, reason: err.message }
+  }
+}
 
 function formatMinutesToHoursMinutes(totalMinutes) {
   const hours = Math.floor(totalMinutes / 60)
@@ -244,22 +277,73 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
   try {
     const doc=new PDFDocument({size:'A4',layout:'landscape',margin:30})
     res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="attendance-mis-${report.from}-to-${report.to}.pdf"`);doc.pipe(res)
+
+    // --- Logo: company logo always appears ---
+    // A4 landscape = 842 x 595, margins = 30 each side → usable width = 782 (30 to 812)
+    const PAGE_LEFT = 30
+    const PAGE_RIGHT = 812
+    const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
-      if (COMPANY_LOGO) doc.image(COMPANY_LOGO,30,22,{width:165})
+      const logo = await logoPdfSource(COMPANY_LOGO)
+      if (logo.ok) {
+        doc.image(logo.src, PAGE_LEFT, 20, { width: 170 })
+      } else {
+        // Branded fallback — mimic logo with colored text (no blank top-left)
+        doc.save()
+        doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(26).text('ANANT', PAGE_LEFT + 10, 22, { characterSpacing: -0.5 })
+        doc.fillColor('#111827').font('Helvetica').fontSize(22).text('TATTVA', PAGE_LEFT + 12, 46, { characterSpacing: 2 })
+        doc.strokeColor('#0f766e').lineWidth(1.2).moveTo(PAGE_LEFT + 4, 70).lineTo(PAGE_LEFT + 166, 70).stroke()
+        doc.restore()
+      }
     } catch (logoErr) {
       console.warn('[PDF] logo embed skipped:', logoErr.message)
-      doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(20).text('ANANTTATTVA',30,28)
+      doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(20).text('ANANTTATTVA', PAGE_LEFT, 28)
     }
-    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD',30,72)
-    doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`,30,96)
-    const columns=[['Employee',30,130],['ID',160,55],['Department',215,125],['10:15',340,42],['10:30',382,42],['Full',424,45],['Half (App)',469,52],['Incomplete',521,65],['Completed\nHours',586,65],['Complied\nHours',651,65],['Leave <8:30',716,50],['Leave=8:30',766,45],['Leave>8:30',811,42]]
-    const drawHeader=headerY=>{doc.rect(30,headerY,824,46).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.2);columns.forEach(([label,x,width],index)=>doc.text(label,x+4,headerY+(index>=3&&index<=7?28:index>=9&&index<=12?10:18),{width:width-7,align:index>=3?'center':'left',lineGap:1}));doc.text('LATE ARRIVAL',340,headerY+7,{width:84,align:'center'});doc.text('COMPLETED DAYS',424,headerY+7,{width:162,align:'center'})}
-    let y=125
+
+    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 78)
+    doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 102)
+
+    // 13 columns — width sum = EXACT 782, right edge = 812 (no overflow, no clipped cols).
+    // Format: [label, x, width]
+    const columns=[
+      ['Employee',30,146],
+      ['ID',176,46],
+      ['Department',222,120],
+      ['10:15',342,40],
+      ['10:30',382,40],
+      ['Full',422,40],
+      ['Half (App)',462,46],
+      ['Incomplete',508,54],
+      ['Completed\nHours',562,60],
+      ['Complied\nHours',622,60],
+      ['Leave <8:30',682,44],
+      ['Leave=8:30',726,44],
+      ['Leave>8:30',770,42],  // ends at 812 (A4 right-margin line)
+    ]
+    // Group header label boxes (top band):
+    // LATE ARRIVAL    = x 342 → 422, width = 80
+    // COMPLETED DAYS  = x 422 → 562, width = 140
+    const drawHeader=(headerY)=>{
+      doc.rect(PAGE_LEFT,headerY,PAGE_USABLE,46).fill('#0f766e')
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8)
+      columns.forEach(([label,x,width],index)=>{
+        const subline = index>=3 && index<=7  // cols 4..8 (10:15 through Incomplete) sit below group
+        const topline = index>=9 && index<=12 // cols 10..13 (hours & leave) only single-line
+        const yOffset = subline ? 28 : topline ? 9 : 18
+        doc.text(label,x+3,headerY+yOffset,{width:width-6,align:index>=3?'center':'left',lineGap:1})
+      })
+      // Group titles (top of 2-row header)
+      doc.fontSize(8).font('Helvetica-Bold')
+      doc.text('LATE ARRIVAL',342,headerY+7,{width:80,align:'center'})
+      doc.text('COMPLETED DAYS',422,headerY+7,{width:140,align:'center'})
+    }
+    let y=130
     drawHeader(y)
     y+=46
     for(const [index,row] of report.rows.entries()){
       if(y>520){doc.addPage();y=35;drawHeader(y);y+=46}
-      doc.rect(30,y,824,25).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(8.8)
+      doc.rect(PAGE_LEFT,y,PAGE_USABLE,25).fill(index%2?'#f8fafc':'#ffffff')
+      doc.fillColor('#334155').font('Helvetica').fontSize(8.5)
       const values=[
         row.name,row.employeeCode,row.department,
         String(row.lateAt1015),String(row.lateAt1030),
@@ -268,16 +352,17 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
         `${Math.floor(row.compliedMinutes/60)}h ${String(row.compliedMinutes%60).padStart(2,'0')}m`,
         String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)
       ]
-      columns.forEach(([,x,width],i)=>doc.text(values[i],x+5,y+8,{width:width-8,ellipsis:true}));y+=25
+      columns.forEach(([,x,width],i)=>doc.text(values[i],x+4,y+8,{width:width-8,ellipsis:true}))
+      y+=25
     }
-    doc.fillColor('#64748b').fontSize(8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  COMPLIED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,30,560,{width:780})
+    doc.fillColor('#64748b').fontSize(7.8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  COMPLIED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,PAGE_LEFT,560,{width:PAGE_USABLE})
     doc.end()
   } catch (pdfErr) {
     console.error('[attendanceMis PDF] render error:', pdfErr.message, pdfErr.stack)
     if (!res.headersSent) {
       res.status(500).json({ success: false, message: pdfErr.message || 'Failed to generate PDF' })
     } else {
-      try { pdfDoc && pdfDoc.end() } catch (_) { /* ignore */ }
+      try { doc && doc.end() } catch (_) { /* ignore */ }
     }
   }
 }))

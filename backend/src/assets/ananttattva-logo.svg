@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 92" role="img" aria-labelledby="title">
+  <title id="title">Anant Tattva</title>
+  <g fill="none" stroke="#f97300" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 46c39 0 47-32 75-32 23 0 23 64 0 64-28 0-36-32-75-32z"/>
+    <path d="M50 46h53"/><circle cx="79" cy="46" r="5" fill="#f97300"/>
+  </g>
+  <text x="108" y="48" fill="#f97300" font-family="Arial, sans-serif" font-size="47" font-weight="400" letter-spacing="1">ANANT</text>
+  <text x="111" y="81" fill="#111111" font-family="Arial, sans-serif" font-size="28" font-weight="500" letter-spacing="7">TATTVA</text>
+</svg>
