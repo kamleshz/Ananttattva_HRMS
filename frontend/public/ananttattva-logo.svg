@@ -1,9 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 96" role="img" aria-label="Anant Tattva">
-  <g fill="none" stroke="#f97316" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 48 C 43 48, 51 16, 79 16 C 102 16, 102 80, 79 80 C 51 80, 43 48, 4 48 Z"/>
-    <path d="M50 48 H 103"/>
-    <circle cx="79" cy="48" r="6" fill="#f97316" stroke="none"/>
-  </g>
-  <text x="118" y="50" fill="#f97316" font-family="Arial, Helvetica, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="700" letter-spacing="0.5">ANANT</text>
-  <text x="121" y="84" fill="#111827" font-family="Arial, Helvetica, 'Segoe UI', Roboto, sans-serif" font-size="26" font-weight="500" letter-spacing="8">TATTVA</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 220" role="img" aria-label="Anant Tattva">
+  <defs>
+    <linearGradient id="atOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#ff9a3c"/>
+      <stop offset="45%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#e8620c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Spear tip (pointed triangle left) -->
+  <polygon points="12,110 118,70 118,150" fill="url(#atOrange)"/>
+
+  <!-- Trishul "3" shape: outer open C-curves top + bottom joined right side -->
+  <path d="M118 40
+           C 152 24, 206 30, 232 64
+           C 248 84, 242 102, 226 110
+           C 242 118, 248 136, 232 156
+           C 206 190, 152 196, 118 180"
+        fill="none" stroke="url(#atOrange)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Two connector bead circles between curve center and vertical bar -->
+  <circle cx="248" cy="96"  r="9"  fill="url(#atOrange)"/>
+  <circle cx="282" cy="96"  r="15" fill="url(#atOrange)"/>
+
+  <!-- Thick vertical separator bar | between icon and ANANT word -->
+  <rect x="322" y="38" width="20" height="148" rx="8" fill="url(#atOrange)"/>
+
+  <!-- BRAND WORDS — genuine pure ASCII, standard web-safe font stack -->
+  <text x="382" y="126" fill="url(#atOrange)"
+        font-family="Arial, Helvetica, 'Segoe UI', Roboto, system-ui, sans-serif"
+        font-size="152" font-weight="500" letter-spacing="6">ANANT</text>
+  <text x="466" y="202" fill="#111827"
+        font-family="Arial, Helvetica, 'Segoe UI', Roboto, system-ui, sans-serif"
+        font-size="88"  font-weight="600" letter-spacing="14">TATTVA</text>
 </svg>

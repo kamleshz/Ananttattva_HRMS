@@ -1213,10 +1213,12 @@ function LeaveDrawer({ close, saved, balance }) {
       startDate: "",
       endDate: "",
       reason: "",
+      earlyLeaveMinutes: 120,
     }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const canApplyPaid = Boolean(balance?.plan?.canApplyPaidLeave);
+  const isEarlyLeave = form.dayType === "early_leave";
   const workingDays = useMemo(() => {
     if (!form.startDate || !form.endDate) return 0;
     const s = new Date(form.startDate); const e = new Date(form.endDate);
@@ -1228,26 +1230,33 @@ function LeaveDrawer({ close, saved, balance }) {
       if (day !== 0 && (day !== 6 || [2, 4, 5].includes(saturdayOccurrence))) count += 1;
       cur.setDate(cur.getDate() + 1);
     }
-    return form.dayType === "half_day" && count > 0 ? 0.5 : count;
-  }, [form.startDate, form.endDate, form.dayType]);
+    if (form.dayType === "half_day" && count > 0) return 0.5;
+    if (form.dayType === "early_leave" && count > 0) return Number((Number(form.earlyLeaveMinutes) / 510).toFixed(4));
+    return count;
+  }, [form.startDate, form.endDate, form.dayType, form.earlyLeaveMinutes]);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const startDateObj = form.startDate ? new Date(form.startDate) : null;
   const calendarNoticeDays = startDateObj ? Math.max(0, Math.ceil((startDateObj - today) / (1000 * 60 * 60 * 24))) : 0;
-  const isLongLeave = workingDays >= 4;
+  const isLongLeave = !isEarlyLeave && workingDays >= 4;
   const longLeaveNoticeOk = !isLongLeave || calendarNoticeDays >= 10;
-  const approvalChain = useMemo(() => isLongLeave ? ["Manager", "HR", "Super Admin"] : ["Manager", "HR"], [isLongLeave]);
+  const approvalChain = useMemo(() => isEarlyLeave ? ["Manager", "HR", "Super Admin"] : (isLongLeave ? ["Manager", "HR", "Super Admin"] : ["Manager", "HR"]), [isLongLeave, isEarlyLeave]);
   const paymentPreview = useMemo(() => {
+    if (isEarlyLeave) return { mode: "hr_decides", paid: 0, unpaid: 0 };
     const mode = form.leaveType === "unpaid_leave" ? "unpaid" : "paid";
     if (mode === "unpaid") return { mode: "unpaid", paid: 0, unpaid: workingDays };
     const available = Number(balance?.paidAvailable || 0);
     const paid = Math.min(available, workingDays);
     const unpaid = Math.max(0, workingDays - paid);
     return { mode: unpaid === workingDays ? "unpaid" : paid === workingDays ? "paid" : "partially_paid", paid, unpaid };
-  }, [workingDays, form.leaveType, balance]);
+  }, [workingDays, form.leaveType, balance, isEarlyLeave]);
   async function submit(event) {
     event.preventDefault();
-    if (form.leaveType === "paid_leave" && !canApplyPaid) {
+    if (!isEarlyLeave && form.leaveType === "paid_leave" && !canApplyPaid) {
       setError("Paid leaves are locked until your probation is confirmed. Please select unpaid leave.");
+      return;
+    }
+    if (isEarlyLeave && (!Number(form.earlyLeaveMinutes) || Number(form.earlyLeaveMinutes) < 1 || Number(form.earlyLeaveMinutes) > 509)) {
+      setError("Please enter valid minutes for early leave (1 – 509).");
       return;
     }
     if (isLongLeave && !longLeaveNoticeOk) {
@@ -1257,7 +1266,10 @@ function LeaveDrawer({ close, saved, balance }) {
     setBusy(true);
     setError("");
     try {
-      saved(await leaveApi.create(form));
+      const payload = isEarlyLeave
+        ? { ...form, leaveType: "unpaid_leave", earlyLeaveMinutes: Number(form.earlyLeaveMinutes) }
+        : form;
+      saved(await leaveApi.create(payload));
       close();
     } catch (e) {
       setError(e.message);
@@ -1292,11 +1304,13 @@ function LeaveDrawer({ close, saved, balance }) {
             Leave type
             <select
               value={form.leaveType}
+              disabled={isEarlyLeave}
               onChange={(e) => setForm({ ...form, leaveType: e.target.value })}
             >
-              <option value="paid_leave" disabled={!canApplyPaid}>Paid leave ({balance?.paidAvailable ?? 0} available)</option>
+              <option value="paid_leave" disabled={!canApplyPaid && !isEarlyLeave}>Paid leave ({balance?.paidAvailable ?? 0} available)</option>
               <option value="unpaid_leave">Unpaid leave</option>
             </select>
+            {isEarlyLeave && <small style={{color:"var(--color-muted)",fontSize:"12px",marginTop:"4px",display:"block"}}>HR will decide compensation during their review.</small>}
           </label>
           <fieldset className="leave-day-type">
             <legend>Duration</legend>
@@ -1307,8 +1321,36 @@ function LeaveDrawer({ close, saved, balance }) {
               <button type="button" className={form.dayType === "half_day" ? "active" : ""} aria-pressed={form.dayType === "half_day"} onClick={() => setForm({ ...form, dayType: "half_day", endDate: form.startDate || form.endDate })}>
                 <strong>Half day</strong><span>0.5 working day</span>
               </button>
+              <button type="button" className={form.dayType === "early_leave" ? "active" : ""} aria-pressed={form.dayType === "early_leave"} onClick={() => setForm({ ...form, dayType: "early_leave", endDate: form.startDate || form.endDate, earlyLeaveMinutes: form.earlyLeaveMinutes || 120 })}>
+                <strong>Early leave</strong><span>Leave a few hours early</span>
+              </button>
             </div>
           </fieldset>
+          {isEarlyLeave && (
+            <div className="early-leave-block">
+              <label>
+                How many minutes early are you leaving?
+                <div className="early-leave-chips" style={{display:"flex",gap:"8px",flexWrap:"wrap",margin:"8px 0"}}>
+                  {[30,60,90,120,180,240].map(m=>(
+                    <button type="button" key={m} className={form.earlyLeaveMinutes===m?"chip active":"chip"} onClick={()=>setForm({...form,earlyLeaveMinutes:m})}>
+                      {m<60?`${m}m`:`${Math.floor(m/60)}h${m%60?` ${m%60}m`:""}`}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={509}
+                  value={form.earlyLeaveMinutes||""}
+                  onChange={(e)=>setForm({...form,earlyLeaveMinutes:Math.max(1,Math.min(509,Number(e.target.value)||0))})}
+                  placeholder="Or enter custom minutes (1-509)"
+                />
+                <small style={{color:"var(--color-muted)",fontSize:"12px",marginTop:"4px",display:"block"}}>
+                  {form.earlyLeaveMinutes ? `Leaving ${Math.floor(Number(form.earlyLeaveMinutes)/60)}h ${String(Number(form.earlyLeaveMinutes)%60).padStart(2,'0')}m before end of shift. Target for day: ${Math.max(0,510-Number(form.earlyLeaveMinutes))}m (${Math.floor(Math.max(0,510-Number(form.earlyLeaveMinutes))/60)}h ${String(Math.max(0,510-Number(form.earlyLeaveMinutes))%60).padStart(2,'0')}m)` : ""}
+                </small>
+              </label>
+            </div>
+          )}
           <div className="form-row">
             <label>
               From
@@ -1317,7 +1359,7 @@ function LeaveDrawer({ close, saved, balance }) {
                 required
                 value={form.startDate}
                 min={new Date().toISOString().slice(0, 10)}
-                onChange={(e) => setForm({ ...form, startDate: e.target.value, ...(form.dayType === "half_day" && { endDate: e.target.value }) })}
+                onChange={(e) => setForm({ ...form, startDate: e.target.value, ...((form.dayType === "half_day" || form.dayType === "early_leave") && { endDate: e.target.value }) })}
               />
             </label>
             <label>
@@ -1325,7 +1367,7 @@ function LeaveDrawer({ close, saved, balance }) {
               <input
                 type="date"
                 required
-                disabled={form.dayType === "half_day"}
+                disabled={form.dayType === "half_day" || form.dayType === "early_leave"}
                 value={form.endDate}
                 min={form.startDate || new Date().toISOString().slice(0, 10)}
                 onChange={(e) => setForm({ ...form, endDate: e.target.value })}
@@ -1337,14 +1379,24 @@ function LeaveDrawer({ close, saved, balance }) {
             <div className="leave-preview-card">
               <div className="leave-preview-row">
                 <span>Working days</span>
-                <strong>{workingDays} day{workingDays === 1 ? "" : "s"}</strong>
+                <strong>{isEarlyLeave ? "1 day · early leave" : `${workingDays} day${workingDays === 1 ? "" : "s"}`}</strong>
               </div>
+              {isEarlyLeave && Number(form.earlyLeaveMinutes) > 0 && (
+                <div className="leave-preview-row">
+                  <span>Early leave</span>
+                  <strong>{Math.floor(Number(form.earlyLeaveMinutes)/60)}h {String(Number(form.earlyLeaveMinutes)%60).padStart(2,'0')}m ({Number(form.earlyLeaveMinutes)} min)</strong>
+                </div>
+              )}
               <div className="leave-preview-row">
                 <span>Payment split</span>
                 <strong>
-                  {paymentPreview.paid > 0 && `${paymentPreview.paid} paid`}
-                  {paymentPreview.unpaid > 0 && `${paymentPreview.paid ? " · " : ""}${paymentPreview.unpaid} unpaid`}
-                  {!paymentPreview.paid && !paymentPreview.unpaid && "—"}
+                  {paymentPreview.mode === "hr_decides" ? "HR decides" : (
+                    <>
+                      {paymentPreview.paid > 0 && `${paymentPreview.paid} paid`}
+                      {paymentPreview.unpaid > 0 && `${paymentPreview.paid ? " · " : ""}${paymentPreview.unpaid} unpaid`}
+                      {!paymentPreview.paid && !paymentPreview.unpaid && "—"}
+                    </>
+                  )}
                 </strong>
               </div>
               <div className="leave-preview-row">
@@ -1411,7 +1463,12 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
       (currentUser?.role === "admin" && nextRole === "super_admin")
     )
   );
+  const isEarlyLeave = item.dayType === "early_leave";
+  const isHrReviewingEarly = isEarlyLeave && pending && (
+    (nextRole === "hr_admin" && currentUser?.role === "hr_admin" && isMyTurn) || isSuperAdminOverride
+  );
   const [note, setNote] = useState("");
+  const [hrComp, setHrComp] = useState(item.hrCompensationDecision || "");
   const [reviewBusy, setReviewBusy] = useState(null);
   const [decisionFlash, setDecisionFlash] = useState("");
   async function review(decision) {
@@ -1419,10 +1476,17 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
       alert("A rejection reason is required.");
       return;
     }
+    if (decision === "approve" && isHrReviewingEarly && !hrComp) {
+      alert("Please select a compensation decision for this early leave request.");
+      return;
+    }
     setReviewBusy(decision);
     try {
-      await onReview(item._id, decision, note);
+      const extra = {};
+      if (isHrReviewingEarly && hrComp) extra.hrCompensationDecision = hrComp;
+      await onReview(item._id, decision, note, extra);
       setNote("");
+      setHrComp("");
       setDecisionFlash(decision);
       setTimeout(() => setDecisionFlash(""), 1400);
     } catch {
@@ -1436,24 +1500,33 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   const workflowSteps = item.workflow?.steps || [];
   const requiredSteps = item.workflow?.requiredSteps || [];
   const employeeName = item.employee ? `${item.employee.firstName} ${item.employee.lastName}` : "";
+  const dayTypeLabel = isEarlyLeave
+    ? `Early leave${item.earlyLeaveMinutes ? ` · ${Math.floor(Number(item.earlyLeaveMinutes)/60)}h ${String(Number(item.earlyLeaveMinutes)%60).padStart(2,'0')}m` : ""}`
+    : item.dayType === "half_day" ? "Half day" : "Full day";
+  const compLabelMap = { paid_deduction: "Paid deduction", unpaid: "Unpaid", waived_no_deduction: "Waived · No deduction" };
   return (
     <article className={`leave-request-card ${isMyTurn ? "review-ready" : ""} ${decisionFlash ? `decision-${decisionFlash}` : ""}`}>
       {decisionFlash && <div className="decision-flash" role="status"><span>{decisionFlash === "approve" ? <Check size={20} /> : <X size={20} />}</span>{decisionFlash === "approve" ? (isSuperAdminOverride ? "Leave fully approved" : "Stage approved") : "Request rejected"}</div>}
       <header className="leave-card-header">
         <div className="leave-card-left">
-          <span className={`request-icon ${item.leaveType === "unpaid_leave" ? "unpaid" : ""}`}>
-            <Plane size={17} />
+          <span className={`request-icon ${item.leaveType === "unpaid_leave" && !isEarlyLeave ? "unpaid" : ""} ${isEarlyLeave ? "early" : ""}`}>
+            {isEarlyLeave ? <Clock3 size={17} /> : <Plane size={17} />}
           </span>
           <div>
             <strong>{leaveTypeLabel}</strong>
             {employeeName && <small>by {employeeName}</small>}
             <span>
-              {formatDate(item.startDate)} – {formatDate(item.endDate)} · {item.workingDays || item.days} working day{(item.workingDays || item.days) === 1 ? "" : "s"} · {item.dayType === "half_day" ? "Half day" : "Full day"}
+              {formatDate(item.startDate)} – {formatDate(item.endDate)} · {item.workingDays || item.days} working day{(item.workingDays || item.days) === 1 ? "" : "s"} · {dayTypeLabel}
             </span>
           </div>
         </div>
         <div className="leave-card-right">
           <StatusBadge status={item.status} />
+          {isEarlyLeave && (
+            <span className={`soft-badge ${item.hrCompensationDecision ? "green" : "amber"}`}>
+              {item.hrCompensationDecision ? compLabelMap[item.hrCompensationDecision] : "Awaiting HR decision"}
+            </span>
+          )}
           {item.policySnapshot?.longLeave?.isLongLeave && (
             <span className="soft-badge purple">Long leave · 3-level</span>
           )}
@@ -1463,8 +1536,13 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
       <div className="leave-card-body">
         <p className="leave-reason">{item.reason}</p>
 
-        {(payments.paidDays || payments.unpaidDays) && (
+        {(payments.paidDays || payments.unpaidDays || isEarlyLeave) && (
           <div className="leave-payment-strip">
+            {isEarlyLeave && (
+              <span style={{marginRight:"12px"}}><strong style={{color:"var(--color-emerald-700)"}}>Early leave: </strong>
+                {item.earlyLeaveMinutes ? `${Math.floor(Number(item.earlyLeaveMinutes)/60)}h ${String(Number(item.earlyLeaveMinutes)%60).padStart(2,'0')}m (${Number(item.earlyLeaveMinutes)} min) · Day target ${510-Number(item.earlyLeaveMinutes)}m` : "—"}
+              </span>
+            )}
             {payments.paidDays > 0 && <span><i className="paid-dot" /> {payments.paidDays} paid</span>}
             {payments.unpaidDays > 0 && <span><i className="unpaid-dot" /> {payments.unpaidDays} unpaid</span>}
             <span className="balance-note">Balance: {payments.balanceAfter ?? "—"} left</span>
@@ -1490,6 +1568,7 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
         {pending && nextRole && (
           <p className="next-approver-line">
             Next: <strong>{nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR Admin" : "Admin / Super Admin"}</strong>
+            {isEarlyLeave && nextRole === "hr_admin" && " · HR will set compensation"}
           </p>
         )}
 
@@ -1501,6 +1580,22 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
             <div><strong>{isSuperAdminOverride ? "Final approval available" : isMyTurn ? "Your decision is required" : "Waiting for previous approval"}</strong><span>{isSuperAdminOverride ? "Approve to complete this request immediately. Manager and HR stages will be bypassed and notified." : isMyTurn ? "Approve to move this request to the next stage, or reject it completely." : `This becomes actionable after ${nextRole === "manager" ? "Manager" : nextRole === "hr_admin" ? "HR" : "Admin / Super Admin"} review.`}</span></div>
             <span className={isMyTurn ? "ready-pill" : "waiting-pill"}>{isSuperAdminOverride ? "Final override" : isMyTurn ? "Ready for review" : "Locked"}</span>
           </div>
+          {isHrReviewingEarly && (
+            <div className="hr-compensation-block" style={{marginBottom:"10px",padding:"12px",background:"var(--color-emerald-50)",border:"1px solid var(--color-emerald-200)",borderRadius:"10px"}}>
+              <p style={{margin:"0 0 8px",fontWeight:600,fontSize:"13px"}}>HR decision: Set compensation for this early leave</p>
+              <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+                {[{val:"paid_deduction",label:"Paid deduction",desc:"Deduct pro-rated from leave balance"},{val:"unpaid",label:"Unpaid",desc:"Mark as unpaid, no leave deduction"},{val:"waived_no_deduction",label:"Waive · No deduction",desc:"No leave impact, employee excused"}].map(opt=>(
+                  <label key={opt.val} style={{display:"flex",alignItems:"flex-start",gap:"8px",padding:"10px",background:hrComp===opt.val?"var(--color-white)":"transparent",border:hrComp===opt.val?"2px solid var(--color-emerald-500)":"1px solid var(--color-border)",borderRadius:"8px",cursor:"pointer",flex:"1",minWidth:"180px"}}>
+                    <input type="radio" name={`hrcomp-${item._id}`} value={opt.val} checked={hrComp===opt.val} onChange={e=>setHrComp(e.target.value)} style={{marginTop:"2px"}} />
+                    <span>
+                      <strong style={{fontSize:"13px",display:"block"}}>{opt.label}</strong>
+                      <small style={{color:"var(--color-muted)",fontSize:"12px"}}>{opt.desc}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <textarea
             rows="2"
             value={note}
@@ -1599,9 +1694,9 @@ export function LeavePage({ user, currentEmployeeId }) {
     return () => { active = false; cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
-  async function review(id, decision, reviewNote) {
+  async function review(id, decision, reviewNote, extra = {}) {
     try {
-      const updated = await leaveApi.review(id, decision, reviewNote);
+      const updated = await leaveApi.review(id, decision, reviewNote, extra);
       setRequests(value => value.map(item => item._id === id ? { ...item, ...updated } : item));
     } catch (e) {
       setError(e.message);
@@ -1611,6 +1706,8 @@ export function LeavePage({ user, currentEmployeeId }) {
   const monthlyLeaveReport = useMemo(() => {
     let fullDayCount = 0;
     let halfDayCount = 0;
+    let earlyLeaveCount = 0;
+    let earlyLeaveTotalMinutes = 0;
     requests.forEach((req) => {
       if (req.status !== "approved") return;
       const startDate = req.startDate ? new Date(req.startDate) : null;
@@ -1623,7 +1720,10 @@ export function LeavePage({ user, currentEmployeeId }) {
       );
       if (!inMonth) return;
       const dayType = req.dayType || "full_day";
-      if (dayType === "half_day") {
+      if (dayType === "early_leave") {
+        earlyLeaveCount += 1;
+        earlyLeaveTotalMinutes += Number(req.earlyLeaveMinutes) || 0;
+      } else if (dayType === "half_day") {
         halfDayCount += 1;
       } else {
         const days = Number(req.workingDays) || Number(req.days) || 1;
@@ -1631,7 +1731,7 @@ export function LeavePage({ user, currentEmployeeId }) {
       }
     });
     const totalLeaveDaysConsumed = fullDayCount + halfDayCount * 0.5;
-    return { fullDayCount, halfDayCount, totalLeaveDaysConsumed };
+    return { fullDayCount, halfDayCount, earlyLeaveCount, earlyLeaveTotalMinutes, totalLeaveDaysConsumed };
   }, [requests, leaveReportMonth, leaveReportYear]);
   const paidPct = balance && balance.paidEntitled > 0 ? Math.min(100, Math.round((balance.paidUsed / balance.paidEntitled) * 100)) : 0;
   const probationConfirmed = Boolean(balance?.probation?.confirmationStatus === "confirmed");
@@ -1754,6 +1854,13 @@ export function LeavePage({ user, currentEmployeeId }) {
             <strong>{monthlyLeaveReport.halfDayCount} <small>instance{monthlyLeaveReport.halfDayCount === 1 ? "" : "s"}</small></strong>
           </article>
           <article>
+            <span>Early leave</span>
+            <strong>{monthlyLeaveReport.earlyLeaveCount} <small>instance{monthlyLeaveReport.earlyLeaveCount === 1 ? "" : "s"}</small></strong>
+            {monthlyLeaveReport.earlyLeaveTotalMinutes > 0 && <small style={{color:"var(--color-muted)",fontSize:"11px",display:"block"}}>
+              {Math.floor(monthlyLeaveReport.earlyLeaveTotalMinutes/60)}h {String(monthlyLeaveReport.earlyLeaveTotalMinutes%60).padStart(2,'0')}m total
+            </small>}
+          </article>
+          <article>
             <span>Total leave days consumed</span>
             <strong>{monthlyLeaveReport.totalLeaveDaysConsumed} <small>day{monthlyLeaveReport.totalLeaveDaysConsumed === 1 ? "" : "s"}</small></strong>
           </article>
@@ -1872,9 +1979,9 @@ export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) 
     return () => { active = false; cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
-  async function review(id, decision, note = "") {
+  async function review(id, decision, note = "", extra = {}) {
     try {
-      const updated = await leaveApi.review(id, decision, note);
+      const updated = await leaveApi.review(id, decision, note, extra);
       setRequests((value) =>
         value.map((item) => (item._id === id ? { ...item, ...updated } : item)),
       );
@@ -3045,7 +3152,7 @@ export function ReportsPage() {
         from, to, label: `${from} to ${to}`,
         targetMinutes: { fullDay: 510, halfDay: 255 },
         fullDayHoursMinutes: '8h 30m', halfDayHoursMinutes: '4h 15m',
-        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
+        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,earlyLeaveDays:0,earlyLeaveTotalMinutes:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
         rows: [], policy: null
       });
     });
@@ -3067,7 +3174,7 @@ export function ReportsPage() {
     {!data ? <StateMessage>Loading attendance MIS…</StateMessage> : <>
       {error && <StateMessage error>{error}</StateMessage>}
       <section className="mis-summary">
-        {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Full days',data.summary.fullDays,'complete'],['Half days (applied leave)',data.summary.halfDays,'equal'],['Incomplete half (late 3-day rule)',data.summary.incompleteHalfDays,'less'],['Applied full-leave days',data.summary.leaveAppliedFullDays||0,'neutral'],['Applied half-leave days',data.summary.leaveAppliedHalfDays||0,'equal'],['Total Working Hours',hours(data.summary.expectedWorkingMinutes),'hours'],['Completed Working Hours',hours(data.summary.completedWorkingMinutes||0),'more'],['Leave before 8:30',data.summary.lessThanTarget,'less'],['Leave on 8:30',data.summary.equalToTarget,'equal'],['Leave after 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
+        {[['Employees',data.summary.employees,'neutral'],['Late arrivals',data.summary.lateArrivals,'late'],['Completed days',data.summary.completedDays,'complete'],['Full days',data.summary.fullDays,'complete'],['Half days (applied leave)',data.summary.halfDays,'equal'],['Incomplete half (late 3-day rule)',data.summary.incompleteHalfDays,'less'],['Early leave days',data.summary.earlyLeaveDays||0,'equal'],['Early leave total',hours(data.summary.earlyLeaveTotalMinutes||0),'equal'],['Applied full-leave days',data.summary.leaveAppliedFullDays||0,'neutral'],['Applied half-leave days',data.summary.leaveAppliedHalfDays||0,'equal'],['Total Working Hours',hours(data.summary.expectedWorkingMinutes),'hours'],['Completed Working Hours',hours(data.summary.completedWorkingMinutes||0),'more'],['Leave before 8:30',data.summary.lessThanTarget,'less'],['Leave on 8:30',data.summary.equalToTarget,'equal'],['Leave after 8:30',data.summary.moreThanTarget,'more']].map(([label,value,tone])=><article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}
       </section>
       <section className="content-card mis-table-card"><div className="mis-table-heading"><div><span>{data.label}</span><h2>Employee attendance performance</h2></div><p>{(() => {
         const policy = (data.summary?.meta?.policy) || (data.meta?.policy) || (data.policy) || null;

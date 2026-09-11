@@ -2182,3 +2182,15 @@ button,input,select,textarea{font-family:inherit}button{transition:background-co
 @media(max-width:1100px){.mis-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.mis-brand img{max-width:180px}}@media(max-width:760px){.dashboard-greeting-only{min-height:90px!important;padding:20px!important}.mis-header,.mis-brand,.mis-controls,.mis-table-heading{align-items:stretch;flex-direction:column}.mis-brand>div{padding:0;border:0}.mis-brand img{max-width:180px}.mis-controls input,.mis-controls .primary-button{width:100%}.mis-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.mis-table-heading{gap:8px}}
 .ml-ready-toast{position:fixed;top:18px;right:18px;z-index:3000;display:flex;align-items:center;gap:10px;max-width:380px;padding:13px 16px;border:1px solid;border-radius:10px;box-shadow:0 12px 34px rgba(24,70,50,.18);animation:toast-in .22s ease-out}.ml-ready-toast.success{border-color:#9fd8b8;background:#e8f8ef;color:#126a3d}.ml-ready-toast.failure{border-color:#edb0b8;background:#fff0f2;color:#a5273b}.ml-ready-toast>div{display:flex;flex-direction:column;gap:2px}.ml-ready-toast strong{font-size:12px}.ml-ready-toast span{font-size:10px;color:inherit;opacity:.78}@keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 .mis-table thead tr:first-child th{border-bottom:1px solid rgba(255,255,255,.2)}.mis-table .mis-group-heading{text-align:center}.mis-table .mis-subhead th{padding:7px 10px;text-align:center;background:#116d64}
+/* Early leave quick-minute chips */
+.chip{display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border-radius:999px;border:1px solid #d9e4e1;background:#fff;color:#34514b;font-size:12.5px;font-weight:600;cursor:pointer;transition:all .15s ease;user-select:none;gap:6px;line-height:1}
+.chip:hover{background:#ecf6f3;border-color:#b9d3cc}
+.chip.active{background:#10b981;border-color:#059669;color:#fff;box-shadow:0 2px 8px rgba(16,185,129,.28)}
+/* Request icon variant for early leave (amber/clock tone) */
+.request-icon.early{background:linear-gradient(135deg,#fef3c7,#fde68a)!important;color:#92400e!important;box-shadow:0 2px 8px rgba(217,119,6,.18)!important}
+/* Soft badge variants */
+.soft-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:11.5px;font-weight:650;letter-spacing:.2px;line-height:1.2}
+.soft-badge.green{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0}
+.soft-badge.amber{background:#fffbeb;color:#92400e;border:1px solid #fcd34d}
+.soft-badge.blue{background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe}
+.soft-badge.purple{background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe}

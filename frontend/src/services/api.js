@@ -157,10 +157,10 @@ export const leaveApi = {
   },
   create: (data) =>
     api("/leaves", { method: "POST", body: JSON.stringify(data) }),
-  review: (id, decision, reviewNote = "") =>
+  review: (id, decision, reviewNote = "", extra = {}) =>
     api(`/leaves/${id}/${decision}`, {
       method: "PATCH",
-      body: JSON.stringify({ reviewNote }),
+      body: JSON.stringify({ reviewNote, ...extra }),
     }),
 };
 export const adminApi = { dashboard: () => api("/dashboard/admin") };

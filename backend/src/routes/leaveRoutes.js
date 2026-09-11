@@ -248,14 +248,18 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json({ success: true, data: { items, meta: { isReportingManager: Boolean(isReportingManager), directReportsCount } } })
 }))
 
+const FULL_DAY_MINUTES_LEAVE = 510
 const createSchema = z.object({
   leaveType: z.enum(['paid_leave', 'unpaid_leave', 'casual', 'sick', 'earned', 'unpaid']),
-  dayType: z.enum(['full_day', 'half_day']).default('full_day'),
+  dayType: z.enum(['full_day', 'half_day', 'early_leave']).default('full_day'),
   startDate: z.string().min(8).or(z.coerce.date()),
   endDate: z.string().min(8).or(z.coerce.date()),
   reason: z.string().trim().min(5).max(500),
+  earlyLeaveMinutes: z.number().int().min(1).max(FULL_DAY_MINUTES_LEAVE - 1).optional(),
 }).refine(value => new Date(value.endDate) >= new Date(value.startDate), { message: 'End date must be on or after start date', path: ['endDate'] })
   .refine(value => value.dayType !== 'half_day' || new Date(value.startDate).toDateString() === new Date(value.endDate).toDateString(), { message: 'Half-day leave must start and end on the same date', path: ['endDate'] })
+  .refine(value => value.dayType !== 'early_leave' || new Date(value.startDate).toDateString() === new Date(value.endDate).toDateString(), { message: 'Early leave must start and end on the same date', path: ['endDate'] })
+  .refine(value => value.dayType !== 'early_leave' || (value.earlyLeaveMinutes && value.earlyLeaveMinutes >= 1 && value.earlyLeaveMinutes <= 509), { message: 'Early leave minutes required (1-509)', path: ['earlyLeaveMinutes'] })
 
 router.post('/', asyncHandler(async (req, res) => {
   const currentEmployee = await resolveEmployee(req)
@@ -266,7 +270,11 @@ router.post('/', asyncHandler(async (req, res) => {
   const normalizedLeaveType = normalizeLeaveType(input.leaveType)
   const { workingDays, fyStart, fyEnd, fyLabel } = await computeLeaveDays({ startDate: input.startDate, endDate: input.endDate })
   if (input.dayType === 'half_day' && workingDays !== 1) throw new HttpError(422, 'Half-day leave must be selected on a working day.')
-  const days = input.dayType === 'half_day' ? 0.5 : Math.max(1, workingDays)
+  if (input.dayType === 'early_leave' && workingDays !== 1) throw new HttpError(422, 'Early leave must be selected on a working day.')
+  let days
+  if (input.dayType === 'half_day') days = 0.5
+  else if (input.dayType === 'early_leave') days = Number((Number(input.earlyLeaveMinutes) / FULL_DAY_MINUTES_LEAVE).toFixed(4))
+  else days = Math.max(1, workingDays)
   const { plan, longLeavePolicy, isPaid } = validateLeaveRequest({
     employee,
     leaveType: normalizedLeaveType,
@@ -283,10 +291,12 @@ router.post('/', asyncHandler(async (req, res) => {
   if (overlap) throw new HttpError(409, 'You already have a pending or approved leave for this date range.')
   const usedPaid = await countPaidLeaveDaysForEmployee({ employeeId: employee._id, leaveRequestModel: LeaveRequest })
   let payments
-  if (normalizedLeaveType === 'unpaid_leave') {
-    payments = { mode: 'unpaid', paidDays: 0, unpaidDays: days, balanceBefore: plan.entitledPaidLeaves - usedPaid, balanceAfter: plan.entitledPaidLeaves - usedPaid }
+  const available = Math.max(0, plan.entitledPaidLeaves - usedPaid)
+  if (input.dayType === 'early_leave') {
+    payments = { mode: 'unpaid', paidDays: 0, unpaidDays: 0, balanceBefore: available, balanceAfter: available }
+  } else if (normalizedLeaveType === 'unpaid_leave') {
+    payments = { mode: 'unpaid', paidDays: 0, unpaidDays: days, balanceBefore: available, balanceAfter: available }
   } else {
-    const available = Math.max(0, plan.entitledPaidLeaves - usedPaid)
     const paidDays = Math.min(available, days)
     const unpaidDays = Math.max(0, days - paidDays)
     payments = {
@@ -297,7 +307,7 @@ router.post('/', asyncHandler(async (req, res) => {
       balanceAfter: available - paidDays,
     }
   }
-  if (isPaid && payments.paidDays < Math.min(1, days)) {
+  if (input.dayType !== 'early_leave' && isPaid && payments.paidDays < Math.min(1, days)) {
     throw new HttpError(422, 'You do not have enough paid leave balance. Try unpaid leave or reduce the number of days.')
   }
   const requiredSteps = buildApprovalChain()
@@ -325,6 +335,8 @@ router.post('/', asyncHandler(async (req, res) => {
     workingDays: days,
     reason: input.reason,
     fyLabel,
+    earlyLeaveMinutes: input.dayType === 'early_leave' ? Number(input.earlyLeaveMinutes) : null,
+    hrCompensationDecision: null,
     policySnapshot: {
       annualPaidLeaves: plan.annualPaidLeaves,
       cycleStartMonth: plan.cycleStartMonth,
@@ -354,7 +366,10 @@ router.post('/', asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { ...request.toObject(), finance: { fyStart, fyEnd, fyLabel: range.label } } })
 }))
 
-const reviewSchema = z.object({ reviewNote: z.string().trim().max(500).default('') })
+const reviewSchema = z.object({
+  reviewNote: z.string().trim().max(500).default(''),
+  hrCompensationDecision: z.enum(['paid_deduction', 'unpaid', 'waived_no_deduction']).optional(),
+})
 
 router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'manager', 'employee'), asyncHandler(async (req, res) => {
   if (!['approve', 'reject'].includes(req.params.decision)) throw new HttpError(400, 'Invalid decision')
@@ -464,6 +479,26 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
           step.actedAt = actedAt
         })
       }
+      if (request.dayType === 'early_leave') {
+        const compDecision = input.hrCompensationDecision || 'unpaid'
+        request.hrCompensationDecision = compDecision
+        const daysVal = Number(request.days || 0)
+        const balBefore = Number(request.payments?.balanceBefore || 0)
+        if (compDecision === 'paid_deduction') {
+          const paidDays = Math.min(balBefore, daysVal)
+          const unpaidDays = Math.max(0, daysVal - paidDays)
+          request.payments = {
+            mode: paidDays === daysVal ? 'paid' : unpaidDays === daysVal ? 'unpaid' : 'partially_paid',
+            paidDays, unpaidDays,
+            balanceBefore: balBefore,
+            balanceAfter: balBefore - paidDays,
+          }
+        } else if (compDecision === 'waived_no_deduction') {
+          request.payments = { mode: 'paid', paidDays: 0, unpaidDays: 0, balanceBefore: balBefore, balanceAfter: balBefore }
+        } else {
+          request.payments = { mode: 'unpaid', paidDays: 0, unpaidDays: 0, balanceBefore: balBefore, balanceAfter: balBefore }
+        }
+      }
       request.status = 'approved'
       request.reviewedBy = req.user._id
       request.reviewedAt = actedAt
@@ -476,6 +511,9 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     } else {
       let currentStepIndex = workflow.currentStepIndex || 0
       const currentRole = activeRole || workflow.requiredSteps[currentStepIndex] || workflow.requiredSteps[Math.max(0, currentStepIndex - 1)]
+      if (request.dayType === 'early_leave' && currentRole === 'hr_admin' && !input.hrCompensationDecision) {
+        throw new HttpError(422, 'Please select a compensation decision for this early leave request (Paid deduction / Unpaid / Waived).')
+      }
       if (Array.isArray(workflow.steps)) {
         const idx = workflow.steps.findIndex(step => step.role === currentRole && step.status === 'pending')
         if (idx >= 0) {
@@ -485,6 +523,26 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
           step.actorEmployee = currentEmployee?._id || null
           step.comment = input.reviewNote
           step.actedAt = new Date()
+        }
+      }
+      if (request.dayType === 'early_leave' && currentRole === 'hr_admin' && input.hrCompensationDecision) {
+        const compDecision = input.hrCompensationDecision
+        request.hrCompensationDecision = compDecision
+        const daysVal = Number(request.days || 0)
+        const balBefore = Number(request.payments?.balanceBefore || 0)
+        if (compDecision === 'paid_deduction') {
+          const paidDays = Math.min(balBefore, daysVal)
+          const unpaidDays = Math.max(0, daysVal - paidDays)
+          request.payments = {
+            mode: paidDays === daysVal ? 'paid' : unpaidDays === daysVal ? 'unpaid' : 'partially_paid',
+            paidDays, unpaidDays,
+            balanceBefore: balBefore,
+            balanceAfter: balBefore - paidDays,
+          }
+        } else if (compDecision === 'waived_no_deduction') {
+          request.payments = { mode: 'paid', paidDays: 0, unpaidDays: 0, balanceBefore: balBefore, balanceAfter: balBefore }
+        } else {
+          request.payments = { mode: 'unpaid', paidDays: 0, unpaidDays: 0, balanceBefore: balBefore, balanceAfter: balBefore }
         }
       }
       const required = workflow.requiredSteps || []
