@@ -37,30 +37,162 @@ function reportRange(query){
   const range=monthRange(query.month);return{...range,from:organizationDateKey(range.start),to:organizationDateKey(new Date(range.end.getTime()-DAY_MS))}
 }
 
+/**
+ * Build a per-employee map of date-key -> leave type for the given range.
+ * Values:
+ *   'full_day'  — approved full-day leave applied by employee
+ *   'half_day'  — approved half-day leave applied by employee (not attendanceDayType half-day)
+ *   undefined   — no leave, normal working day
+ *
+ * IMPORTANT: this map contains ONLY leaves the employee APPLIED via LeaveRequest.
+ * It does NOT mix in attendance halfDayType='half_day' (the late 3-day rule).
+ * That is preserved separately in INCOMPLETE HALF as requested.
+ */
+function buildLeaveAppliedMap(range, approvedLeaves) {
+  const result = new Map() // key = `${employeeId}|${dateKey}`
+  for (const leave of approvedLeaves) {
+    const empKey = String(leave.employee)
+    const iterDay = new Date(Date.max ? 0 : leave.startDate.getTime ? leave.startDate : new Date(leave.startDate))
+    const lo = leave.startDate instanceof Date ? leave.startDate : new Date(leave.startDate)
+    const hi = leave.endDate instanceof Date ? leave.endDate : new Date(leave.endDate)
+    for (let day = new Date(lo); day <= hi; day = new Date(day.getTime() + DAY_MS)) {
+      const dk = organizationDateKey(day)
+      if (dk < organizationDateKey(range.start)) continue
+      if (dk > organizationDateKey(new Date(range.end.getTime() - DAY_MS))) continue
+      const key = `${empKey}|${dk}`
+      const prev = result.get(key)
+      // Priority: full_day > half_day. If both overlap on same date, treat as full_day.
+      if (leave.dayType === 'full_day' || prev === 'full_day') result.set(key, 'full_day')
+      else if (leave.dayType === 'half_day') result.set(key, 'half_day')
+    }
+  }
+  return result
+}
+
 async function attendanceMis(query){
   const range=reportRange(query)
-  const [employees,records,halfDayLeaves,policy]=await Promise.all([
+  const [employees,records,approvedLeaves,policy]=await Promise.all([
     Employee.find({employeeStatus:{$in:['active','notice_period']}}).select('employeeCode firstName lastName department designation').sort({firstName:1,lastName:1}).lean(),
     Attendance.find({date:{$gte:range.start,$lt:range.end}}).select('employee date workingMinutes lateMinutes status halfDayReason checkIn checkOut attendanceDayType expectedWorkingMinutes completionStatus missedCheckOut').lean(),
-    LeaveRequest.find({status:'approved',dayType:'half_day',startDate:{$lt:range.end},endDate:{$gte:range.start}}).select('employee startDate endDate').lean(),
+    LeaveRequest.find({status:'approved',dayType:{$in:['full_day','half_day']},startDate:{$lt:range.end},endDate:{$gte:range.start}}).select('employee startDate endDate dayType').lean(),
     getAttendancePolicy(),
   ])
   const FULL_DAY_MINUTES=policy.fullDayWorkingMinutes
   const HALF_DAY_MINUTES=policy.halfDayWorkingMinutes
+  const leaveAppliedMap=buildLeaveAppliedMap(range, approvedLeaves)
   const byEmployee=new Map()
   for(const record of records){const key=String(record.employee);const list=byEmployee.get(key)||[];list.push(record);byEmployee.set(key,list)}
   const rows=employees.map(employee=>{
-    const items=byEmployee.get(String(employee._id))||[]
+    const empId = String(employee._id)
+    const items=byEmployee.get(empId)||[]
     const completed=items.filter(item=>item.checkIn?.time&&item.checkOut?.time)
-    const classified=completed.map(item=>{const dayStart=dateFromKey(organizationDateKey(item.date)),dayEnd=new Date(dayStart.getTime()+DAY_MS-1),halfDay=item.attendanceDayType==='half_day'||halfDayLeaves.some(leave=>String(leave.employee)===String(employee._id)&&leave.startDate<=dayEnd&&leave.endDate>=dayStart),target=halfDay?HALF_DAY_MINUTES:FULL_DAY_MINUTES;return{...item,halfDay,target}})
-    const totalMinutes=classified.reduce((sum,item)=>sum+Number(item.workingMinutes||0),0),fullDays=classified.filter(item=>!item.halfDay).length,halfDays=classified.filter(item=>item.halfDay).length,incompleteHalfDays=classified.filter(item=>item.halfDay&&Number(item.workingMinutes||0)<HALF_DAY_MINUTES).length
+    const itemByDate = new Map()
+    for (const c of completed) itemByDate.set(organizationDateKey(c.date), c)
+
+    // leaveAppliedHalfDayByDate set: keys = dateKeys where employee applied half-day via LeaveRequest (NOT attendance day-type)
+    const leaveAppliedFullDayKeys = new Set()
+    const leaveAppliedHalfDayKeys = new Set()
+    const rangeFrom = organizationDateKey(range.start)
+    const rangeTo = organizationDateKey(new Date(range.end.getTime() - DAY_MS))
+    for (let day = new Date(range.start); day < range.end; day = new Date(day.getTime() + DAY_MS)) {
+      const dk = organizationDateKey(day)
+      if (dk < rangeFrom || dk > rangeTo) continue
+      const t = leaveAppliedMap.get(`${empId}|${dk}`)
+      if (t === 'full_day') leaveAppliedFullDayKeys.add(dk)
+      else if (t === 'half_day') leaveAppliedHalfDayKeys.add(dk)
+    }
+
+    const classified=completed.map(item=>{
+      const dk = organizationDateKey(item.date)
+      const leaveAppliedHalf = leaveAppliedHalfDayKeys.has(dk)
+      // halfDay = either (a) attendanceDayType half (late 3-day-rule etc) OR (b) APPLIED half-day leave.
+      // BUT incompleteHalfDays below only counts (a) attendanceDayType half-day < half-day target — explicitly as requested by user "consider only half-day which user applied in leave".
+      const halfDay=item.attendanceDayType==='half_day'||leaveAppliedHalf
+      const target=halfDay?HALF_DAY_MINUTES:FULL_DAY_MINUTES
+      return{...item,halfDay,target,leaveAppliedFull:leaveAppliedFullDayKeys.has(dk),leaveAppliedHalf}
+    })
+
+    // Raw Completed Working Hours = sum of actual punches (user can still see he worked those hours even if on full leave)
+    const totalMinutes=classified.reduce((sum,item)=>sum+Number(item.workingMinutes||0),0)
+
+    // Classified completed days (backward compat + user requested distinction):
+    // fullDays = items where target=FULL day (no applied leave half-day AND attendanceDayType not half)
+    // halfDays = items WHERE user APPLIED HALF-DAY LEAVE (leaveAppliedHalf=true).
+    //   Note: explicit user instruction: "Consider only half-day which user is applied in leave".
+    //   The attendanceDayType='half_day' (late 3-day rule) is counted via separate INCOMPLETE HALF if applicable.
+    const fullDays = classified.filter(item=>!item.leaveAppliedHalf && item.attendanceDayType!=='half_day').length
+    const halfDaysAppliedLeave = classified.filter(item=>item.leaveAppliedHalf).length
+    const halfDays = halfDaysAppliedLeave // strictly comply "do not misjudge 2 half day types"
+    // Incomplete half = only attendance half (late 3-day) items below half-day target.
+    // Applied half-day leaves are compared against half-day target and NOT punished as "incomplete" if
+    // actual was lower than target (because user is officially on half-leave).
+    const incompleteHalfDays=classified.filter(item=>
+      !item.leaveAppliedHalf &&
+      item.attendanceDayType==='half_day' &&
+      Number(item.workingMinutes||0)<HALF_DAY_MINUTES
+    ).length
+
     const lateAt1015=items.filter(item=>Number(item.lateMinutes)>0&&Number(item.lateMinutes)<=15).length
     const lateAt1030=items.filter(item=>Number(item.lateMinutes)>15).length
     const legacyLate=items.filter(item=>!Number(item.lateMinutes)&&(item.status==='late'||item.halfDayReason==='three_late_arrivals')).length
-    return {employeeId:employee._id,employeeCode:employee.employeeCode,name:`${employee.firstName} ${employee.lastName}`.trim(),department:employee.department||'General',designation:employee.designation||'Employee',lateAt1015:lateAt1015+legacyLate,lateAt1030,lateArrivals:lateAt1015+lateAt1030+legacyLate,completedDays:classified.length,fullDays,halfDays,incompleteHalfDays,totalMinutes,lessThanTarget:classified.filter(item=>Number(item.workingMinutes||0)<item.target).length,equalToTarget:classified.filter(item=>Number(item.workingMinutes||0)===item.target).length,moreThanTarget:classified.filter(item=>Number(item.workingMinutes||0)>item.target).length}
+
+    // COMPLIED WORKING MINUTES (leave-aware + capped by full/half day target per user rules):
+    // Rules:
+    // 1) If employee APPLIED full-day leave → DO NOT CONSIDER that day (entirely skip — no credit, no debit)
+    // 2) If employee APPLIED half-day leave (via LeaveRequest) → cap actual working minutes AT HALF_DAY_MINUTES (255).
+    //    If user clocked more than 255, they only get 255 for complied tally (since half leave applied).
+    //    If they clocked less (e.g. only morning 180) → they get actual 180 (shortfall is theirs own, but not capped upward).
+    // 3) Normal day (no leave applied) → cap actual AT FULL_DAY_MINUTES target so extra overtime doesn't double inflate complied figure.
+    // 4) Skip weekend / holiday day if no punches: handled implicitly because completed list only has punches.
+    let compliedMinutes = 0
+    let leaveAppliedFullDaysSkipped = 0
+    for (const item of classified) {
+      const actual = Number(item.workingMinutes||0)
+      if (item.leaveAppliedFull) { leaveAppliedFullDaysSkipped++; continue /* Rule 1 */ }
+      if (item.leaveAppliedHalf) { compliedMinutes += Math.min(actual, HALF_DAY_MINUTES); continue /* Rule 2 */ }
+      compliedMinutes += Math.min(actual, FULL_DAY_MINUTES) /* Rule 3 */
+    }
+
+    // Summary counters: how many leave days were applied by employee (used for MIS cards summary)
+    const leaveAppliedFullDaysCount = leaveAppliedFullDayKeys.size
+    const leaveAppliedHalfDaysCount = leaveAppliedHalfDayKeys.size
+
+    return {
+      employeeId:employee._id,
+      employeeCode:employee.employeeCode,
+      name:`${employee.firstName} ${employee.lastName}`.trim(),
+      department:employee.department||'General',
+      designation:employee.designation||'Employee',
+      lateAt1015:lateAt1015+legacyLate,
+      lateAt1030,
+      lateArrivals:lateAt1015+lateAt1030+legacyLate,
+      completedDays:classified.length,
+      fullDays,halfDays,incompleteHalfDays,
+      totalMinutes,
+      compliedMinutes,
+      leaveAppliedFullDays: leaveAppliedFullDaysCount,
+      leaveAppliedHalfDays: leaveAppliedHalfDaysCount,
+      lessThanTarget:classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)<item.target).length,
+      equalToTarget:classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)===item.target).length,
+      moreThanTarget:classified.filter(item=>!item.leaveAppliedFull && Number(item.workingMinutes||0)>item.target).length
+    }
   })
-  const summary=rows.reduce((result,row)=>({employees:result.employees+1,lateArrivals:result.lateArrivals+row.lateArrivals,completedDays:result.completedDays+row.completedDays,fullDays:result.fullDays+row.fullDays,halfDays:result.halfDays+row.halfDays,incompleteHalfDays:result.incompleteHalfDays+row.incompleteHalfDays,totalMinutes:result.totalMinutes+row.totalMinutes,lessThanTarget:result.lessThanTarget+row.lessThanTarget,equalToTarget:result.equalToTarget+row.equalToTarget,moreThanTarget:result.moreThanTarget+row.moreThanTarget}),{employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,totalMinutes:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
-  return {from:range.from,to:range.to,label:range.label,targetMinutes:{fullDay:FULL_DAY_MINUTES,halfDay:HALF_DAY_MINUTES},fullDayHoursMinutes:formatMinutesToHoursMinutes(FULL_DAY_MINUTES),halfDayHoursMinutes:formatMinutesToHoursMinutes(HALF_DAY_MINUTES),summary,rows}
+  const summary=rows.reduce((result,row)=>({
+    employees:result.employees+1,
+    lateArrivals:result.lateArrivals+row.lateArrivals,
+    completedDays:result.completedDays+row.completedDays,
+    fullDays:result.fullDays+row.fullDays,
+    halfDays:result.halfDays+row.halfDays,
+    incompleteHalfDays:result.incompleteHalfDays+row.incompleteHalfDays,
+    totalMinutes:result.totalMinutes+row.totalMinutes,
+    compliedMinutes:(result.compliedMinutes||0)+row.compliedMinutes,
+    leaveAppliedFullDays:(result.leaveAppliedFullDays||0)+row.leaveAppliedFullDays,
+    leaveAppliedHalfDays:(result.leaveAppliedHalfDays||0)+row.leaveAppliedHalfDays,
+    lessThanTarget:result.lessThanTarget+row.lessThanTarget,
+    equalToTarget:result.equalToTarget+row.equalToTarget,
+    moreThanTarget:result.moreThanTarget+row.moreThanTarget
+  }),{employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,totalMinutes:0,compliedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
+  return {from:range.from,to:range.to,label:range.label,targetMinutes:{fullDay:FULL_DAY_MINUTES,halfDay:HALF_DAY_MINUTES},fullDayHoursMinutes:formatMinutesToHoursMinutes(FULL_DAY_MINUTES),halfDayHoursMinutes:formatMinutesToHoursMinutes(HALF_DAY_MINUTES),summary,rows,policy}
 }
 
 router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)=>res.json({success:true,data:await attendanceMis(req.query)})))
@@ -69,19 +201,26 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
   res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="attendance-mis-${report.from}-to-${report.to}.pdf"`);doc.pipe(res)
   doc.image(COMPANY_LOGO,30,22,{width:165})
   doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD',30,72)
-  doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half ${report.halfDayHoursMinutes}`,30,96)
-  const columns=[['Employee',30,130],['ID',160,55],['Department',215,125],['10:15',340,42],['10:30',382,42],['Full',424,45],['Half',469,45],['Incomplete',514,65],['Hours',579,65],['Leave before\n8:30',644,55],['Leave on\n8:30',699,55],['Leave after\n8:30',754,56]]
-  const drawHeader=headerY=>{doc.rect(30,headerY,780,42).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);columns.forEach(([label,x,width],index)=>doc.text(label,x+4,headerY+(index>=3&&index<=7?25:index>=9?10:16),{width:width-7,align:index>=3?'center':'left',lineGap:1}));doc.text('LATE ARRIVAL',340,headerY+6,{width:84,align:'center'});doc.text('COMPLETED DAYS',424,headerY+6,{width:155,align:'center'})}
+  doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`,30,96)
+  const columns=[['Employee',30,130],['ID',160,55],['Department',215,125],['10:15',340,42],['10:30',382,42],['Full',424,45],['Half (App)',469,52],['Incomplete',521,65],['Completed\nHours',586,65],['Complied\nHours',651,65],['Leave <8:30',716,50],['Leave=8:30',766,45],['Leave>8:30',811,42]]
+  const drawHeader=headerY=>{doc.rect(30,headerY,824,46).fill('#0f766e');doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.2);columns.forEach(([label,x,width],index)=>doc.text(label,x+4,headerY+(index>=3&&index<=7?28:index>=9&&index<=12?10:18),{width:width-7,align:index>=3?'center':'left',lineGap:1}));doc.text('LATE ARRIVAL',340,headerY+7,{width:84,align:'center'});doc.text('COMPLETED DAYS',424,headerY+7,{width:162,align:'center'})}
   let y=125
   drawHeader(y)
-  y+=42
+  y+=46
   for(const [index,row] of report.rows.entries()){
-    if(y>525){doc.addPage();y=35;drawHeader(y);y+=42}
-    doc.rect(30,y,780,25).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(9)
-    const values=[row.name,row.employeeCode,row.department,String(row.lateAt1015),String(row.lateAt1030),String(row.fullDays),String(row.halfDays),String(row.incompleteHalfDays),`${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)]
+    if(y>520){doc.addPage();y=35;drawHeader(y);y+=46}
+    doc.rect(30,y,824,25).fill(index%2?'#f8fafc':'#ffffff');doc.fillColor('#334155').font('Helvetica').fontSize(8.8)
+    const values=[
+      row.name,row.employeeCode,row.department,
+      String(row.lateAt1015),String(row.lateAt1030),
+      String(row.fullDays),String(row.halfDays),String(row.incompleteHalfDays),
+      `${Math.floor(row.totalMinutes/60)}h ${String(row.totalMinutes%60).padStart(2,'0')}m`,
+      `${Math.floor(row.compliedMinutes/60)}h ${String(row.compliedMinutes%60).padStart(2,'0')}m`,
+      String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)
+    ]
     columns.forEach(([,x,width],i)=>doc.text(values[i],x+5,y+8,{width:width-8,ellipsis:true}));y+=25
   }
-  doc.fillColor('#64748b').fontSize(8).text(`Target comparison uses ${report.fullDayHoursMinutes} for full days and ${report.halfDayHoursMinutes} for approved half days.`,30,560)
+  doc.fillColor('#64748b').fontSize(8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  COMPLIED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,30,560,{width:780})
   doc.end()
 }))
 router.get('/biometric-health',authorize('super_admin','hr_admin','it_admin'),asyncHandler(async(req,res)=>{
