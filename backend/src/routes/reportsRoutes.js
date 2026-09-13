@@ -352,40 +352,52 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const PAGE_RIGHT = 812
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
-      // Use actual PNG logo (user placed at backend/src/assets/ananttattva-logo.png) — no approximated fonts/SVG
+      // Use actual PNG logo (user placed at backend/src/assets/ananttattva-logo.png)
+      // PDFKit is picky about PNGs — normalize via sharp to a compatible non-interlaced RGB/ARGB 8-bit PNG
       doc.save()
       const LOGO_PNG_PATH = path.join(__dirname, '../assets/ananttattva-logo.png')
+      let logoRendered = false
       if (fs.existsSync(LOGO_PNG_PATH)) {
         try {
-          doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, { height: 76 })
+          if (_sharp) {
+            const normalized = await _sharp(fs.readFileSync(LOGO_PNG_PATH))
+              .rotate()
+              .toFormat('png', { progressive: false, compressionLevel: 9, palette: false })
+              .toBuffer()
+            doc.image(normalized, PAGE_LEFT, 12, { height: 70 })
+            logoRendered = true
+          } else {
+            doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, { height: 70 })
+            logoRendered = true
+          }
         } catch (imgErr) {
-          console.warn('[PDF] ananttattva-logo.png embed failed:', imgErr.message)
-          // Fallback: pure brand words via Helvetica
-          doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
-            .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
-          doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
-            .text('TATTVA', PAGE_LEFT + 48, 52, { characterSpacing: 10 })
+          console.warn('[PDF] ananttattva-logo.png embed failed (fallback to text):', imgErr.message)
+          logoRendered = false
         }
-      } else {
-        // Logo file not present fallback
-        doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
+      }
+      if (!logoRendered) {
+        // Fallback: pure brand words via Helvetica
+        doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
           .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
-        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
-          .text('TATTVA', PAGE_LEFT + 48, 52, { characterSpacing: 10 })
+        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
+          .text('TATTVA', PAGE_LEFT + 46, 50, { characterSpacing: 10 })
       }
       doc.restore()
     } catch (logoErr) {
-      console.warn('[PDF] logo render fallback triggered:', logoErr.message)
+      console.warn('[PDF] logo render catch fallback:', logoErr.message)
       doc.save()
-      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
+      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
         .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
-        .text('TATTVA', PAGE_LEFT + 48, 52, { characterSpacing: 10 })
+      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
+        .text('TATTVA', PAGE_LEFT + 46, 50, { characterSpacing: 10 })
       doc.restore()
     }
 
-    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 96)
-    doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 120)
+    // --- Left side heading block (immediately under logo area) ---
+    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18)
+      .text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 96)
+    doc.fillColor('#64748b').font('Helvetica').fontSize(10)
+      .text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 120)
 
     // 13 columns (removed Completed — kept only Expected + Working Hours decimals like Excel) — width sum EXACT 782 (right edge 812).
     // Format: [label, x, width]
