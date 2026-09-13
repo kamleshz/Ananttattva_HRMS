@@ -282,7 +282,7 @@ async function attendanceMis(query){
       earlyLeaveDays,earlyLeaveTotalMinutes,
       expectedWorkingMinutes,
       completedWorkingMinutes,
-      rawActualMinutes,
+      actualWorkedMinutes: rawActualMinutes,
       fullLeaveDaysSkippedExpected: fullLeaveDaysSkippedFromExpected,
       expectedBreakdown: { fullWorkingDaysExpected, halfWorkingDaysExpected, earlyLeaveWorkingDaysExpected, fullLeaveDaysSkipped: fullLeaveDaysSkippedFromExpected },
       leaveAppliedFullDays: leaveAppliedFullDaysCount,
@@ -303,12 +303,13 @@ async function attendanceMis(query){
     earlyLeaveTotalMinutes:(result.earlyLeaveTotalMinutes||0)+(row.earlyLeaveTotalMinutes||0),
     expectedWorkingMinutes: (result.expectedWorkingMinutes||0) + row.expectedWorkingMinutes,
     completedWorkingMinutes:(result.completedWorkingMinutes||0) + row.completedWorkingMinutes,
+    actualWorkedMinutes:(result.actualWorkedMinutes||0) + (row.actualWorkedMinutes||0),
     leaveAppliedFullDays:(result.leaveAppliedFullDays||0)+row.leaveAppliedFullDays,
     leaveAppliedHalfDays:(result.leaveAppliedHalfDays||0)+row.leaveAppliedHalfDays,
     lessThanTarget:result.lessThanTarget+row.lessThanTarget,
     equalToTarget:result.equalToTarget+row.equalToTarget,
     moreThanTarget:result.moreThanTarget+row.moreThanTarget
-  }),{employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,earlyLeaveDays:0,earlyLeaveTotalMinutes:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
+  }),{employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,earlyLeaveDays:0,earlyLeaveTotalMinutes:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,actualWorkedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0})
   return {from:range.from,to:range.to,label:range.label,targetMinutes:{fullDay:FULL_DAY_MINUTES,halfDay:HALF_DAY_MINUTES},fullDayHoursMinutes:formatMinutesToHoursMinutes(FULL_DAY_MINUTES),halfDayHoursMinutes:formatMinutesToHoursMinutes(HALF_DAY_MINUTES),summary,rows,policy,scheduledWorkingDays:scheduledWorkingDateKeys.length}
 }
 
@@ -326,7 +327,7 @@ router.get('/attendance-mis',authorize(...MIS_ROLES),asyncHandler(async(req,res)
         from: req.query.from || '', to: req.query.to || '', label: 'Report unavailable',
         targetMinutes: { fullDay: 510, halfDay: 255 },
         fullDayHoursMinutes: '8h 30m', halfDayHoursMinutes: '4h 15m',
-        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
+        summary: {employees:0,lateArrivals:0,completedDays:0,fullDays:0,halfDays:0,incompleteHalfDays:0,earlyLeaveDays:0,earlyLeaveTotalMinutes:0,expectedWorkingMinutes:0,completedWorkingMinutes:0,actualWorkedMinutes:0,leaveAppliedFullDays:0,leaveAppliedHalfDays:0,lessThanTarget:0,equalToTarget:0,moreThanTarget:0},
         rows: [], policy: null
       }
     })
@@ -396,39 +397,40 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18).text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 96)
     doc.fillColor('#64748b').font('Helvetica').fontSize(10).text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 120)
 
-    // 13 columns — width sum = EXACT 782, right edge = 812 (no overflow, no clipped cols).
+    // 14 columns (added Actual Worked = Excel-style raw overtime hours) — width sum = EXACT 782, right edge = 812.
     // Format: [label, x, width]
     const columns=[
-      ['Employee',30,146],
-      ['ID',176,46],
-      ['Department',222,120],
-      ['10:15',342,40],
-      ['10:30',382,40],
-      ['Full',422,40],
-      ['Half (App)',462,46],
-      ['Incomplete',508,54],
-      ['Total\nHours',562,60],
-      ['Completed\nHours',622,60],
-      ['Leave <8:30',682,44],
-      ['Leave=8:30',726,44],
-      ['Leave>8:30',770,42],  // ends at 812 (A4 right-margin line)
+      ['Employee',30,130],
+      ['ID',160,42],
+      ['Department',202,112],
+      ['10:15',314,40],
+      ['10:30',354,40],
+      ['Full',394,40],
+      ['Half (App)',434,42],
+      ['Incomplete',476,50],
+      ['Total\nHours',526,54],
+      ['Completed\nHours',580,54],
+      ['Actual\nWorked',634,60],
+      ['Leave <8:30',694,40],
+      ['Leave=8:30',734,40],
+      ['Leave>8:30',774,38],
     ]
     // Group header label boxes (top band):
-    // LATE ARRIVAL    = x 342 → 422, width = 80
-    // COMPLETED DAYS  = x 422 → 562, width = 140
+    // LATE ARRIVAL    = x 314 → 394, width = 80
+    // COMPLETED DAYS  = x 394 → 526, width = 132
     const drawHeader=(headerY)=>{
       doc.rect(PAGE_LEFT,headerY,PAGE_USABLE,46).fill('#0f766e')
-      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8)
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7.5)
       columns.forEach(([label,x,width],index)=>{
         const subline = index>=3 && index<=7  // cols 4..8 (10:15 through Incomplete) sit below group
-        const topline = index>=9 && index<=12 // cols 10..13 (hours & leave) only single-line
+        const topline = index>=9 && index<=13 // cols 10..14 (hours, actual, leave) single-line
         const yOffset = subline ? 28 : topline ? 9 : 18
         doc.text(label,x+3,headerY+yOffset,{width:width-6,align:index>=3?'center':'left',lineGap:1})
       })
       // Group titles (top of 2-row header)
       doc.fontSize(8).font('Helvetica-Bold')
-      doc.text('LATE ARRIVAL',342,headerY+7,{width:80,align:'center'})
-      doc.text('COMPLETED DAYS',422,headerY+7,{width:140,align:'center'})
+      doc.text('LATE ARRIVAL',314,headerY+7,{width:80,align:'center'})
+      doc.text('COMPLETED DAYS',394,headerY+7,{width:132,align:'center'})
     }
     let y=148
     drawHeader(y)
@@ -437,18 +439,20 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
       if(y>520){doc.addPage();y=53;drawHeader(y);y+=46}
       doc.rect(PAGE_LEFT,y,PAGE_USABLE,25).fill(index%2?'#f8fafc':'#ffffff')
       doc.fillColor('#334155').font('Helvetica').fontSize(8.5)
+      const actualWorkedMin = Number(row.actualWorkedMinutes||0)
       const values=[
         row.name,row.employeeCode,row.department,
         String(row.lateAt1015),String(row.lateAt1030),
         String(row.fullDays),String(row.halfDays),String(row.incompleteHalfDays),
         `${Math.floor(row.expectedWorkingMinutes/60)}h ${String(row.expectedWorkingMinutes%60).padStart(2,'0')}m`,
         `${Math.floor(row.completedWorkingMinutes/60)}h ${String(row.completedWorkingMinutes%60).padStart(2,'0')}m`,
+        `${Math.floor(actualWorkedMin/60)}h ${String(actualWorkedMin%60).padStart(2,'0')}m`,
         String(row.lessThanTarget),String(row.equalToTarget),String(row.moreThanTarget)
       ]
       columns.forEach(([,x,width],i)=>doc.text(values[i],x+4,y+8,{width:width-8,ellipsis:true}))
       y+=25
     }
-    doc.fillColor('#64748b').fontSize(7.8).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  TOTAL HOURS: Calendar scheduled-working days (Sun + 1st/3rd Sat + public holidays excluded); full applied leave = 0, half applied leave = half target, normal = full target.  ·  COMPLETED HOURS: Full-day applied leave = skip entirely; Applied half-day = cap actual @ half target; Normal = cap actual @ full target.`,PAGE_LEFT,560,{width:PAGE_USABLE})
+    doc.fillColor('#64748b').fontSize(7.6).text(`Target comparison uses ${report.fullDayHoursMinutes} (full days) and ${report.halfDayHoursMinutes} (ONLY for APPLIED half-day leave — late 3-day half handled via Incomplete Half separately).  ·  TOTAL HOURS: Calendar scheduled-working days (Sun + 1st/3rd Sat + public holidays excluded); full applied leave = 0, half applied leave = half target, normal = full target.  ·  COMPLETED HOURS (target-compliant capped): Full applied leave → skip; half/early → cap at reduced target; normal → cap @ full target (NO overtime).  ·  ACTUAL WORKED (Excel-match): Raw CheckIn→CheckOut sum, overtime included, same as attendance-export "Working Hours" col.`,PAGE_LEFT,560,{width:PAGE_USABLE})
     doc.end()
   } catch (pdfErr) {
     console.error('[attendanceMis PDF] render error:', pdfErr.message, pdfErr.stack)
