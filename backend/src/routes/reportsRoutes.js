@@ -365,32 +365,32 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
       doc.save()
       const trishul = await iconPdfSource(COMPANY_TRISHUL_ICON)
       const ICON_X = PAGE_LEFT
-      const ICON_Y = 12
-      let textStartX = ICON_X + 8
+      const ICON_Y = 14
+      let textStartX = ICON_X + 12
       if (trishul.ok) {
         try {
           doc.image(trishul.src, ICON_X, ICON_Y, { height: 72 })
-          // Trishul icon aspect ratio ~ 342:220 (w:h); height 72 → width ≈ 112pt
-          textStartX = ICON_X + 120
+          // New corrected logo icon aspect ratio ~ 440:220 (w:h = 2:1); height 72 → width ≈ 144pt
+          textStartX = ICON_X + 156
         } catch (imgErr) {
           console.warn('[PDF] trishul icon image embed failed:', imgErr.message)
           textStartX = PAGE_LEFT + 12
         }
       }
-      // Brand words always drawn via Helvetica to guarantee glyphs (no tofus).
-      // ANANT = orange bold larger, TATTVA = black smaller, offset right (under N..T zone).
+      // Brand words always drawn via Helvetica (no tofus). Match corrected logo 2 layout:
+      // ANANT orange BOLD tall top + TATTVA black below-right, larger size (matches corrected 2nd image proportions)
       doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
-        .text('ANANT', textStartX, 18, { characterSpacing: 2, lineGap: 0 })
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
-        .text('TATTVA', textStartX + 22, 48, { characterSpacing: 8, lineGap: 0 })
+        .text('ANANT', textStartX, 16, { characterSpacing: 2, lineGap: 0 })
+      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
+        .text('TATTVA', textStartX + 38, 52, { characterSpacing: 10, lineGap: 0 })
       doc.restore()
     } catch (logoErr) {
       console.warn('[PDF] composite logo render fallback triggered:', logoErr.message)
       doc.save()
       doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
-        .text('ANANT', PAGE_LEFT + 10, 18, { characterSpacing: 2 })
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
-        .text('TATTVA', PAGE_LEFT + 32, 48, { characterSpacing: 8 })
+        .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
+      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
+        .text('TATTVA', PAGE_LEFT + 48, 52, { characterSpacing: 10 })
       doc.restore()
     }
 
