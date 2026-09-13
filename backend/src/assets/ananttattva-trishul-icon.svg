@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 342 220" role="img" aria-label="Anant Tattva Trishul + Separator">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 220" role="img" aria-label="Anant Tattva Trishul + Separator (new logo)">
   <defs>
     <linearGradient id="atOrange" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%"  stop-color="#ff9a3c"/>
@@ -7,21 +7,21 @@
     </linearGradient>
   </defs>
 
-  <!-- Spear tip (pointed triangle left) -->
-  <polygon points="12,110 118,70 118,150" fill="url(#atOrange)"/>
+  <!-- Sharp spear tip (pointed triangle left, matches new brand logo shape) -->
+  <polygon points="8,106 132,58 132,162" fill="url(#atOrange)"/>
 
-  <!-- Trishul "3" shape: outer open C-curves top + bottom joined right side -->
-  <path d="M118 40
-           C 152 24, 206 30, 232 64
-           C 248 84, 242 102, 226 110
-           C 242 118, 248 136, 232 156
-           C 206 190, 152 196, 118 180"
-        fill="none" stroke="url(#atOrange)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Trishul open "3" shape: outer open C-curves top + bottom joined right, matching provided logo -->
+  <path d="M132 34
+           C 172 16, 234 22, 264 60
+           C 284 84, 276 102, 258 110
+           C 276 118, 284 136, 264 160
+           C 234 198, 172 204, 132 186"
+        fill="none" stroke="url(#atOrange)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Two connector bead circles between curve center and vertical bar -->
-  <circle cx="248" cy="96"  r="9"  fill="url(#atOrange)"/>
-  <circle cx="282" cy="96"  r="15" fill="url(#atOrange)"/>
+  <circle cx="280" cy="98"  r="10" fill="url(#atOrange)"/>
+  <circle cx="322" cy="98"  r="17" fill="url(#atOrange)"/>
 
-  <!-- Thick vertical separator bar | between icon and ANANT word -->
-  <rect x="322" y="38" width="20" height="148" rx="8" fill="url(#atOrange)"/>
+  <!-- Thick vertical separator bar | (matches new logo proportions) -->
+  <rect x="366" y="30" width="22" height="162" rx="8" fill="url(#atOrange)"/>
 </svg>
