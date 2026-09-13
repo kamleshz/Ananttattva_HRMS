@@ -352,40 +352,30 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const PAGE_RIGHT = 812
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
-      // Composite logo rendering (100% tofu-free on Render Docker + all systems):
-      //   • Trishul + separator icon = pure vector paths, converted to PNG via sharp
-      //     (no fonts involved). Matches exact design: spear + open "3"-curve trishul,
-      //     2 beads, thick vertical "|" separator bar.
-      //   • Brand words = drawn via PDFKit built-in Helvetica (PDF spec guarantees
-      //     Latin glyphs; does NOT depend on system fontconfig).
-      // This avoids the earlier sharp + SVG <text> failure where ANANT/TATTVA rendered
-      // as empty boxes (tofus) because the container lacked usable font files.
-      // NOTE: User's actual logo does NOT have an emerald underline stroke below
-      // brand words — so we intentionally removed the old #0f766e accent line.
+      // Use actual PNG logo (user placed at backend/src/assets/ananttattva-logo.png) — no approximated fonts/SVG
       doc.save()
-      const trishul = await iconPdfSource(COMPANY_TRISHUL_ICON)
-      const ICON_X = PAGE_LEFT
-      const ICON_Y = 14
-      let textStartX = ICON_X + 12
-      if (trishul.ok) {
+      const LOGO_PNG_PATH = path.join(__dirname, '../assets/ananttattva-logo.png')
+      if (fs.existsSync(LOGO_PNG_PATH)) {
         try {
-          doc.image(trishul.src, ICON_X, ICON_Y, { height: 72 })
-          // New corrected logo icon aspect ratio ~ 440:220 (w:h = 2:1); height 72 → width ≈ 144pt
-          textStartX = ICON_X + 156
+          doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, { height: 76 })
         } catch (imgErr) {
-          console.warn('[PDF] trishul icon image embed failed:', imgErr.message)
-          textStartX = PAGE_LEFT + 12
+          console.warn('[PDF] ananttattva-logo.png embed failed:', imgErr.message)
+          // Fallback: pure brand words via Helvetica
+          doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
+            .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
+          doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
+            .text('TATTVA', PAGE_LEFT + 48, 52, { characterSpacing: 10 })
         }
+      } else {
+        // Logo file not present fallback
+        doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
+          .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
+        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
+          .text('TATTVA', PAGE_LEFT + 48, 52, { characterSpacing: 10 })
       }
-      // Brand words always drawn via Helvetica (no tofus). Match corrected logo 2 layout:
-      // ANANT orange BOLD tall top + TATTVA black below-right, larger size (matches corrected 2nd image proportions)
-      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
-        .text('ANANT', textStartX, 16, { characterSpacing: 2, lineGap: 0 })
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(25)
-        .text('TATTVA', textStartX + 38, 52, { characterSpacing: 10, lineGap: 0 })
       doc.restore()
     } catch (logoErr) {
-      console.warn('[PDF] composite logo render fallback triggered:', logoErr.message)
+      console.warn('[PDF] logo render fallback triggered:', logoErr.message)
       doc.save()
       doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(30)
         .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
