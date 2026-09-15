@@ -380,7 +380,7 @@ export function AttendancePage({ user }) {
       action: "waive_no_deduction",
     }),
     [fillPunchBusy, setFillPunchBusy] = useState(false),
-    [auditBusy, setAuditBusy] = useState(false),
+    [auditBusy, setAuditBusy] = useState(false);
   const [recordsPage, setRecordsPage] = useState(1);
   const [manualPage, setManualPage] = useState(1);
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
