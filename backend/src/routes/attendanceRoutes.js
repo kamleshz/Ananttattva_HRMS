@@ -29,6 +29,7 @@ import { getAttendancePolicy } from '../services/attendancePolicyService.js'
 import { getApprovedLeavesByDate, getDailyAttendancePlan, getOrganizationHolidayKeys } from '../services/attendanceCalculationService.js'
 import { isScheduledWorkingDay } from '../services/workingDayService.js'
 import { proratedAnnualPaidLeaves, countPaidLeaveDaysForEmployee, computeLeaveDays, financialYearRange } from '../services/leavePolicyService.js'
+import { triggerAttendanceAuditNow } from '../services/missingCheckoutService.js'
 
 const router = Router()
 router.use(authenticate)
@@ -692,4 +693,13 @@ router.get('/me', asyncHandler(async (req, res) => {
   ])
   res.json({ success: true, meta, data })
 }))
+
+// Manual one-shot trigger: runs the FULL attendance audit pipeline (6 steps) NOW with force=true
+// Skips 24h / weekly date-locks, only dedupe via ScheduledEmail unique-key & alertSentAt flags
+// Idempotent — safe to call multiple times in a row; only notifies once per issue
+router.post('/audit/run-now', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req,res) => {
+  const result=await triggerAttendanceAuditNow(new Date())
+  res.json({success:true,message:'Attendance audit pipeline executed. Counts are idempotent (not sent twice).',data:result})
+}))
+
 export default router

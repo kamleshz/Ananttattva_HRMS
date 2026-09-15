@@ -78,12 +78,17 @@ export async function processCheckoutReminders(now=new Date()){
   return sent
 }
 
-export async function processMissingCheckouts(now=new Date()){
+export async function processMissingCheckouts(now=new Date(),{force=false}={}){
   const today=startOfLocalDay(now)
+  const cutoffForMissing=new Date(now.getTime()-9*60*60*1000) // T-9h instead of previous T-24h (so same-day 09:16 check-in, missing check-out is eligible by 18:16)
   const records=await Attendance.find({
-    date:{$lt:today},
     'checkIn.time':{$exists:true},
-    $or:[{'checkOut.time':{$exists:false}},{'checkOut.time':null}],
+    $or:[
+      {'checkOut.time':{$exists:false}},
+      {'checkOut.time':null},
+      {checkOut:null},
+      {checkOut:{$exists:false}}
+    ],
     $and:[
       {$or:[
         {'missingCheckout.justificationStatus':'none'},
@@ -94,12 +99,21 @@ export async function processMissingCheckouts(now=new Date()){
     ]
   }).populate('employee','firstName lastName employeeCode shift user')
 
+  // Additionally filter in-memory: only pick rows where checkIn happened before T-9h OR date < today
+  const eligible=[]
+  for(const r of records){
+    const checkInTime=(r.checkIn?.time instanceof Date)?r.checkIn.time:(typeof r.date==='object' && r.date instanceof Date?r.date:null)
+    const before9h=!checkInTime?true:checkInTime<=cutoffForMissing
+    const beforeToday=!!(r.date && r.date<today)
+    if(force || beforeToday || before9h) eligible.push(r)
+  }
+
   const policy=await getAttendancePolicy()
   const justificationDays=Number(policy.missingCheckoutJustificationDays)||3
   let processed=0
   const bulkOps=[]
 
-  for(const record of records){
+  for(const record of eligible){
     if(!record.employee)continue
     if(record.missingCheckout?.detectedAt)continue
 
@@ -155,22 +169,40 @@ export async function processMissingCheckouts(now=new Date()){
   return processed
 }
 
-export async function processMissingCheckoutAlerts(now=new Date()){
+export async function processMissingCheckoutAlerts(now=new Date(),{force=false}={}){
   const today=startOfLocalDay(now)
-  const yesterday=new Date(today.getTime()-DAY_MS)
+  const cutoffAlert=new Date(now.getTime()-9*60*60*1000) // T-9h cutoff (was T-24h yesterday)
+  const workingDayCheck=(d)=>{
+    const key=organizationDateKey(d)
+    const day=new Date(new Date(d).getTime()+330*60_000).getUTCDay()
+    // Sunday off OR 1st/3rd Sat off => not a working day
+    if(day===0)return false
+    if(day===6){
+      const dom=Number(key.slice(8,10))
+      return [2,4,5].includes(Math.ceil(dom/7))
+    }
+    return true
+  }
 
   const records=await Attendance.find({
     'missingCheckout.justificationStatus':'pending',
-    date:{$lte:yesterday},
+    $or:[
+      {date:{$lte:today}},
+      {'checkIn.time':{$lte:cutoffAlert}}
+    ],
     $or:[
       {'missingCheckout.alertSentAt':{$exists:false}},
       {'missingCheckout.alertSentAt':null}
     ]
   }).populate('employee','firstName lastName employeeCode officialEmail personalEmail user')
 
+  const eligible=force?records:records.filter(r=>{
+    return (!!(r.date && r.date<today)) || (!!(r.checkIn?.time) && r.checkIn.time<=cutoffAlert && workingDayCheck(r.date))
+  })
+
   let sent=0
 
-  for(const record of records){
+  for(const record of eligible){
     if(!record.employee)continue
     const employee=record.employee
     const employeeId=employee._id
@@ -606,3 +638,15 @@ export async function processWeeklyHoursCompliance(now=new Date()){
 }
 
 export function startMissingCheckoutScheduler(){const run=async()=>{await processCheckoutReminders();await processMissingCheckouts();await processMissingCheckoutAlerts();await processMissingCheckoutFinalization();await processMissingCheckInsAndEscalations();await processWeeklyHoursCompliance()};run().catch(error=>console.error('Attendance scheduler failed:',error?.message||error));const timer=setInterval(()=>run().catch(error=>console.error('Attendance scheduler failed:',error?.message||error)),CHECK_INTERVAL_MS);timer.unref();return timer}
+
+export async function triggerAttendanceAuditNow(now=new Date()){
+  // Manual trigger — run ALL 6 audit steps NOW with force=true to skip 24h/weekly date locks (only idempotent dedupe happens via ScheduledEmail unique key + alertSentAt
+  const result={}
+  result.reminders=await processCheckoutReminders(now)
+  result.detectedMissing=await processMissingCheckouts(now,{force:true})
+  result.alertsSent=await processMissingCheckoutAlerts(now,{force:true})
+  result.finalized=await processMissingCheckoutFinalization(now)
+  result.escalations=await processMissingCheckInsAndEscalations(now)
+  result.weeklyShortfallSent=await processWeeklyHoursCompliance(now)
+  return result
+}
