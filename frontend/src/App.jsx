@@ -1024,7 +1024,7 @@ export default function App() {
     "/people": <PeoplePage user={user} />,
     "/organization-chart": <OrganizationChartPage />,
     "/people/new": <EmployeeOnboardingPage user={user} />,
-    "/reports": <ReportsPage />,
+    "/reports": <ReportsPage user={user} />,
     "/holidays": <HolidaysPage user={user} />,
     "/allowances": <AllowancesPage user={user} />,
     "/offboarding": <OffboardingPage user={user} />,

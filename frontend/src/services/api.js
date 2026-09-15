@@ -114,6 +114,12 @@ export const attendanceApi = {
   reviewManualRequest: (id, decision, reviewNote = "") => api(`/attendance/manual/${id}/${decision}`, { method:'PATCH', body:JSON.stringify({reviewNote}) }),
   manualProof: (id) => downloadApi(`/attendance/manual/${id}/proof`),
   manualMetrics: () => api('/attendance/manual/metrics'),
+  triggerAuditNow: () => api('/attendance/audit/run-now', { method: 'POST', body: '{}' }),
+  hrOverrideCorrection: (attendanceId, data) =>
+    api(`/attendance/corrections/${attendanceId}/hr-override`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   checkIn: (data) =>
     api("/attendance/check-in", { method: "POST", body: JSON.stringify(data) }),
   checkOut: (data) =>

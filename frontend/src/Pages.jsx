@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   BriefcaseBusiness,
@@ -368,7 +369,18 @@ export function AttendancePage({ user }) {
     [arrangementForm, setArrangementForm] = useState(() => { const date=new Date().toISOString().slice(0,10); return {type:"wfh",startDate:date,endDate:date,startTime:"09:00",endTime:"18:30",reason:"",clientName:"",destination:{name:"",address:"",latitude:"",longitude:"",allowedRadiusMeters:250}} }),
     [error, setError] = useState(""),
     [weeksViewMode, setWeeksViewMode] = useState("month"),
-    [weeklySummaries, setWeeklySummaries] = useState({});
+    [weeklySummaries, setWeeklySummaries] = useState({}),
+    [attendanceLogTab, setAttendanceLogTab] = useState("daily"),
+    [fillPunchOpen, setFillPunchOpen] = useState(false),
+    [fillPunchRecord, setFillPunchRecord] = useState(null),
+    [fillPunchForm, setFillPunchForm] = useState({
+      missingType: "checkout",
+      time: "18:31",
+      reason: "",
+      action: "waive_no_deduction",
+    }),
+    [fillPunchBusy, setFillPunchBusy] = useState(false),
+    [auditBusy, setAuditBusy] = useState(false),
   const [recordsPage, setRecordsPage] = useState(1);
   const [manualPage, setManualPage] = useState(1);
   const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
@@ -611,10 +623,110 @@ export function AttendancePage({ user }) {
   },[records,employeeFilter,canViewCompleteRoster]);
   const pendingArrangements = arrangements.filter((item) => item.status === "pending");
   const pendingFaceRequests = faceRequests.filter((item) => item.status === "pending");
+  const missingPunchRecords = useMemo(() => (
+    visibleRecords.filter(item => {
+      const hasCheckIn = !!(item.checkIn?.time);
+      const hasCheckOut = !!(item.checkOut?.time);
+      return !hasCheckIn || !hasCheckOut;
+    }).sort((a, b) => {
+      const aMiss = (!!a.checkIn?.time ? 0 : 2) + (!!a.checkOut?.time ? 0 : 1);
+      const bMiss = (!!b.checkIn?.time ? 0 : 2) + (!!b.checkOut?.time ? 0 : 1);
+      return bMiss - aMiss || new Date(b.date) - new Date(a.date);
+    })
+  ), [visibleRecords]);
+  const missingPunchPageSize = 7;
+  const [missingPunchPage, setMissingPunchPage] = useState(1);
+  useEffect(() => {
+    if ((missingPunchPage - 1) * missingPunchPageSize >= missingPunchRecords.length) {
+      setMissingPunchPage(Math.max(1, Math.ceil(missingPunchRecords.length / missingPunchPageSize) || 1));
+    }
+  }, [missingPunchRecords.length, missingPunchPage]);
+  const pagedMissingPunches = missingPunchRecords.slice((missingPunchPage - 1) * missingPunchPageSize, missingPunchPage * missingPunchPageSize);
   const pagedRecords = visibleRecords.slice((recordsPage - 1) * 7, recordsPage * 7);
   const pagedFaceRequests = faceRequests.slice((manualPage - 1) * 7, manualPage * 7);
   const orderedArrangements = [...arrangements].sort((left,right) => Number(right.status === "pending") - Number(left.status === "pending"));
+
+  const openFillPunch = (record) => {
+    const missingType = (!record.checkIn?.time && !record.checkOut?.time) ? "checkin" : (!!record.checkIn?.time && !record.checkOut?.time ? "checkout" : "checkout");
+    setFillPunchRecord(record);
+    setFillPunchForm({
+      missingType,
+      time: missingType === "checkin" ? (record.checkIn?.time ? formatTime(record.checkIn.time).replace(":","") : "0915").replace(/^(\d{2})(\d{2})$/,"$1:$2") : "18:31",
+      reason: "",
+      action: "waive_no_deduction",
+    });
+    setFillPunchOpen(true);
+  };
+
+  const submitFillPunch = async (event) => {
+    event && event.preventDefault();
+    if (!fillPunchRecord) return;
+    if (!fillPunchForm.time || !/^\d{2}:\d{2}$/.test(fillPunchForm.time)) { setError("Enter HH:MM (24h)"); return; }
+    if (!fillPunchForm.reason.trim()) { setError("Reason is required"); return; }
+    setFillPunchBusy(true);
+    try {
+      const [hH, mM] = fillPunchForm.time.split(":").map(Number);
+      const payMode = fillPunchForm.action === "mark_half_unpaid" ? "unpaid_half"
+        : fillPunchForm.action === "mark_full_unpaid" ? "unpaid_full" : "waive_excused";
+      const body = {
+        requestedCheckoutTime: fillPunchForm.missingType === "checkin" ? null : fillPunchForm.time,
+        requestedCheckinTime: fillPunchForm.missingType === "checkin" ? fillPunchForm.time : null,
+        reason: fillPunchForm.reason.trim(),
+        hrCompensationDecision: fillPunchForm.action === "waive_no_deduction" ? "waive_no_deduction" : "unpaid",
+        finalPayMode: payMode,
+      };
+      await attendanceApi.hrOverrideCorrection(fillPunchRecord._id, body);
+      setFillPunchOpen(false);
+      setFillPunchRecord(null);
+      setApprovalNotice({ decision: "approve", action: "punch override", employeeName: `${fillPunchRecord.employee?.firstName || "Employee"} ${fillPunchRecord.employee?.lastName || ""}`.trim() });
+      const { data: refreshed } = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
+      if (Array.isArray(refreshed)) setRecords(refreshed);
+    } catch (err) {
+      setError(err.message || "Failed");
+    } finally {
+      setFillPunchBusy(false);
+    }
+  };
+
+  const waiveMissingPunch = async (record) => {
+    if (!canReviewCorrections) return;
+    const ok = window.confirm(`Waive & mark 0 hours as excused without leave deduction for ${formatDate(record.date)}?`);
+    if (!ok) return;
+    try {
+      await attendanceApi.hrOverrideCorrection(record._id, {
+        requestedCheckoutTime: null,
+        reason: "HR / Admin waived: no working hours recorded",
+        hrCompensationDecision: "waive_no_deduction",
+        finalPayMode: "waive_excused",
+      });
+      const { data: refreshed } = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
+      if (Array.isArray(refreshed)) setRecords(refreshed);
+    } catch (err) {
+      setError(err.message || "Failed to waive");
+    }
+  };
+
+  const runAttendanceAudit = async (fromPage = "Attendance") => {
+    if (auditBusy) return;
+    setAuditBusy(true);
+    try {
+      const result = await attendanceApi.triggerAuditNow();
+      const r = result?.data || {};
+      alert(`✅ Audit Complete (${fromPage})\n\n` + [
+        `Detected missing checkouts: ${r.detectedMissing ?? 0}`,
+        `Justification alerts sent: ${r.alertsSent ?? 0}`,
+        `Checkout reminders: ${r.reminders ?? 0}`,
+        `Finalized expired: ${r.finalized ?? 0}`,
+        `Escalations: ${r.escalations ?? 0}`,
+        `Weekly shortfall mails: ${r.weeklyShortfallSent ?? 0}`,
+      ].join("\n"));
+    } catch (err) {
+      alert(`❌ Audit failed: ${err.message || "Network"}`);
+    } finally { setAuditBusy(false); }
+  };
+
   useEffect(() => setRecordsPage(1), [month, year, employeeFilter]);
+  useEffect(() => setMissingPunchPage(1), [attendanceLogTab, month, year, employeeFilter]);
   useEffect(() => { if ((recordsPage - 1) * 7 >= visibleRecords.length) setRecordsPage(Math.max(1, Math.ceil(visibleRecords.length / 7))); }, [visibleRecords.length, recordsPage]);
   useEffect(() => { if ((manualPage - 1) * 7 >= faceRequests.length) setManualPage(Math.max(1, Math.ceil(faceRequests.length / 7))); }, [faceRequests.length, manualPage]);
   return (
@@ -649,6 +761,11 @@ export function AttendancePage({ user }) {
           {canExport && <button className="secondary-button attendance-export-button" disabled={exporting} onClick={downloadExcel}>
             <Download size={15} /> {exporting ? "Preparing…" : "Download Excel"}
           </button>}
+          {canReviewCorrections && (
+            <button className="secondary-button" disabled={auditBusy} onClick={() => runAttendanceAudit("Attendance")} title="Detect missing punches + send justification emails now">
+              <AlertTriangle size={14} /> {auditBusy ? "Running…" : "Run audit now"}
+            </button>
+          )}
           <button className="primary-button" onClick={()=>setArrangementOpen(true)}><MapPin size={15}/> Request work mode</button>
           </div>
         }
@@ -792,17 +909,27 @@ export function AttendancePage({ user }) {
         <div className="section-heading">
           <div>
             <p className="eyebrow">Attendance log</p>
-            <h2>{weeksViewMode === "week" ? "Weekly daily records" : "Daily records"}</h2>
+            <div style={{display:"flex", alignItems:"center", gap:14, flexWrap:"wrap"}}>
+              <h2 style={{margin:0}}>{weeksViewMode === "week" ? "Weekly daily records" : "Daily records"}</h2>
+              {canReviewCorrections && (
+                <div className="segmented-control small" role="tablist" aria-label="Attendance log tabs">
+                  <button type="button" role="tab" aria-selected={attendanceLogTab==="daily"} className={attendanceLogTab==="daily"?"active":""} onClick={()=>setAttendanceLogTab("daily")}>Daily records</button>
+                  <button type="button" role="tab" aria-selected={attendanceLogTab==="missing"} className={attendanceLogTab==="missing"?"active":""} onClick={()=>setAttendanceLogTab("missing")}>
+                    Missing punches{missingPunchRecords.length>0?` (${missingPunchRecords.length})`:""}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-          {canViewCompleteRoster && <label className="attendance-employee-filter"><Search size={15}/><input value={employeeFilter} onChange={event=>setEmployeeFilter(event.target.value)} placeholder="Filter by employee name or ID" aria-label="Filter attendance by employee"/>{employeeFilter&&<button type="button" onClick={()=>setEmployeeFilter("")} aria-label="Clear employee filter"><X size={14}/></button>}</label>}
+          {canViewCompleteRoster && attendanceLogTab==="daily" && <label className="attendance-employee-filter"><Search size={15}/><input value={employeeFilter} onChange={event=>setEmployeeFilter(event.target.value)} placeholder="Filter by employee name or ID" aria-label="Filter attendance by employee"/>{employeeFilter&&<button type="button" onClick={()=>setEmployeeFilter("")} aria-label="Clear employee filter"><X size={14}/></button>}</label>}
         </div>
         {loading ? (
           <StateMessage>Loading attendance…</StateMessage>
         ) : error ? (
           <StateMessage error>{error}</StateMessage>
-        ) : visibleRecords.length === 0 ? (
-          <StateMessage>{employeeFilter ? "No employees match this filter." : "No attendance records for this month."}</StateMessage>
-        ) : (
+        ) : (attendanceLogTab==="daily" ? visibleRecords : missingPunchRecords).length === 0 ? (
+          <StateMessage>{attendanceLogTab==="daily" ? (employeeFilter ? "No employees match this filter." : "No attendance records for this month.") : "🎉 All punches present! No missing checkin/checkout records for the current filter."}</StateMessage>
+        ) : attendanceLogTab === "daily" ? (
           <div className="data-table-wrap">
             <table className="data-table">
               <thead>
@@ -898,6 +1025,52 @@ export function AttendancePage({ user }) {
               </tbody>
             </table>
             <Pagination page={recordsPage} totalItems={visibleRecords.length} pageSize={7} onChange={setRecordsPage} />
+          </div>
+        ) : (
+          /* ==================== Missing Punches Tab ==================== */
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  {canViewAllAttendance && <th>Employee</th>}
+                  <th>Date</th>
+                  <th>Shift</th>
+                  <th>Missing</th>
+                  <th>First in</th>
+                  <th>Last out</th>
+                  <th>Hours</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedMissingPunches.map((item) => {
+                  const missIn = !item.checkIn?.time;
+                  const missOut = !item.checkOut?.time;
+                  const label = (missIn && missOut) ? "Both punches" : missIn ? "Check-in" : "Checkout";
+                  const tone = (missIn && missOut) ? "shortfall" : missIn ? "rejected" : "pending";
+                  return (
+                  <tr key={item._id}>
+                    {canViewAllAttendance && <td className="attendance-employee-cell"><strong>{item.employee ? `${item.employee.firstName || ""} ${item.employee.lastName || ""}`.trim() : "Deleted employee"}</strong>{item.employee?.employeeCode && <small>{item.employee.employeeCode}</small>}</td>}
+                    <td><strong>{formatDate(item.date)}</strong></td>
+                    <td>{item.shift?.name || item.employee?.shift?.name || "General shift"}</td>
+                    <td><StatusBadge status={tone} label={label} /></td>
+                    <td>{formatTime(item.checkIn?.time) || <span style={{color:"#b91c1c"}}>—</span>}</td>
+                    <td>{formatTime(item.checkOut?.time) || <span style={{color:"#b91c1c"}}>—</span>}</td>
+                    <td>{Math.floor(item.workingMinutes/60)}h {item.workingMinutes%60}m</td>
+                    <td>{renderAttendanceStatus(item)}</td>
+                    <td>
+                      <div className="attendance-row-actions" style={{gap:8}}>
+                        <button className="correction-button" style={{background:"#ecfdf5",borderColor:"#a7f3d0",color:"#065f46"}} onClick={() => openFillPunch(item)}>⚡ Fill punch</button>
+                        <button className="table-action" onClick={() => waiveMissingPunch(item)} title="Waive: excuse 0h completed, no leave deduction" style={{color:"#991b1b",borderColor:"#fecaca",background:"#fef2f2"}}>Waive · 0h</button>
+                        <button className="table-action" onClick={() => setSelected(item)}>View</button>
+                      </div>
+                    </td>
+                  </tr>);
+                })}
+              </tbody>
+            </table>
+            <Pagination page={missingPunchPage} totalItems={missingPunchRecords.length} pageSize={missingPunchPageSize} onChange={setMissingPunchPage} />
           </div>
         )}
       </section>
@@ -1005,6 +1178,80 @@ export function AttendancePage({ user }) {
               <label>Actual checkout date and time *<input required type="datetime-local" value={correctionForm.requestedCheckoutTime} onChange={(e) => setCorrectionForm({ ...correctionForm, requestedCheckoutTime: e.target.value })} /></label>
               <label>Correction reason *<textarea required minLength="10" maxLength="1000" rows="5" value={correctionForm.reason} onChange={(e) => setCorrectionForm({ ...correctionForm, reason: e.target.value })} placeholder="Explain why checkout was missed and confirm the actual checkout time" /></label>
               <div className="drawer-actions"><button type="button" className="secondary-button" onClick={() => setCorrectionRecord(null)}>Cancel</button><button className="primary-button" disabled={correctionBusy}>{correctionBusy ? "Submitting…" : "Send correction request"}</button></div>
+            </form>
+          </aside>
+        </div>
+      )}
+      {fillPunchOpen && fillPunchRecord && (
+        <div className="drawer-layer leave-modal-layer" role="dialog" aria-modal="true" aria-label="Fill missing punch">
+          <button className="drawer-backdrop" onClick={() => setFillPunchOpen(false)} />
+          <aside className="form-drawer leave-modal-card">
+            <div className="drawer-heading">
+              <div>
+                <p className="eyebrow">HR / Admin override</p>
+                <h2>Fill missing punch — {formatDate(fillPunchRecord.date)}</h2>
+                <small style={{color:"#475569"}}>
+                  {fillPunchRecord.employee ? `${fillPunchRecord.employee.firstName || ""} ${fillPunchRecord.employee.lastName || ""}`.trim() : "Employee"}
+                  {fillPunchRecord.employee?.employeeCode ? ` · ${fillPunchRecord.employee.employeeCode}` : ""}
+                </small>
+              </div>
+              <button aria-label="Close" onClick={() => setFillPunchOpen(false)}><X size={20} /></button>
+            </div>
+            <form onSubmit={submitFillPunch}>
+              <div className="leave-policy-note" style={{background:"#ecfdf5",borderColor:"#a7f3d0",color:"#064e3b"}}>
+                <ShieldCheck size={17}/>
+                <div>
+                  <strong>Auto-approved override</strong>
+                  <span>Applying here immediately updates the attendance record — no 2-step approval. Employee is notified in app + email.</span>
+                </div>
+              </div>
+              <label>Missing punch type *
+                <select value={fillPunchForm.missingType} onChange={e=>setFillPunchForm({...fillPunchForm,missingType:e.target.value})}>
+                  <option value="checkout">Missing Checkout (user checked-in, no checkout)</option>
+                  <option value="checkin">Missing Check-in (no check-in received)</option>
+                  <option value="both">Both (no punches for entire day)</option>
+                </select>
+              </label>
+              <div className="form-row">
+                <label>Proposed {fillPunchForm.missingType === "checkin" ? "Check-in" : fillPunchForm.missingType === "checkout" ? "Checkout" : "Checkout"} time (HH:MM 24h) *
+                  <input required type="time" value={fillPunchForm.time} onChange={e=>setFillPunchForm({...fillPunchForm,time:e.target.value})} aria-label={`Proposed ${fillPunchForm.missingType} HH:MM`}/>
+                </label>
+                {fillPunchForm.missingType==="both" && (
+                  <label>Check-in time (HH:MM 24h)
+                    <input type="time" defaultValue="09:15" onChange={e=>{
+                      const t = e.target.value;
+                      setFillPunchForm(prev=>({...prev, checkinTime: t}));
+                    }} aria-label="Proposed checkin HH:MM"/>
+                  </label>
+                )}
+              </div>
+              <label>Reason / justification notes *<textarea required minLength="6" maxLength="1000" rows="4" value={fillPunchForm.reason} onChange={e=>setFillPunchForm({...fillPunchForm,reason:e.target.value})} placeholder="e.g. CCTV confirms employee stayed until 18:31, forgot punch, manager approved via WhatsApp"/></label>
+              <fieldset style={{border:"1px solid #e2e8f0",borderRadius:12,padding:"14px 18px 18px",margin:"10px 0"}}>
+                <legend style={{padding:"0 8px",color:"#0f172a",fontWeight:600}}>Compensation / Deduction</legend>
+                <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                  <label style={{display:"flex",gap:10,alignItems:"flex-start",fontWeight:500,color:"#065f46",cursor:"pointer"}}>
+                    <input type="radio" checked={fillPunchForm.action === "waive_no_deduction"} onChange={()=>setFillPunchForm({...fillPunchForm,action:"waive_no_deduction"})}/>
+                    <div>
+                      <strong>Waive · Mark as excused (no leave deduction)</strong>
+                      <div style={{fontSize:13,color:"#475569",fontWeight:400}}>Use when employee's reason is justified (forgot, system glitch etc.) — hours based on filled punch count normally.</div>
+                    </div>
+                  </label>
+                  <label style={{display:"flex",gap:10,alignItems:"flex-start",fontWeight:500,color:"#9a3412",cursor:"pointer"}}>
+                    <input type="radio" checked={fillPunchForm.action === "mark_half_unpaid"} onChange={()=>setFillPunchForm({...fillPunchForm,action:"mark_half_unpaid"})}/>
+                    <div><strong>Mark as ½ day unpaid</strong><div style={{fontSize:13,color:"#475569",fontWeight:400}}>0.5 day deducted from unpaid attendance — 4h15m target used.</div></div>
+                  </label>
+                  <label style={{display:"flex",gap:10,alignItems:"flex-start",fontWeight:500,color:"#991b1b",cursor:"pointer"}}>
+                    <input type="radio" checked={fillPunchForm.action === "mark_full_unpaid"} onChange={()=>setFillPunchForm({...fillPunchForm,action:"mark_full_unpaid"})}/>
+                    <div><strong>Mark as full day unpaid</strong><div style={{fontSize:13,color:"#475569",fontWeight:400}}>Entire day 0h counted + full day unpaid deduction recorded.</div></div>
+                  </label>
+                </div>
+              </fieldset>
+              <div className="drawer-actions">
+                <button type="button" className="secondary-button" onClick={()=>setFillPunchOpen(false)} disabled={fillPunchBusy}>Cancel</button>
+                <button className="primary-button" type="submit" disabled={fillPunchBusy}>
+                  <Check size={14}/> {fillPunchBusy ? "Applying…" : "Apply & auto-approve"}
+                </button>
+              </div>
             </form>
           </aside>
         </div>
@@ -3132,13 +3379,34 @@ export function LegacyReportsPage() {
   );
 }
 
-export function ReportsPage() {
+export function ReportsPage({ user }) {
   const today = new Date().toISOString().slice(0, 10);
+  const canReviewCorrections = user && ["super_admin", "admin", "hr_admin"].includes(user.role);
   const [from, setFrom] = useState(() => `${today.slice(0, 7)}-01`);
   const [to, setTo] = useState(today);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [auditBusy, setAuditBusy] = useState(false);
+  const runReportsAudit = async (fromPage = "Reports MIS") => {
+    if (auditBusy) return;
+    setAuditBusy(true);
+    try {
+      const result = await attendanceApi.triggerAuditNow();
+      const summary = (result && result.data) || {};
+      alert(
+        `${fromPage} audit pipeline ran successfully (idempotent).\n\n` +
+        `• Detected missing punches: ${summary.detectedMissing ?? 0}\n` +
+        `• Justification alerts sent now: ${summary.alertsSent ?? 0}\n` +
+        `• Reminders queued: ${summary.remindersSent ?? 0}\n\n` +
+        `Switch to Attendance → Missing punches tab to review records and apply Fill punch / Waive overrides.`
+      );
+    } catch (err) {
+      alert(`Audit failed: ${err?.message || String(err)}`);
+    } finally {
+      setAuditBusy(false);
+    }
+  };
   useEffect(() => {
     setData(null); setError("");
     if (from > to) return setError("From date must be on or before To date.");
@@ -3170,7 +3438,7 @@ export function ReportsPage() {
   return <div className="mis-dashboard">
     <header className="mis-header">
       <div className="mis-brand"><img src="/assets/ananttattva-logo.png?v=20260915" alt="Anant Tattva"/><div><span>Analytics · Attendance</span><h1>HRMS Dashboard</h1><p>Date-range employee working-hours MIS</p></div></div>
-      <div className="mis-controls"><label>From date<input type="date" value={from} max={to} onChange={(event)=>setFrom(event.target.value)}/></label><label>To date<input type="date" value={to} min={from} max={today} onChange={(event)=>setTo(event.target.value)}/></label><button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
+      <div className="mis-controls"><label>From date<input type="date" value={from} max={to} onChange={(event)=>setFrom(event.target.value)}/></label><label>To date<input type="date" value={to} min={from} max={today} onChange={(event)=>setTo(event.target.value)}/></label>{canReviewCorrections && <button type="button" className="secondary-button small" disabled={auditBusy} onClick={() => runReportsAudit("Reports MIS")}><AlertTriangle size={13}/>{auditBusy?"Running…":"Run audit now"}</button>}<button type="button" className="primary-button" disabled={exporting||!data} onClick={exportPdf}><Download size={15}/>{exporting?'Preparing PDF…':'Download PDF'}</button></div>
     </header>
     {!data ? <StateMessage>Loading attendance MIS…</StateMessage> : <>
       {error && <StateMessage error>{error}</StateMessage>}
