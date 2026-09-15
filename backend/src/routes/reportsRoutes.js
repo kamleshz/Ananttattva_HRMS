@@ -346,73 +346,16 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const doc=new PDFDocument({size:'A4',layout:'landscape',margin:30})
     res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="attendance-mis-${report.from}-to-${report.to}.pdf"`);doc.pipe(res)
 
-    // --- Logo: company logo always appears ---
     // A4 landscape = 842 x 595, margins = 30 each side → usable width = 782 (30 to 812)
     const PAGE_LEFT = 30
     const PAGE_RIGHT = 812
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
-    try {
-      // Use actual PNG logo from backend/src/assets/ananttattva-logo.png
-      doc.save()
-      const LOGO_PNG_PATH = path.join(__dirname, '../assets/ananttattva-logo.png')
-      let logoRendered = false
-      const LOGO_COMMON_OPTS = { height: 70, type: 'png' }
-      if (fs.existsSync(LOGO_PNG_PATH)) {
-        const rawBytes = fs.readFileSync(LOGO_PNG_PATH)
-        // Strategy 1 — raw bytes + EXPLICIT type:png (fixes buffer type-detect failure on Render Docker)
-        try {
-          doc.image(rawBytes, PAGE_LEFT, 12, LOGO_COMMON_OPTS)
-          logoRendered = true
-        } catch (e1) {
-          console.warn('[PDF] logo strategy 1 (raw+type) failed:', e1.message)
-          // Strategy 2 — sharp: flatten(remove alpha) + plain PNG (no metadata) + EXPLICIT type:png
-          if (_sharp) {
-            try {
-              const flatClean = await _sharp(rawBytes)
-                .ensureAlpha()
-                .flatten({ background: { r: 255, g: 255, b: 255 } })
-                .toFormat('png')
-                .toBuffer()
-              doc.image(flatClean, PAGE_LEFT, 12, LOGO_COMMON_OPTS)
-              logoRendered = true
-            } catch (e2) {
-              console.warn('[PDF] logo strategy 2 (sharp flatten) failed:', e2.message)
-            }
-          }
-          // Strategy 3 — direct path string + EXPLICIT type:png (PDFKit reads file itself)
-          if (!logoRendered) {
-            try {
-              doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, LOGO_COMMON_OPTS)
-              logoRendered = true
-            } catch (e3) {
-              console.warn('[PDF] logo strategy 3 (path+type) failed:', e3.message)
-            }
-          }
-        }
-      }
-      if (!logoRendered) {
-        // LAST-resort fallback: Helvetica brand words
-        doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
-          .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
-        doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
-          .text('TATTVA', PAGE_LEFT + 46, 50, { characterSpacing: 10 })
-      }
-      doc.restore()
-    } catch (logoErr) {
-      console.warn('[PDF] logo outer catch → text fallback:', logoErr.message)
-      doc.save()
-      doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
-        .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
-      doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
-        .text('TATTVA', PAGE_LEFT + 46, 50, { characterSpacing: 10 })
-      doc.restore()
-    }
 
-    // --- Left side heading block (immediately under logo area) ---
-    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(18)
-      .text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 96)
-    doc.fillColor('#64748b').font('Helvetica').fontSize(10)
-      .text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 120)
+    // --- Left side top heading block ---
+    doc.fillColor('#0f766e').font('Helvetica-Bold').fontSize(22)
+      .text('HRMS ATTENDANCE MIS DASHBOARD', PAGE_LEFT, 24)
+    doc.fillColor('#64748b').font('Helvetica').fontSize(11)
+      .text(`${report.label} | Targets: Full ${report.fullDayHoursMinutes}, Half (Applied Leave) ${report.halfDayHoursMinutes}`, PAGE_LEFT, 56)
 
     // 13 columns (removed Completed — kept only Expected + Working Hours decimals like Excel) — width sum EXACT 782 (right edge 812).
     // Format: [label, x, width]
@@ -448,11 +391,11 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
       doc.text('LATE ARRIVAL',314,headerY+7,{width:80,align:'center'})
       doc.text('COMPLETED DAYS',394,headerY+7,{width:136,align:'center'})
     }
-    let y=148
+    let y=84
     drawHeader(y)
     y+=46
     for(const [index,row] of report.rows.entries()){
-      if(y>520){doc.addPage();y=53;drawHeader(y);y+=46}
+      if(y>520){doc.addPage();y=36;drawHeader(y);y+=46}
       doc.rect(PAGE_LEFT,y,PAGE_USABLE,25).fill(index%2?'#f8fafc':'#ffffff')
       doc.fillColor('#334155').font('Helvetica').fontSize(8.5)
       const actualWorkedMin = Number(row.actualWorkedMinutes||0)
