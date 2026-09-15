@@ -352,31 +352,44 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const PAGE_RIGHT = 812
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
-      // Use actual PNG logo (user placed at backend/src/assets/ananttattva-logo.png)
-      // PDFKit is picky about PNGs — normalize via sharp to a compatible non-interlaced RGB/ARGB 8-bit PNG
+      // Use actual PNG logo from backend/src/assets/ananttattva-logo.png
+      // PDFKit works best with plain Node Buffer (raw file bytes). Try simplest path first.
       doc.save()
       const LOGO_PNG_PATH = path.join(__dirname, '../assets/ananttattva-logo.png')
       let logoRendered = false
       if (fs.existsSync(LOGO_PNG_PATH)) {
+        const rawBytes = fs.readFileSync(LOGO_PNG_PATH)
+        // Strategy 1 — raw bytes (fastest, most compatible — NO sharp transforms):
         try {
+          doc.image(rawBytes, PAGE_LEFT, 12, { height: 70 })
+          logoRendered = true
+        } catch (e1) {
+          console.warn('[PDF] logo strategy 1 (raw) failed:', e1.message)
+          // Strategy 2 — sharp re-encode (sanitize), with MINIMAL options to avoid sharp errors:
           if (_sharp) {
-            const normalized = await _sharp(fs.readFileSync(LOGO_PNG_PATH))
-              .rotate()
-              .toFormat('png', { progressive: false, compressionLevel: 9, palette: false })
-              .toBuffer()
-            doc.image(normalized, PAGE_LEFT, 12, { height: 70 })
-            logoRendered = true
-          } else {
-            doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, { height: 70 })
-            logoRendered = true
+            try {
+              const sanitized = await _sharp(rawBytes)
+                .png()
+                .toBuffer()
+              doc.image(sanitized, PAGE_LEFT, 12, { height: 70 })
+              logoRendered = true
+            } catch (e2) {
+              console.warn('[PDF] logo strategy 2 (sharp sanitize) failed:', e2.message)
+            }
           }
-        } catch (imgErr) {
-          console.warn('[PDF] ananttattva-logo.png embed failed (fallback to text):', imgErr.message)
-          logoRendered = false
+          // Strategy 3 — direct path string (PDFKit reads file itself):
+          if (!logoRendered) {
+            try {
+              doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, { height: 70 })
+              logoRendered = true
+            } catch (e3) {
+              console.warn('[PDF] logo strategy 3 (path) failed:', e3.message)
+            }
+          }
         }
       }
       if (!logoRendered) {
-        // Fallback: pure brand words via Helvetica
+        // LAST-resort fallback: Helvetica brand words (no tofu for ANANT/TATTVA Latin letters)
         doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
           .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
         doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
@@ -384,7 +397,7 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
       }
       doc.restore()
     } catch (logoErr) {
-      console.warn('[PDF] logo render catch fallback:', logoErr.message)
+      console.warn('[PDF] logo outer catch → text fallback:', logoErr.message)
       doc.save()
       doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
         .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
