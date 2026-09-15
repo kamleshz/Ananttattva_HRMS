@@ -353,43 +353,45 @@ router.get('/attendance-mis.pdf',authorize(...MIS_ROLES),asyncHandler(async(req,
     const PAGE_USABLE = PAGE_RIGHT - PAGE_LEFT // 782
     try {
       // Use actual PNG logo from backend/src/assets/ananttattva-logo.png
-      // PDFKit works best with plain Node Buffer (raw file bytes). Try simplest path first.
       doc.save()
       const LOGO_PNG_PATH = path.join(__dirname, '../assets/ananttattva-logo.png')
       let logoRendered = false
+      const LOGO_COMMON_OPTS = { height: 70, type: 'png' }
       if (fs.existsSync(LOGO_PNG_PATH)) {
         const rawBytes = fs.readFileSync(LOGO_PNG_PATH)
-        // Strategy 1 — raw bytes (fastest, most compatible — NO sharp transforms):
+        // Strategy 1 — raw bytes + EXPLICIT type:png (fixes buffer type-detect failure on Render Docker)
         try {
-          doc.image(rawBytes, PAGE_LEFT, 12, { height: 70 })
+          doc.image(rawBytes, PAGE_LEFT, 12, LOGO_COMMON_OPTS)
           logoRendered = true
         } catch (e1) {
-          console.warn('[PDF] logo strategy 1 (raw) failed:', e1.message)
-          // Strategy 2 — sharp re-encode (sanitize), with MINIMAL options to avoid sharp errors:
+          console.warn('[PDF] logo strategy 1 (raw+type) failed:', e1.message)
+          // Strategy 2 — sharp: flatten(remove alpha) + plain PNG (no metadata) + EXPLICIT type:png
           if (_sharp) {
             try {
-              const sanitized = await _sharp(rawBytes)
-                .png()
+              const flatClean = await _sharp(rawBytes)
+                .ensureAlpha()
+                .flatten({ background: { r: 255, g: 255, b: 255 } })
+                .toFormat('png')
                 .toBuffer()
-              doc.image(sanitized, PAGE_LEFT, 12, { height: 70 })
+              doc.image(flatClean, PAGE_LEFT, 12, LOGO_COMMON_OPTS)
               logoRendered = true
             } catch (e2) {
-              console.warn('[PDF] logo strategy 2 (sharp sanitize) failed:', e2.message)
+              console.warn('[PDF] logo strategy 2 (sharp flatten) failed:', e2.message)
             }
           }
-          // Strategy 3 — direct path string (PDFKit reads file itself):
+          // Strategy 3 — direct path string + EXPLICIT type:png (PDFKit reads file itself)
           if (!logoRendered) {
             try {
-              doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, { height: 70 })
+              doc.image(LOGO_PNG_PATH, PAGE_LEFT, 12, LOGO_COMMON_OPTS)
               logoRendered = true
             } catch (e3) {
-              console.warn('[PDF] logo strategy 3 (path) failed:', e3.message)
+              console.warn('[PDF] logo strategy 3 (path+type) failed:', e3.message)
             }
           }
         }
       }
       if (!logoRendered) {
-        // LAST-resort fallback: Helvetica brand words (no tofu for ANANT/TATTVA Latin letters)
+        // LAST-resort fallback: Helvetica brand words
         doc.fillColor('#f97316').font('Helvetica-Bold').fontSize(28)
           .text('ANANT', PAGE_LEFT + 10, 16, { characterSpacing: 2 })
         doc.fillColor('#111827').font('Helvetica-Bold').fontSize(23)
