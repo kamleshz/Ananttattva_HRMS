@@ -712,7 +712,9 @@ export function AttendancePage({ user }) {
       const { data: refreshed } = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
       if (Array.isArray(refreshed)) setRecords(refreshed);
     } catch (err) {
-      setError(err.message || "Failed");
+      const msg = err.message || "Failed";
+      setError(msg);
+      alert(`❌ Fill Punch validation failed\n\n${msg}`);
     } finally {
       setFillPunchBusy(false);
     }
@@ -732,7 +734,9 @@ export function AttendancePage({ user }) {
       const { data: refreshed } = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
       if (Array.isArray(refreshed)) setRecords(refreshed);
     } catch (err) {
-      setError(err.message || "Failed to waive");
+      const msg = err.message || "Failed to waive";
+      setError(msg);
+      alert(`❌ Waive failed\n\n${msg}`);
     }
   };
 
