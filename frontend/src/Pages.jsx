@@ -671,14 +671,17 @@ export function AttendancePage({ user }) {
     if (!fillPunchForm.time || !/^\d{2}:\d{2}$/.test(fillPunchForm.time)) { setError("Enter HH:MM (24h)"); return; }
     if (!fillPunchForm.reason.trim()) { setError("Reason is required"); return; }
     const getBaseIso = (val) => {
-      if (val == null) return new Date().toISOString().slice(0,10);
-      if (val instanceof Date && !isNaN(val.getTime())) return val.toISOString().slice(0,10);
-      if (typeof val === 'string') {
-        if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0,10);
-        const parsed = new Date(val);
-        if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0,10);
+      const pad = (n) => String(n).padStart(2, "0");
+      if (val == null) {
+        const t = new Date();
+        return `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
       }
-      return new Date().toISOString().slice(0,10);
+      const dt = val instanceof Date ? val : (typeof val === 'string' || typeof val === 'number') ? new Date(val) : null;
+      if (dt && !isNaN(dt.getTime())) {
+        return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+      }
+      const t = new Date();
+      return `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())}`;
     };
     const baseDateIso = getBaseIso(fillPunchRecord.date);
     const toLocalIso = (hhmm) => {
