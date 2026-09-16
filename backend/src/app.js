@@ -142,7 +142,15 @@ app.use(express.urlencoded({ extended:true, limit:'5mb' }))
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'))
 app.use('/api', rateLimit({ windowMs:15*60*1000, limit:500, standardHeaders:'draft-8', legacyHeaders:false }))
 app.use(biometricProxy)
-app.get('/api/health', (_req,res) => res.json({success:true,message:'AT Connect API is healthy',timestamp:new Date().toISOString()}))
+app.get('/api/health', (_req,res) => {
+  const m = typeof app.get === 'function' && app.get('mongoState') ? app.get('mongoState')() : null
+  res.json({
+    success:true,
+    message:'AT Connect API is healthy',
+    timestamp:new Date().toISOString(),
+    mongo: m ? { status: m.status, ready: !!m.ready, attempts: m.attempts, error: m.error || null, connectedAt: m.connectedAt || null } : null
+  })
+})
 app.get('/api/biometric-health', async (_req,res) => {
   if (!env.biometricServiceUrl) return res.json({success:true,data:{integrated:false,ready:false,status:'not_configured',message:'ML biometric service is not configured on this deployment.'}})
   try {
