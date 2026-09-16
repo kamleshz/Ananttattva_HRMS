@@ -670,13 +670,23 @@ export function AttendancePage({ user }) {
     if (!fillPunchRecord) return;
     if (!fillPunchForm.time || !/^\d{2}:\d{2}$/.test(fillPunchForm.time)) { setError("Enter HH:MM (24h)"); return; }
     if (!fillPunchForm.reason.trim()) { setError("Reason is required"); return; }
-    const baseDateIso = (fillPunchRecord.date && typeof fillPunchRecord.date === "string")
-      ? fillPunchRecord.date.slice(0,10)
-      : new Date(fillPunchRecord.date || Date.now()).toISOString().slice(0,10);
+    const getBaseIso = (val) => {
+      if (val == null) return new Date().toISOString().slice(0,10);
+      if (val instanceof Date && !isNaN(val.getTime())) return val.toISOString().slice(0,10);
+      if (typeof val === 'string') {
+        if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0,10);
+        const parsed = new Date(val);
+        if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0,10);
+      }
+      return new Date().toISOString().slice(0,10);
+    };
+    const baseDateIso = getBaseIso(fillPunchRecord.date);
     const toLocalIso = (hhmm) => {
       if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
       const [h,m] = hhmm.split(":").map(Number);
-      return new Date(`${baseDateIso}T${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:00`).toISOString();
+      const dt = new Date(`${baseDateIso}T${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:00`);
+      if (isNaN(dt.getTime())) return null;
+      return dt.toISOString();
     };
     setFillPunchBusy(true);
     try {
@@ -696,6 +706,17 @@ export function AttendancePage({ user }) {
         }
         requestedCheckinTime = toLocalIso(fillPunchForm.checkinTime);
         requestedCheckoutTime = toLocalIso(fillPunchForm.time);
+      }
+      if (!requestedCheckinTime && fillPunchForm.missingType === "checkin") { setError("Invalid check-in HH:MM"); setFillPunchBusy(false); return; }
+      if (!requestedCheckoutTime && fillPunchForm.missingType === "checkout") { setError("Invalid checkout HH:MM"); setFillPunchBusy(false); return; }
+      if (!requestedCheckinTime && !requestedCheckoutTime) { setError("At least one punch time must be valid"); setFillPunchBusy(false); return; }
+      const existingIn = !!(fillPunchForm.missingType === "checkout" && fillPunchRecord?.checkIn?.time);
+      const inTs = requestedCheckinTime ? new Date(requestedCheckinTime).getTime() : (existingIn ? new Date(fillPunchRecord.checkIn.time).getTime() : null);
+      const outTs = requestedCheckoutTime ? new Date(requestedCheckoutTime).getTime() : null;
+      if (inTs != null && outTs != null && !(outTs > inTs)) {
+        const fmt = (t) => new Date(t).toString();
+        const msg = `Requested checkout (${fmt(outTs)}) must be AFTER check-in (${fmt(inTs)}). Verify HH:MM (24h).`;
+        setError(msg); setFillPunchBusy(false); alert(`❌ ${msg}`); return;
       }
       const body = {
         requestedCheckoutTime,

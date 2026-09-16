@@ -700,9 +700,15 @@ router.patch('/corrections/:attendanceId/hr-override', authorize('hr_admin','adm
   let checkOutTs=attendance.checkOut?.time||null
   if(input.requestedCheckinTime)checkInTs=new Date(input.requestedCheckinTime)
   if(input.requestedCheckoutTime)checkOutTs=new Date(input.requestedCheckoutTime)
+  if(checkInTs && !(checkInTs instanceof Date && !isNaN(checkInTs.getTime())))checkInTs=null
+  if(checkOutTs && !(checkOutTs instanceof Date && !isNaN(checkOutTs.getTime())))checkOutTs=null
 
-  if(checkInTs && checkOutTs && !(checkOutTs>checkInTs)){
-    throw new HttpError(422,{code:'CHECKOUT_BEFORE_CHECKIN',message:'Requested checkout must be after check-in'})
+  if(checkInTs && checkOutTs){
+    const diffMs=checkOutTs.getTime()-checkInTs.getTime()
+    if(!(diffMs>0)){
+      const iso=(d)=>d instanceof Date?d.toISOString():String(d)
+      throw new HttpError(422,{code:'CHECKOUT_BEFORE_CHECKIN',message:`Requested checkout must be AFTER check-in. checkIn=${iso(checkInTs)} checkOut=${iso(checkOutTs)} diffMs=${diffMs}ms. Verify HH:MM (24h) for correct values.`,details:[{path:['requestedCheckoutTime'],code:'CHECKOUT_BEFORE_CHECKIN',message:`checkout (${iso(checkOutTs)}) must be later than checkIn (${iso(checkInTs)})`}]})
+    }
   }
 
   if(input.requestedCheckinTime){

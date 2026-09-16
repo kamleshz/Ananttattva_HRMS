@@ -25,11 +25,25 @@ export async function api(path, options = {}) {
     .catch(() => ({ message: "Invalid server response" }));
   if (!response.ok) {
     if (response.status === 401) session.clear();
+    function stringifyMessage(m) {
+      if (m == null) return "";
+      if (typeof m === "string") return m;
+      if (typeof m === "object") {
+        if ("message" in m && typeof m.message === "string" && m.message.length) return m.message;
+        if ("error" in m && typeof m.error === "string" && m.error.length) return m.error;
+        try { return JSON.stringify(m); } catch (_e) { return String(m); }
+      }
+      return String(m);
+    }
     const issue = Array.isArray(payload.details) ? payload.details[0] : null;
     const field = issue?.path?.length ? `${issue.path.join(".")}: ` : "";
-    throw new Error(
-      issue?.message ? `${field}${issue.message}` : payload.message || "Request failed",
-    );
+    const issueText = issue?.message ? stringifyMessage(issue.message) : "";
+    const payloadText = stringifyMessage(payload.message);
+    const combinedText = issue ? `${field}${issueText || payloadText}` : (payloadText || "Request failed");
+    const error = new Error(combinedText);
+    if (issue?.code) error.code = issue.code;
+    error.responseStatus = response.status;
+    throw error;
   }
   return payload.data;
 }
