@@ -376,6 +376,7 @@ export function AttendancePage({ user }) {
     [fillPunchForm, setFillPunchForm] = useState({
       missingType: "checkout",
       time: "18:31",
+      checkinTime: "09:15",
       reason: "",
       action: "waive_no_deduction",
     }),
@@ -647,11 +648,17 @@ export function AttendancePage({ user }) {
   const orderedArrangements = [...arrangements].sort((left,right) => Number(right.status === "pending") - Number(left.status === "pending"));
 
   const openFillPunch = (record) => {
-    const missingType = (!record.checkIn?.time && !record.checkOut?.time) ? "checkin" : (!!record.checkIn?.time && !record.checkOut?.time ? "checkout" : "checkout");
+    const hasIn = !!record.checkIn?.time;
+    const hasOut = !!record.checkOut?.time;
+    let missingType;
+    if (!hasIn && !hasOut) missingType = "both";
+    else if (hasIn && !hasOut) missingType = "checkout";
+    else missingType = "checkin";
     setFillPunchRecord(record);
     setFillPunchForm({
       missingType,
-      time: missingType === "checkin" ? (record.checkIn?.time ? formatTime(record.checkIn.time).replace(":","") : "0915").replace(/^(\d{2})(\d{2})$/,"$1:$2") : "18:31",
+      time: missingType === "checkin" ? (record.checkIn?.time ? formatTime(record.checkIn.time) : "09:15") : "18:31",
+      checkinTime: "09:15",
       reason: "",
       action: "waive_no_deduction",
     });
@@ -663,17 +670,40 @@ export function AttendancePage({ user }) {
     if (!fillPunchRecord) return;
     if (!fillPunchForm.time || !/^\d{2}:\d{2}$/.test(fillPunchForm.time)) { setError("Enter HH:MM (24h)"); return; }
     if (!fillPunchForm.reason.trim()) { setError("Reason is required"); return; }
+    const baseDateIso = (fillPunchRecord.date && typeof fillPunchRecord.date === "string")
+      ? fillPunchRecord.date.slice(0,10)
+      : new Date(fillPunchRecord.date || Date.now()).toISOString().slice(0,10);
+    const toLocalIso = (hhmm) => {
+      if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
+      const [h,m] = hhmm.split(":").map(Number);
+      return new Date(`${baseDateIso}T${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:00`).toISOString();
+    };
     setFillPunchBusy(true);
     try {
-      const [hH, mM] = fillPunchForm.time.split(":").map(Number);
       const payMode = fillPunchForm.action === "mark_half_unpaid" ? "unpaid_half"
         : fillPunchForm.action === "mark_full_unpaid" ? "unpaid_full" : "waive_excused";
+      let requestedCheckinTime = null;
+      let requestedCheckoutTime = null;
+      if (fillPunchForm.missingType === "checkin") {
+        requestedCheckinTime = toLocalIso(fillPunchForm.time);
+      } else if (fillPunchForm.missingType === "checkout") {
+        requestedCheckoutTime = toLocalIso(fillPunchForm.time);
+      } else {
+        if (!fillPunchForm.checkinTime || !/^\d{2}:\d{2}$/.test(fillPunchForm.checkinTime)) {
+          setError("Enter check-in HH:MM (24h) for both-punch mode");
+          setFillPunchBusy(false);
+          return;
+        }
+        requestedCheckinTime = toLocalIso(fillPunchForm.checkinTime);
+        requestedCheckoutTime = toLocalIso(fillPunchForm.time);
+      }
       const body = {
-        requestedCheckoutTime: fillPunchForm.missingType === "checkin" ? null : fillPunchForm.time,
-        requestedCheckinTime: fillPunchForm.missingType === "checkin" ? fillPunchForm.time : null,
+        requestedCheckoutTime,
+        requestedCheckinTime,
         reason: fillPunchForm.reason.trim(),
         hrCompensationDecision: fillPunchForm.action === "waive_no_deduction" ? "waive_no_deduction" : "unpaid",
         finalPayMode: payMode,
+        missingPunchType: fillPunchForm.missingType,
       };
       await attendanceApi.hrOverrideCorrection(fillPunchRecord._id, body);
       setFillPunchOpen(false);
@@ -1213,15 +1243,18 @@ export function AttendancePage({ user }) {
                 </select>
               </label>
               <div className="form-row">
-                <label>Proposed {fillPunchForm.missingType === "checkin" ? "Check-in" : fillPunchForm.missingType === "checkout" ? "Checkout" : "Checkout"} time (HH:MM 24h) *
-                  <input required type="time" value={fillPunchForm.time} onChange={e=>setFillPunchForm({...fillPunchForm,time:e.target.value})} aria-label={`Proposed ${fillPunchForm.missingType} HH:MM`}/>
-                </label>
-                {fillPunchForm.missingType==="both" && (
-                  <label>Check-in time (HH:MM 24h)
-                    <input type="time" defaultValue="09:15" onChange={e=>{
-                      const t = e.target.value;
-                      setFillPunchForm(prev=>({...prev, checkinTime: t}));
-                    }} aria-label="Proposed checkin HH:MM"/>
+                {fillPunchForm.missingType === "both" ? (
+                  <>
+                    <label>Check-in time (HH:MM 24h) *
+                      <input required type="time" value={fillPunchForm.checkinTime} onChange={e=>setFillPunchForm(prev=>({...prev, checkinTime: e.target.value}))} aria-label="Proposed check-in HH:MM"/>
+                    </label>
+                    <label>Check-out time (HH:MM 24h) *
+                      <input required type="time" value={fillPunchForm.time} onChange={e=>setFillPunchForm(prev=>({...prev, time: e.target.value}))} aria-label="Proposed check-out HH:MM"/>
+                    </label>
+                  </>
+                ) : (
+                  <label>Proposed {fillPunchForm.missingType === "checkin" ? "Check-in" : "Checkout"} time (HH:MM 24h) *
+                    <input required type="time" value={fillPunchForm.time} onChange={e=>setFillPunchForm({...fillPunchForm,time:e.target.value})} aria-label={`Proposed ${fillPunchForm.missingType} HH:MM`}/>
                   </label>
                 )}
               </div>

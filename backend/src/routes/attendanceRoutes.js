@@ -670,6 +670,218 @@ router.patch('/corrections/:id/reopen', authorize('hr_admin','admin','super_admi
   res.json({success:true,data:result})
 }))
 
+router.patch('/corrections/:attendanceId/hr-override', authorize('hr_admin','admin','super_admin'), asyncHandler(async (req,res)=>{
+  if(!['hr_admin','admin','super_admin'].includes(req.user.role))throw new HttpError(403,'Only HR/Admin/Super Admin can perform HR punch overrides')
+  const overrideSchema=z.object({
+    requestedCheckinTime:z.coerce.date().nullable().optional(),
+    requestedCheckoutTime:z.coerce.date().nullable().optional(),
+    reason:z.string().trim().min(6,'Reason too short').max(1000),
+    hrCompensationDecision:z.enum(['waive_no_deduction','unpaid']),
+    finalPayMode:z.enum(['waive_excused','unpaid_half','unpaid_full']),
+    missingPunchType:z.enum(['checkin','checkout','both']).optional(),
+  })
+  const input=overrideSchema.parse(req.body)
+  if(!input.requestedCheckinTime && !input.requestedCheckoutTime && input.finalPayMode!=='waive_excused'){
+    throw new HttpError(422,'Provide at least requestedCheckinTime or requestedCheckoutTime unless waiving to 0h excused')
+  }
+  const attendance=await Attendance.findById(req.params.attendanceId)
+  if(!attendance)throw new HttpError(404,'Attendance record not found')
+  const employee=await Employee.findById(attendance.employee).select('firstName lastName employeeCode shift department').lean()
+  if(!employee)throw new HttpError(404,'Employee for attendance not found')
+  const now=new Date()
+  const missingCheckout=attendance.missingCheckout||{}
+  const deadline=missingCheckout.deadline
+  const submittedWithinDeadline=Boolean(!deadline||now<deadline)
+  const policy=await getAttendancePolicy()
+  const halfMin=policy.halfDayWorkingMinutes
+  const fullMin=policy.fullDayWorkingMinutes
+
+  let checkInTs=attendance.checkIn?.time||null
+  let checkOutTs=attendance.checkOut?.time||null
+  if(input.requestedCheckinTime)checkInTs=new Date(input.requestedCheckinTime)
+  if(input.requestedCheckoutTime)checkOutTs=new Date(input.requestedCheckoutTime)
+
+  if(checkInTs && checkOutTs && !(checkOutTs>checkInTs)){
+    throw new HttpError(422,{code:'CHECKOUT_BEFORE_CHECKIN',message:'Requested checkout must be after check-in'})
+  }
+
+  if(input.requestedCheckinTime){
+    attendance.checkIn={...(attendance.checkIn?.toObject?.()||attendance.checkIn||{}),time:checkInTs,source:'hr_correction',device:'hr_override',address:'HR punch override'}
+  }
+  if(input.requestedCheckoutTime){
+    attendance.checkOut={...(attendance.checkOut?.toObject?.()||attendance.checkOut||{}),time:checkOutTs,source:'hr_correction',device:'hr_override',address:'HR punch override'}
+  }
+
+  let actualMinutes=0
+  if(checkInTs && checkOutTs){
+    actualMinutes=Math.max(0,Math.floor((checkOutTs-checkInTs)/60000))
+  }
+  let workingMinutes=actualMinutes
+  let recordedHours=0
+  let statusAfter='present'
+  let lateMinutes=0
+
+  if(input.finalPayMode==='unpaid_full'){
+    workingMinutes=0
+    statusAfter='absent'
+    recordedHours=0
+  }else if(input.finalPayMode==='unpaid_half'){
+    workingMinutes=Math.min(actualMinutes,halfMin)
+    statusAfter=workingMinutes>0?'half_day':'absent'
+    recordedHours=workingMinutes/60
+  }else{
+    workingMinutes=actualMinutes
+    if(workingMinutes<=0){
+      statusAfter='absent'
+    }else if(workingMinutes<halfMin){
+      statusAfter='late'
+    }else if(workingMinutes<fullMin){
+      statusAfter='half_day'
+    }else{
+      statusAfter='present'
+    }
+    recordedHours=workingMinutes/60
+  }
+  attendance.workingMinutes=workingMinutes
+
+  const shift=employee?.shift
+  if(shift && shift.startTime && checkInTs){
+    const [sh,sm]=String(shift.startTime).split(':').map(Number)
+    const start=new Date(checkInTs)
+    start.setHours(sh,sm,0,0)
+    lateMinutes=checkInTs>start?Math.max(0,Math.floor((checkInTs-start)/60000)):0
+    const graceMin=shift.gracePeriodMinutes||policy.gracePeriodMinutes||10
+    if(lateMinutes<=graceMin)lateMinutes=0
+  }
+  attendance.lateMinutes=lateMinutes
+  if(statusAfter==='present' && lateMinutes>0)statusAfter='late'
+
+  try{await applyAttendanceCompletion(attendance, attendance.employee)}catch(_err){/* non-fatal */}
+
+  attendance.missedCheckOut=false
+  attendance.missedCheckIn=!checkInTs
+  attendance.status=statusAfter
+  attendance.checkoutType=checkOutTs?'HR_OVERRIDE':(attendance.checkoutType||'NONE')
+  attendance.exceptionStatus=input.finalPayMode==='unpaid_full'?'full_unpaid_override':(input.finalPayMode==='unpaid_half'?'half_unpaid_override':'')
+
+  attendance.missingCheckout=attendance.missingCheckout||{}
+  attendance.missingCheckout.justificationStatus='approved'
+  attendance.missingCheckout.reviewerId=req.user._id
+  attendance.missingCheckout.reviewAction=input.finalPayMode==='waive_excused'?'waived_excused':(input.finalPayMode==='unpaid_half'?'unpaid_half':'unpaid_full')
+  attendance.missingCheckout.reviewNote=input.reason||''
+  attendance.missingCheckout.workingMinutesRestored=workingMinutes
+  attendance.missingCheckout.finalizedAt=new Date()
+  attendance.missingCheckout.conversionReason=''
+  attendance.missingCheckout.leaveRequestId=null
+  attendance.missingCheckout.compensationDecision=input.finalPayMode
+  if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+  attendance.missingCheckout.history.push({
+    timestamp:new Date(),
+    status:'approved',
+    message:`HR punch override (${input.missingPunchType||'checkout'}) → ${input.finalPayMode}. hours=${(workingMinutes/60).toFixed(2)}h. ${input.reason.substring(0,100)}`,
+    actor:`scheduler_hr_override:${req.user._id}`,
+  })
+  if(!Array.isArray(attendance.correctionAudit))attendance.correctionAudit=[]
+  attendance.correctionAudit.push({
+    previousCheckinTime:attendance.checkIn?.time||null,
+    previousCheckoutTime:attendance.checkOut?.time||null,
+    correctedCheckinTime:input.requestedCheckinTime||null,
+    correctedCheckoutTime:input.requestedCheckoutTime||null,
+    reason:input.reason,
+    approvedBy:req.user._id,
+    approvedAt:new Date(),
+    compensation:input.finalPayMode,
+    isHrOverride:true,
+  })
+  await attendance.save()
+
+  const kind=(input.missingPunchType==='both'?'missing_both':(input.missingPunchType==='checkin'?'missing_checkin':'missing_checkout'))
+  const request=await AttendanceCorrectionRequest.create({
+    attendance:attendance._id,
+    employee:attendance.employee,
+    requestedCheckinTime:input.requestedCheckinTime||null,
+    requestedCheckoutTime:input.requestedCheckoutTime||null,
+    reason:input.reason,
+    deadline,
+    kind,
+    submittedWithinDeadline,
+    isHrOverride:true,
+    overrideBy:req.user._id,
+    status:'approved',
+    reviewedBy:req.user._id,
+    reviewedAt:new Date(),
+    reviewNote:`HR auto-approve (${input.finalPayMode})`,
+    hrCompensationDecision:input.hrCompensationDecision,
+    finalPayMode:input.finalPayMode,
+  })
+
+  if(input.finalPayMode==='unpaid_full' || input.finalPayMode==='unpaid_half'){
+    try{
+      const isHalf = input.finalPayMode==='unpaid_half'
+      const policyLeave=await getAttendancePolicy()
+      const employeeLeave=await Employee.findById(attendance.employee).lean()
+      if(employeeLeave){
+        const employeeId=employeeLeave._id
+        const {workingDays}=await computeLeaveDays({startDate:attendance.date,endDate:attendance.date})
+        const {fyStart,fyEnd,fyLabel,annualPaidLeaves,cycleStartMonth,eligibleMonths,entitledPaidLeaves,canApplyPaidLeave}=proratedAnnualPaidLeaves({employee:employeeLeave,asOf:attendance.date})
+        let paymentsMode='unpaid',paidDays=0,unpaidDays=isHalf?0.5:1,balanceBefore=0,balanceAfter=0
+        if(policyLeave.autoDeductPaidLeaveOnMissingCheckout&&canApplyPaidLeave){
+          const usedPaidDays=await countPaidLeaveDaysForEmployee({employeeId,leaveRequestModel:LeaveRequest,leaveTypeKey:'paid_leave'})
+          balanceBefore=Math.max(0,entitledPaidLeaves-usedPaidDays)
+          if(balanceBefore>=unpaidDays){
+            paymentsMode='paid';paidDays=unpaidDays;unpaidDays=0;balanceAfter=balanceBefore-paidDays
+          }
+        }
+        const leaveType=paymentsMode==='paid'?'paid_leave':'unpaid_leave'
+        const workflowRequiredSteps=paymentsMode==='paid'?['manager','hr_admin']:['hr_admin']
+        const workflowSteps=workflowRequiredSteps.map(role=>({role,status:'approved',actor:req.user._id,actedAt:new Date(),comment:`HR ${isHalf?'½ day unpaid':'full day unpaid'} Fill Punch override: ${input.reason||''}`}))
+        const workflow={requiredSteps:workflowRequiredSteps,currentStepIndex:workflowRequiredSteps.length,steps:workflowSteps,nextRole:null}
+        const leaveDays=isHalf?0.5:1
+        const leaveRequest=await LeaveRequest.create({
+          employee:employeeId,
+          reportingManager:employeeLeave.manager||null,
+          leaveType,
+          dayType:isHalf?'first_half':'full_day',
+          startDate:attendance.date,
+          endDate:attendance.date,
+          days:leaveDays,
+          workingDays:Math.max(1,workingDays)*leaveDays,
+          reason:`HR ${isHalf?'½-day':'full-day'} unpaid via Fill Punch override. ${input.reason||''}`,
+          status:'approved',
+          reviewedBy:req.user._id||null,
+          reviewedAt:new Date(),
+          reviewNote:input.reason||'',
+          policySnapshot:{annualPaidLeaves,cycleStartMonth,entitledPaidLeaves,eligibleMonths,canApplyPaidLeave,longLeave:{isLongLeave:false,noticeDaysRequired:0,calendarNoticeDays:0,meetsAdvanceNotice:true}},
+          payments:{mode:paymentsMode,paidDays,unpaidDays,balanceBefore,balanceAfter},
+          workflow,
+          fyLabel,
+          conversionReason:`HR fill punch override ${isHalf?'half':'full'} unpaid`,
+          systemGenerated:true,
+        })
+        attendance.missingCheckout=attendance.missingCheckout||{}
+        attendance.missingCheckout.leaveRequestId=leaveRequest._id
+        attendance.missingCheckout.conversionReason=`HR ${isHalf?'½-day':'full-day'} unpaid via Fill Punch override`
+        if(!isHalf){
+          attendance.workingMinutes=0
+          attendance.status=paymentsMode==='paid'?'on_leave':'absent'
+          attendance.exceptionStatus=paymentsMode==='paid'?'Full unpaid → Paid Leave':'Full unpaid deduction (Absent)'
+        }else{
+          attendance.exceptionStatus=paymentsMode==='paid'?'½-day → Paid Leave':'½-day unpaid deduction'
+        }
+        if(!Array.isArray(attendance.missingCheckout.history))attendance.missingCheckout.history=[]
+        attendance.missingCheckout.history.push({timestamp:new Date(),status:'leave_converted',message:`HR ${isHalf?'½':'full'} day ${paymentsMode} leave created via fill punch override.`,actor:`hr:${req.user._id}`})
+        await attendance.save()
+      }
+    }catch(_err){console.error('hr-override leave inline:',_err?.message||_err)}
+  }
+
+  const reviewerName=`${req.user.firstName||''} ${req.user.lastName||''}`.trim()
+  try{await sendCorrectionDecisionNotification({employeeId:attendance.employee,correctionId:request._id,attendance,approved:true,reviewNote:input.reason,reviewerName})}catch(_err){/* non-fatal */}
+  try{await invalidateWeeklyAuditKeysForDate(attendance)}catch(_err){}
+  const hydrated=await AttendanceCorrectionRequest.findById(request._id).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout lateMinutes')
+  res.json({success:true,data:hydrated,payMode:input.finalPayMode,recordedHours:Number(recordedHours.toFixed(2)),workingMinutes})
+}))
+
 async function buildMetaPolicyEnvelope() {
   const policy = await getAttendancePolicy()
   return {
