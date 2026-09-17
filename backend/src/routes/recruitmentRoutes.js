@@ -256,79 +256,22 @@ function jobOpeningToFrontend(doc) {
     goodToHaveSkills: Array.isArray(obj.goodToHaveSkills) ? obj.goodToHaveSkills : [],
   };
 }
-const openPositionInput = z.object({
-  position: z.union([z.string(), z.number(), z.null(), z.undefined()]).transform((v) => (v == null ? '' : String(v).trim())).refine((v) => v.length >= 1, { message: 'Position title is required' }),
-  department: z.union([z.string(), z.number(), z.null(), z.undefined(), z.object({}).passthrough()]),
-  hiringManager: z.any().optional(),
-  employmentType: z.any().optional(),
-  workLocation: z.any().optional(),
-  status: z.any().optional(),
-  minExperience: z.any().optional(),
-  maxExperience: z.any().optional(),
-  minCTC: z.any().optional(),
-  maxCTC: z.any().optional(),
-  noticePeriodDays: z.any().optional(),
-  mandatorySkills: z.any().optional(),
-  goodToHaveSkills: z.any().optional(),
-  description: z.any().optional(),
-  designation: z.any().optional(),
-  qualificationRequired: z.any().optional(),
-  openings: z.any().optional(),
-}).passthrough().superRefine((val, ctx) => {
-  const deptRaw = val.department;
-  let deptOk = false;
-  if (deptRaw && typeof deptRaw === 'object') deptOk = Boolean(deptRaw._id || deptRaw.id || (deptRaw.name && String(deptRaw.name).trim()) || (deptRaw.value && String(deptRaw.value).trim()));
-  else if (deptRaw != null && String(deptRaw).trim()) deptOk = true;
-  if (!deptOk) ctx.addIssue({ code: 'custom', message: 'Department is required', path: ['department'] });
-  const minExp = Number(val.minExperience);
-  const maxExp = Number(val.maxExperience);
-  if (Number.isFinite(minExp) && Number.isFinite(maxExp) && maxExp < minExp) {
-    ctx.addIssue({ code: 'custom', message: 'Max experience must be >= min experience', path: ['maxExperience'] });
-  }
-  if (Number.isFinite(minExp) && minExp < 0) {
-    ctx.addIssue({ code: 'custom', message: 'Min experience cannot be negative', path: ['minExperience'] });
-  }
-  if (Number.isFinite(maxExp) && maxExp < 0) {
-    ctx.addIssue({ code: 'custom', message: 'Max experience cannot be negative', path: ['maxExperience'] });
-  }
-  const minC = Number(val.minCTC);
-  const maxC = Number(val.maxCTC);
-  if (Number.isFinite(minC) && Number.isFinite(maxC) && maxC < minC) {
-    ctx.addIssue({ code: 'custom', message: 'Max CTC must be >= min CTC', path: ['maxCTC'] });
-  }
-  if (Number.isFinite(minC) && minC < 0) {
-    ctx.addIssue({ code: 'custom', message: 'Min CTC cannot be negative', path: ['minCTC'] });
-  }
-  if (Number.isFinite(maxC) && maxC < 0) {
-    ctx.addIssue({ code: 'custom', message: 'Max CTC cannot be negative', path: ['maxCTC'] });
-  }
-  const np = Number(val.noticePeriodDays);
-  if (val.noticePeriodDays != null && String(val.noticePeriodDays).trim() !== '' && (!Number.isFinite(np) || np < 0)) {
-    ctx.addIssue({ code: 'custom', message: 'Notice period must be >= 0 days', path: ['noticePeriodDays'] });
-  }
-  const ops = Number(val.openings);
-  if (val.openings != null && String(val.openings).trim() !== '' && (!Number.isFinite(ops) || ops <= 0)) {
-    ctx.addIssue({ code: 'custom', message: 'Openings count must be a positive number', path: ['openings'] });
-  }
-});
-
 router.get('/open-positions', authorize(...hrRoles), asyncHandler(async (_req,res)=>{
   const docs = await JobOpening.find().sort({ createdAt: -1 });
   res.json({ success: true, data: docs.map(jobOpeningToFrontend) });
 }));
 router.post('/open-positions', authorize(...hrRoles), asyncHandler(async (req,res)=>{
-  const parsed = openPositionInput.safeParse(req.body || {});
-  if (!parsed.success) throw new HttpError(422, parsed.error.issues[0]?.message || 'Invalid form input', { details: parsed.error.issues });
-  const payload = frontendToJobOpening(parsed.data);
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const payload = frontendToJobOpening(body);
   if (!payload.title) throw new HttpError(422, 'Position title is required');
   if (!payload.department) throw new HttpError(422, 'Department is required');
+  if (!payload.hiringManager) throw new HttpError(422, 'Hiring manager is required');
   const created = await JobOpening.create(payload);
   res.status(201).json({ success: true, data: jobOpeningToFrontend(created) });
 }));
 router.put('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{
-  const parsed = openPositionInput.deepPartial().safeParse(req.body || {});
-  if (!parsed.success) throw new HttpError(422, parsed.error.issues[0]?.message || 'Invalid input', { details: parsed.error.issues });
-  const patch = frontendToJobOpening(parsed.data);
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const patch = frontendToJobOpening(body);
   for (const key of Object.keys(patch)) if (patch[key] === undefined) delete patch[key];
   if (Object.keys(patch).length === 0) {
     const unchanged = await JobOpening.findById(req.params.id);
