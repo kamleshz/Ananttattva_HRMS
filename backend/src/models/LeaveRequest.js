@@ -10,6 +10,70 @@ const approvalStepSchema = new mongoose.Schema({
   expectedActor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { _id: false })
 
+const amendmentRecordSchema = new mongoose.Schema({
+  timestamp: { type: Date, default: () => new Date() },
+  action: { type: String, enum: ['cancel', 'amend_shorten', 'amend_extend', 'amend_change_type', 'amend_change_days'], required: true },
+  actorRole: { type: String, enum: ['employee', 'manager', 'hr_admin', 'admin', 'super_admin'], required: true },
+  actorUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  actorEmployee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
+  reason: { type: String, trim: true, maxlength: 500, default: '' },
+  from: {
+    startDate: Date,
+    endDate: Date,
+    workingDays: Number,
+    days: Number,
+    leaveType: String,
+    dayType: String,
+    status: String,
+    earlyLeaveMinutes: Number,
+    payments: {
+      mode: String,
+      paidDays: Number,
+      unpaidDays: Number,
+      balanceBefore: Number,
+      balanceAfter: Number,
+    },
+  },
+  to: {
+    startDate: Date,
+    endDate: Date,
+    workingDays: Number,
+    days: Number,
+    leaveType: String,
+    dayType: String,
+    status: String,
+    earlyLeaveMinutes: Number,
+    payments: {
+      mode: String,
+      paidDays: Number,
+      unpaidDays: Number,
+      balanceBefore: Number,
+      balanceAfter: Number,
+    },
+  },
+  workingDayDelta: { type: Number, default: 0 },
+  paidLeaveBalanceDelta: { type: Number, default: 0 },
+}, { _id: false })
+
+const previousVersionSnapshotSchema = new mongoose.Schema({
+  startDate: Date,
+  endDate: Date,
+  workingDays: Number,
+  days: Number,
+  leaveType: String,
+  dayType: String,
+  earlyLeaveMinutes: Number,
+  hrCompensationDecision: String,
+  payments: {
+    mode: String,
+    paidDays: Number,
+    unpaidDays: Number,
+    balanceBefore: Number,
+    balanceAfter: Number,
+  },
+  snapshotAt: Date,
+}, { _id: false })
+
 const leaveRequestSchema = new mongoose.Schema({
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
   reportingManager: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },
@@ -55,9 +119,16 @@ const leaveRequestSchema = new mongoose.Schema({
   fyLabel: { type: String, trim: true },
   conversionReason: { type: String, maxlength: 120, trim: true, default: '' },
   systemGenerated: { type: Boolean, default: false },
+  cancelledAt: Date,
+  cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  cancelledByEmployee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
+  cancellationReason: { type: String, trim: true, maxlength: 500, default: '' },
+  amendmentCount: { type: Number, default: 0, min: 0 },
+  amendmentHistory: { type: [amendmentRecordSchema], default: [] },
+  previousVersion: previousVersionSnapshotSchema,
 }, { timestamps: true })
 
 leaveRequestSchema.index({ employee: 1, startDate: -1 })
 leaveRequestSchema.index({ reportingManager: 1, status: 1 })
 leaveRequestSchema.index({ 'workflow.nextRole': 1, status: 1 })
-export const LeaveRequest = mongoose.model('LeaveRequest', leaveRequestSchema)
+export const LeaveRequest = mongoose.models.LeaveRequest || mongoose.model('LeaveRequest', leaveRequestSchema)

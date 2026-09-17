@@ -18,6 +18,7 @@ import {
   Mail,
   MapPin,
   Network,
+  Pencil,
   Plane,
   Plus,
   ReceiptText,
@@ -29,6 +30,7 @@ import {
   UserRound,
   UsersRound,
   X,
+  XCircle,
 } from "lucide-react";
 import { useNavigate } from "./router.jsx";
 import {
@@ -1755,7 +1757,7 @@ function LeaveDrawer({ close, saved, balance }) {
   );
 }
 
-function LeaveRequestCard({ item, currentUser, onReview }) {
+function LeaveRequestCard({ item, currentUser, onReview, onCancelLeave, onAmendLeave }) {
   const canReview = ["super_admin", "admin", "hr_admin", "manager"].includes(currentUser?.role);
   const pending = item.status === "pending";
   const nextRole = item.workflow?.nextRole;
@@ -1772,6 +1774,28 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
     )
   );
   const isEarlyLeave = item.dayType === "early_leave";
+  const isElevatedCancelRoles = ["super_admin", "admin", "hr_admin"].includes(currentUser?.role);
+  function jsCancellationDeadlineOk(startDateIso, roleIsElevated) {
+    if (roleIsElevated) return true;
+    const now = new Date();
+    const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
+    const grace10am = new Date(startOfToday.getTime() + 10*60*60*1000);
+    const s = new Date(startDateIso);
+    if (s.getTime() > grace10am.getTime()) return true;
+    if (s.getTime() <= startOfToday.getTime()) return false;
+    return now.getTime() <= grace10am.getTime();
+  }
+  const curEmp = currentUser?.employeeId;
+  const owner = String(employeeId || '');
+  const managerOf = String(reportingManagerId || '') === String(curEmp || '') && owner !== String(curEmp || '');
+  const isOwner = owner === String(curEmp || '');
+  const canSeeAction = isElevatedCancelRoles || managerOf || isOwner;
+  const okDeadline = jsCancellationDeadlineOk(item.startDate, isElevatedCancelRoles);
+  const notFinalState = !['cancelled','rejected'].includes(item.status || '');
+  const sysOk = !item.systemGenerated || isElevatedCancelRoles;
+  const canCancel = notFinalState && canSeeAction && okDeadline && sysOk && Boolean(onCancelLeave);
+  const wd = Number(item.workingDays || item.days || 0);
+  const canAmend = canCancel && Boolean(onAmendLeave) && wd > 1 && item.dayType !== 'early_leave' && item.dayType !== 'half_day';
   const isHrReviewingEarly = isEarlyLeave && pending && (
     (nextRole === "hr_admin" && currentUser?.role === "hr_admin" && isMyTurn) || isSuperAdminOverride
   );
@@ -1828,15 +1852,27 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
             </span>
           </div>
         </div>
-        <div className="leave-card-right">
-          <StatusBadge status={item.status} />
-          {isEarlyLeave && (
-            <span className={`soft-badge ${item.hrCompensationDecision ? "green" : "amber"}`}>
-              {item.hrCompensationDecision ? compLabelMap[item.hrCompensationDecision] : "Awaiting HR decision"}
-            </span>
-          )}
-          {item.policySnapshot?.longLeave?.isLongLeave && (
-            <span className="soft-badge purple">Long leave · 3-level</span>
+        <div className="leave-card-right" style={{alignItems:"flex-end", flexDirection:"column"}}>
+          <div style={{display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end"}}>
+            <StatusBadge status={item.status} />
+            {isEarlyLeave && (
+              <span className={`soft-badge ${item.hrCompensationDecision ? "green" : "amber"}`}>
+                {item.hrCompensationDecision ? compLabelMap[item.hrCompensationDecision] : "Awaiting HR decision"}
+              </span>
+            )}
+            {item.policySnapshot?.longLeave?.isLongLeave && (
+              <span className="soft-badge purple">Long leave · 3-level</span>
+            )}
+          </div>
+          {(canCancel || canAmend) && (
+            <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap", justifyContent:"flex-end"}}>
+              {canAmend && (
+                <button type="button" className="secondary-button small" onClick={()=>onAmendLeave && onAmendLeave(item)} style={{fontSize:"12px",padding:"6px 10px"}}><Pencil size={12}/> Edit dates · Partial cancel</button>
+              )}
+              {canCancel && (
+                <button type="button" className="danger-button small" onClick={()=>onCancelLeave && onCancelLeave(item)} style={{fontSize:"12px",padding:"6px 10px"}}><XCircle size={12}/> Cancel leave</button>
+              )}
+            </div>
           )}
         </div>
       </header>
@@ -1925,6 +1961,237 @@ function LeaveRequestCard({ item, currentUser, onReview }) {
   );
 }
 
+function jsComputeWorkingDays(startDateIso, endDateIso, dayType, earlyLeaveMinutes) {
+  if (!startDateIso || !endDateIso) return 0;
+  const s = new Date(startDateIso); const e = new Date(endDateIso);
+  if (e < s) return 0;
+  let count = 0; const cur = new Date(s);
+  while (cur <= e) {
+    const day = cur.getDay();
+    const saturdayOccurrence = Math.ceil(cur.getDate() / 7);
+    if (day !== 0 && (day !== 6 || [2, 4, 5].includes(saturdayOccurrence))) count += 1;
+    cur.setDate(cur.getDate() + 1);
+  }
+  if (dayType === "half_day" && count > 0) return 0.5;
+  if (dayType === "early_leave" && count > 0) return Number((Number(earlyLeaveMinutes || 0) / 510).toFixed(4));
+  return count;
+}
+function jsListDateRangeLabels(startDateIso, endDateIso) {
+  if (!startDateIso || !endDateIso) return [];
+  const s = new Date(startDateIso); const e = new Date(endDateIso);
+  if (e < s) return [];
+  const labels = []; const cur = new Date(s);
+  while (cur <= e) {
+    labels.push(formatDate(cur.toISOString().slice(0,10)));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return labels;
+}
+function CancelLeaveModal({ request, onClose, onCancelled }) {
+  const [reason, setReason] = useState("");
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!request) return null;
+  const leaveTypeLabel = request.leaveType === "paid_leave" ? "Paid leave" : request.leaveType === "unpaid_leave" ? "Unpaid leave" : capitalize(request.leaveType);
+  const dayTypeLabel = request.dayType === "early_leave" ? `Early leave${request.earlyLeaveMinutes ? ` · ${Math.floor(Number(request.earlyLeaveMinutes)/60)}h ${String(Number(request.earlyLeaveMinutes)%60).padStart(2,'0')}m` : ""}` : request.dayType === "half_day" ? "Half day" : "Full day";
+  const payments = request.payments || {};
+  const willRefund = (request.status === "approved" || request.status === "pending") && Number(payments.paidDays || 0) > 0;
+  async function submit(e) {
+    e.preventDefault();
+    if (!confirm) { alert("Please confirm you understand this action cannot be undone."); return; }
+    if (reason.trim().length < 8) { alert("Cancellation reason must be at least 8 characters."); return; }
+    setBusy(true); setError("");
+    try {
+      await leaveApi.cancel(request._id, reason.trim(), true);
+      onCancelled && onCancelled(request._id);
+    } catch (err) {
+      setError(err.message || "Failed to cancel leave.");
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="drawer-layer leave-modal-layer">
+      <button className="drawer-backdrop" onClick={onClose} />
+      <aside className="form-drawer leave-modal-card" style={{maxWidth:"560px"}}>
+        <div className="drawer-heading">
+          <div>
+            <p className="eyebrow">Cancel request</p>
+            <h2>Cancel Leave Request</h2>
+          </div>
+          <button onClick={onClose} aria-label="Close"><X size={20} /></button>
+        </div>
+        <form onSubmit={submit}>
+          <div className="leave-preview-card" style={{margin:0}}>
+            <div className="leave-preview-row"><span>Employee</span><strong>{request.employee ? `${request.employee.firstName} ${request.employee.lastName}` : "—"}</strong></div>
+            <div className="leave-preview-row"><span>Leave type</span><strong>{leaveTypeLabel} · {dayTypeLabel}</strong></div>
+            <div className="leave-preview-row"><span>Duration</span><strong>{formatDate(request.startDate)} – {formatDate(request.endDate)} · {request.workingDays || request.days} working day{(request.workingDays || request.days) === 1 ? "" : "s"}</strong></div>
+            {payments.paidDays > 0 && <div className="leave-preview-row"><span>Paid leave deducted</span><strong style={{color:"var(--color-emerald-700)"}}>{payments.paidDays} day{payments.paidDays === 1 ? "" : "s"}</strong></div>}
+            {payments.unpaidDays > 0 && <div className="leave-preview-row"><span>Unpaid days</span><strong>{payments.unpaidDays} day{payments.unpaidDays === 1 ? "" : "s"}</strong></div>}
+            {willRefund && (
+              <div className="leave-preview-row"><span>Balance refund</span><strong style={{color:"#15803d"}}>+{payments.paidDays} paid day{payments.paidDays === 1 ? "" : "s"} returned after cancellation</strong></div>
+            )}
+            <div className="leave-preview-row"><span>Original reason</span><strong style={{fontWeight:500}}>{request.reason || "—"}</strong></div>
+          </div>
+          <label>
+            Cancellation reason <span style={{color:"var(--color-muted)"}}>(8 – 500 characters)</span>
+            <textarea rows="4" required minLength={8} maxLength={500} value={reason} onChange={(e)=>setReason(e.target.value)} placeholder="E.g. Work priorities have changed, I will be in the office on these days." />
+          </label>
+          <label style={{display:"flex", alignItems:"flex-start", gap:"10px", cursor:"pointer"}}>
+            <input type="checkbox" checked={confirm} onChange={(e)=>setConfirm(e.target.checked)} style={{marginTop:"3px"}} />
+            <span style={{fontSize:"13px"}}>I understand this action cannot be undone. Any approved paid leave balance will be refunded automatically, and pending workflow approvals will be closed.</span>
+          </label>
+          {error && <StateMessage error>{error}</StateMessage>}
+          <div className="drawer-actions">
+            <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Back</button>
+            <button type="submit" className="danger-button" disabled={busy}>
+              <XCircle size={14} /> {busy ? "Cancelling leave…" : "Confirm cancel leave"}
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+function AmendLeaveModal({ request, onClose, onAmended, balance }) {
+  if (!request) return null;
+  const origStart = String(request.startDate || "").slice(0,10);
+  const origEnd = String(request.endDate || "").slice(0,10);
+  const origLeaveType = request.leaveType || "paid_leave";
+  const origDayType = request.dayType || "full_day";
+  const origEarlyMin = Number(request.earlyLeaveMinutes || 0);
+  const origPaidDays = Number(request.payments?.paidDays || 0);
+  const origStatus = request.status || "pending";
+  const canApplyPaidAmend = Boolean(balance?.plan?.canApplyPaidLeave) || origLeaveType === "paid_leave";
+  const [form, setForm] = useState({
+    startDate: origStart,
+    endDate: origEnd,
+    leaveType: origLeaveType,
+    dayType: origDayType !== "early_leave" && origDayType !== "half_day" ? "full_day" : origDayType,
+    earlyLeaveMinutes: origEarlyMin || 120,
+  });
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const newWD = jsComputeWorkingDays(form.startDate, form.endDate, form.dayType, form.earlyLeaveMinutes);
+  const origWD = Number(request.workingDays || request.days || 0);
+  const deltaWD = Number((newWD - origWD).toFixed(4));
+  const isShorteningSameType = deltaWD < 0 && form.leaveType === origLeaveType && form.dayType === origDayType;
+  const isExtendingOrChanged = deltaWD > 0 || form.leaveType !== origLeaveType || form.dayType !== origDayType;
+  const refundDays = isShorteningSameType && origStatus === "approved" ? Math.min(origPaidDays, Math.abs(deltaWD)) : 0;
+  const removedDates = deltaWD < 0 ? (() => {
+    const origSet = new Set(jsListDateRangeLabels(origStart, origEnd));
+    const newSet = new Set(jsListDateRangeLabels(form.startDate, form.endDate));
+    return jsListDateRangeLabels(origStart, origEnd).filter(d => !newSet.has(d));
+  })() : [];
+  const keptDates = jsListDateRangeLabels(form.startDate, form.endDate);
+  return (
+    <div className="drawer-layer leave-modal-layer">
+      <button className="drawer-backdrop" onClick={onClose} />
+      <aside className="form-drawer leave-modal-card" style={{maxWidth:"880px"}}>
+        <div className="drawer-heading">
+          <div>
+            <p className="eyebrow">Amend request · Partial cancel by date edit</p>
+            <h2>Edit dates or change leave type</h2>
+          </div>
+          <button onClick={onClose} aria-label="Close"><X size={20} /></button>
+        </div>
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          if (reason.trim().length < 8) { alert("Amendment reason must be at least 8 characters."); return; }
+          const s0 = new Date(form.startDate); const e0 = new Date(form.endDate);
+          if (e0 < s0) { alert("End date cannot be before start date."); return; }
+          if ((form.dayType === "half_day" || form.dayType === "early_leave") && form.startDate !== form.endDate) {
+            alert("Half day / early leave must be a single date."); return;
+          }
+          if (form.dayType === "early_leave" && (!Number(form.earlyLeaveMinutes) || Number(form.earlyLeaveMinutes) < 1 || Number(form.earlyLeaveMinutes) > 509)) {
+            alert("Please enter valid early leave minutes (1 – 509)."); return;
+          }
+          setBusy(true); setError("");
+          try {
+            const payload = {
+              newStartDate: form.startDate,
+              newEndDate: form.endDate,
+              newLeaveType: form.leaveType,
+              newDayType: form.dayType,
+              newEarlyLeaveMinutes: form.dayType === "early_leave" ? Number(form.earlyLeaveMinutes) : null,
+              newReason: reason.trim(),
+              reason: reason.trim(),
+            };
+            const updated = await leaveApi.amend(request._id, payload);
+            onAmended && onAmended(updated);
+          } catch (err) { setError(err.message || "Failed to amend leave."); }
+          finally { setBusy(false); }
+        }}>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:"18px"}}>
+            <div style={{padding:"14px", borderRadius:"12px", background:"var(--color-slate-50)", border:"1px solid var(--color-border)"}}>
+              <p style={{margin:"0 0 10px",fontWeight:600,fontSize:"13px",color:"var(--color-slate-600)"}}>Original · Read-only</p>
+              <div className="leave-preview-row"><span>Leave type</span><strong>{origLeaveType === "paid_leave" ? "Paid leave" : "Unpaid leave"}</strong></div>
+              <div className="leave-preview-row"><span>Duration</span><strong>{origDayType === "early_leave" ? `Early leave${origEarlyMin ? ` · ${Math.floor(origEarlyMin/60)}h ${String(origEarlyMin%60).padStart(2,'0')}m` : ""}` : origDayType === "half_day" ? "Half day" : "Full day"}</strong></div>
+              <div className="leave-preview-row"><span>From</span><strong>{formatDate(origStart)}</strong></div>
+              <div className="leave-preview-row"><span>To</span><strong>{formatDate(origEnd)}</strong></div>
+              <div className="leave-preview-row"><span>Working days</span><strong>{origWD} day{origWD === 1 ? "" : "s"}</strong></div>
+              <div className="leave-preview-row"><span>Paid deducted</span><strong>{origPaidDays} day{origPaidDays === 1 ? "" : "s"}</strong></div>
+              <div className="leave-preview-row"><span>Status</span><StatusBadge status={origStatus} /></div>
+            </div>
+            <div style={{padding:"14px", borderRadius:"12px", background:"linear-gradient(180deg,var(--color-emerald-50) 0%,var(--color-white) 100%)", border:"1px solid var(--color-emerald-200)"}}>
+              <p style={{margin:"0 0 10px",fontWeight:600,fontSize:"13px",color:"var(--color-emerald-700)"}}>New · Editable</p>
+              <label style={{display:"block", marginBottom:"10px"}}>
+                Leave type
+                <select value={form.leaveType} onChange={(e)=>setForm({...form, leaveType:e.target.value})}>
+                  <option value="paid_leave" disabled={!canApplyPaidAmend && form.leaveType !== "paid_leave"}>Paid leave ({balance?.paidAvailable ?? 0} available)</option>
+                  <option value="unpaid_leave">Unpaid leave</option>
+                </select>
+              </label>
+              <fieldset className="leave-day-type" style={{marginBottom:"10px"}}>
+                <legend>Duration</legend>
+                <div>
+                  <button type="button" className={form.dayType === "full_day" ? "active" : ""} onClick={()=>setForm({...form, dayType:"full_day"})}><strong>Full day</strong><span>1 working day</span></button>
+                  <button type="button" className={form.dayType === "half_day" ? "active" : ""} onClick={()=>setForm({...form, dayType:"half_day", endDate:form.startDate})}><strong>Half day</strong><span>0.5 day</span></button>
+                </div>
+              </fieldset>
+              <div className="form-row" style={{marginBottom:"10px"}}>
+                <label>From
+                  <input type="date" required value={form.startDate} onChange={(e)=>setForm({...form, startDate:e.target.value, ...((form.dayType === "half_day") && {endDate:e.target.value})})} />
+                </label>
+                <label>To
+                  <input type="date" required value={form.endDate} min={form.startDate || undefined} disabled={form.dayType === "half_day"} onChange={(e)=>setForm({...form, endDate:e.target.value})} />
+                </label>
+              </div>
+              <div className="leave-preview-row"><span>New working days</span><strong style={{color:"var(--color-emerald-700)"}}>{newWD} day{newWD === 1 ? "" : "s"}</strong></div>
+            </div>
+          </div>
+          <div style={{padding:"14px", borderRadius:"12px", border:`1px solid ${isExtendingOrChanged ? "var(--color-rose-200)" : "var(--color-emerald-200)"}`, background:isExtendingOrChanged ? "var(--color-rose-50)" : "var(--color-emerald-50)"}}>
+            <p style={{margin:"0 0 8px", fontWeight:600, fontSize:"13px", color:isExtendingOrChanged ? "var(--color-rose-700)" : "var(--color-emerald-700)"}}>
+              {isShorteningSameType ? "🟢 Shortening same leave type → Instantly self-approves. No re-review needed." :
+               isExtendingOrChanged ? "🔴 Extending or changing leave type → Will re-enter full Manager → HR → Super Admin approval chain." :
+               "No change detected yet."}
+            </p>
+            <div style={{display:"flex",gap:"14px",flexWrap:"wrap",fontSize:"13px"}}>
+              <span>Before: <strong>{origWD}d</strong></span>
+              <span>→ After: <strong>{newWD}d</strong></span>
+              <span>→ Delta: <strong style={{color:deltaWD < 0 ? "#047857" : deltaWD > 0 ? "#b91c1c" : "#475569"}}>{deltaWD < 0 ? deltaWD : (deltaWD > 0 ? `+${deltaWD}` : deltaWD)} day{Math.abs(deltaWD) === 1 ? "" : "s"}</strong></span>
+              {refundDays > 0 && <span style={{color:"#047857"}}>→ Refund: <strong>+{refundDays} paid day{refundDays === 1 ? "" : "s"}</strong></span>}
+            </div>
+            {removedDates.length > 0 && <p style={{margin:"8px 0 0", fontSize:"12px", color:"var(--color-slate-600)"}}>Days removed: <strong>{removedDates.join(", ")}</strong></p>}
+            {keptDates.length > 0 && keptDates.length <= 10 && <p style={{margin:"4px 0 0", fontSize:"12px", color:"var(--color-slate-600)"}}>Days kept: <strong>{keptDates.join(", ")}</strong></p>}
+          </div>
+          <label>
+            Amendment reason <span style={{color:"var(--color-muted)"}}>(8 – 500 characters). Why are you editing this leave?</span>
+            <textarea rows="3" required minLength={8} maxLength={500} value={reason} onChange={(e)=>setReason(e.target.value)} placeholder="E.g. Shortening by 2 days because my trip got rescheduled. I will be in the office on 23-24 Sep." />
+          </label>
+          {error && <StateMessage error>{error}</StateMessage>}
+          <div className="drawer-actions">
+            <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Back</button>
+            <button type="submit" className="primary-button" disabled={busy}>
+              <Pencil size={14} /> {busy ? "Submitting changes…" : "Save amended leave"}
+            </button>
+          </div>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
 export function LeavePage({ user, currentEmployeeId }) {
   const today = new Date();
   const elevatedCanReview = ["super_admin", "admin", "hr_admin", "manager"].includes(user?.role);
@@ -1934,6 +2201,10 @@ export function LeavePage({ user, currentEmployeeId }) {
   const [requests, setRequests] = useState([]),
     [balance, setBalance] = useState(null),
     [drawer, setDrawer] = useState(false),
+    [cancelOpen, setCancelOpen] = useState(false),
+    [cancelRequest, setCancelRequest] = useState(null),
+    [amendOpen, setAmendOpen] = useState(false),
+    [amendRequest, setAmendRequest] = useState(null),
     [scope, setScope] = useState(() => initialScope),
     [reportingManager, setReportingManager] = useState(() => (elevatedCanReview || dashboardMgrFlag ? true : null)),
     [loading, setLoading] = useState(true),
@@ -2010,6 +2281,61 @@ export function LeavePage({ user, currentEmployeeId }) {
       setError(e.message);
       throw e;
     }
+  }
+  async function refreshLeaves() {
+    try {
+      setLoading(true);
+      setError("");
+      const scopeNow = scope;
+      const rmNow = reportingManager;
+      let resolvedRequests = [];
+      const balancePromise = leaveApi.balance().catch(() => null);
+      if (scopeNow === "mine" && rmNow === null && !dashboardMgrFlag) {
+        const mine = await leaveApi.list("mine");
+        const mineItems = Array.isArray(mine?.items) ? mine.items : Array.isArray(mine) ? mine : [];
+        const metaMgr = Boolean(mine?.meta?.isReportingManager);
+        if (metaMgr) {
+          const team = await leaveApi.list("team");
+          const teamItems = Array.isArray(team?.items) ? team.items : Array.isArray(team) ? team : [];
+          const seen = new Set(); const combined = [];
+          for (const item of teamItems) { if (item && item._id && !seen.has(item._id)) { seen.add(item._id); combined.push(item); } }
+          for (const item of mineItems) { if (item && item._id && !seen.has(item._id)) { seen.add(item._id); combined.push(item); } }
+          resolvedRequests = combined;
+        } else { resolvedRequests = mineItems; }
+      } else {
+        resolvedRequests = await leaveApi.list(scopeNow)
+          .then(r => Array.isArray(r?.items) ? r.items : Array.isArray(r) ? r : [])
+          .catch(e => { setError(e.message); return []; });
+      }
+      const balanceResult = await balancePromise;
+      setRequests(resolvedRequests);
+      if (balanceResult) setBalance(balanceResult);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+  function handleOpenCancel(item) { setCancelRequest(item); setCancelOpen(true); }
+  function handleOpenAmend(item) { setAmendRequest(item); setAmendOpen(true); }
+  async function handleCancelled(id) {
+    setCancelOpen(false); setCancelRequest(null);
+    setRequests(value => value.map(item => item._id === id ? { ...item, status: "cancelled" } : item));
+    await refreshLeaves();
+    try {
+      const n = document.createElement("div");
+      n.textContent = "✅ Leave cancelled successfully. Balance refunded where applicable.";
+      n.style.cssText = "position:fixed;top:20px;right:20px;z-index:99999;background:#065f46;color:white;padding:12px 18px;border-radius:10px;box-shadow:0 10px 25px rgba(0,0,0,.12);font-size:14px;font-weight:600;";
+      document.body.appendChild(n); setTimeout(() => n.remove(), 3500);
+    } catch {}
+  }
+  async function handleAmended(updated) {
+    setAmendOpen(false); setAmendRequest(null);
+    if (updated && updated._id) setRequests(value => value.map(item => item._id === updated._id ? { ...item, ...updated } : item));
+    await refreshLeaves();
+    try {
+      const n = document.createElement("div");
+      n.textContent = "✅ Leave amended successfully.";
+      n.style.cssText = "position:fixed;top:20px;right:20px;z-index:99999;background:#065f46;color:white;padding:12px 18px;border-radius:10px;box-shadow:0 10px 25px rgba(0,0,0,.12);font-size:14px;font-weight:600;";
+      document.body.appendChild(n); setTimeout(() => n.remove(), 3500);
+    } catch {}
   }
   const monthlyLeaveReport = useMemo(() => {
     let fullDayCount = 0;
@@ -2197,12 +2523,29 @@ export function LeavePage({ user, currentEmployeeId }) {
                 item={item}
                 currentUser={{ ...user, employeeId: currentEmployeeId }}
                 onReview={review}
+                onCancelLeave={handleOpenCancel}
+                onAmendLeave={handleOpenAmend}
               />
             ))}
           </div>
         )}
       </section>
 
+      {cancelOpen && (
+        <CancelLeaveModal
+          request={cancelRequest}
+          onClose={() => { setCancelOpen(false); setCancelRequest(null); }}
+          onCancelled={handleCancelled}
+        />
+      )}
+      {amendOpen && (
+        <AmendLeaveModal
+          request={amendRequest}
+          balance={balance}
+          onClose={() => { setAmendOpen(false); setAmendRequest(null); }}
+          onAmended={handleAmended}
+        />
+      )}
       {drawer && (
         <LeaveDrawer
           balance={balance}

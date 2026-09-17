@@ -182,6 +182,16 @@ export const leaveApi = {
       method: "PATCH",
       body: JSON.stringify({ reviewNote, ...extra }),
     }),
+  cancel: (id, reason = "", confirm = true) =>
+    api(`/leaves/${id}/cancel`, {
+      method: "PATCH",
+      body: JSON.stringify({ reason, confirm }),
+    }),
+  amend: (id, payload) =>
+    api(`/leaves/${id}/amend`, {
+      method: "PATCH",
+      body: JSON.stringify({ ...(payload || {}) }),
+    }),
 };
 export const adminApi = { dashboard: () => api("/dashboard/admin") };
 export const systemApi = { biometricHealth: () => api("/biometric-health") };
