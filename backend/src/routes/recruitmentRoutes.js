@@ -169,6 +169,103 @@ router.get('/job-openings', authorize(...hrRoles), asyncHandler(async (_req,res)
 router.post('/job-openings', authorize(...hrRoles), asyncHandler(async (req,res)=>res.status(201).json({success:true,data:await JobOpening.create(req.body)})))
 router.put('/job-openings/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{const item=await JobOpening.findByIdAndUpdate(req.params.id,req.body,{new:true,runValidators:true});if(!item)throw new HttpError(404,'Job opening not found');res.json({success:true,data:item})}))
 router.delete('/job-openings/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{const item=await JobOpening.findByIdAndDelete(req.params.id);if(!item)throw new HttpError(404,'Job opening not found');res.json({success:true,data:{message:'Job opening deleted successfully'}})}))
+
+// --- Open Positions alias (matching frontend Recruitment.jsx naming) ---
+// Translates frontend form field names ↔ JobOpening model fields.
+// Frontend sends: position, workLocation, minCTC/maxCTC, noticePeriodDays,
+//                 mandatorySkills/goodToHaveSkills as plain string[].
+// Model expects:   title,  location,   minAnnualCTC/maxAnnualCTC,
+//                  acceptableNoticeDays, mandatorySkills as {name,weight}[].
+function frontendToJobOpening(body) {
+  const mandatory = Array.isArray(body.mandatorySkills)
+    ? body.mandatorySkills.map((s) => typeof s === 'string' ? { name: s, weight: 10 } : { name: String(s?.name || ''), weight: Number(s?.weight || 10) })
+    : [];
+  const good = Array.isArray(body.goodToHaveSkills) ? body.goodToHaveSkills.map(String) : [];
+  const minExp = Number(body.minExperience);
+  const maxExp = Number(body.maxExperience);
+  const openings = Number(body.openings);
+  return {
+    code: body.code,
+    title: String(body.position || body.title || '').trim() || undefined,
+    department: body.department,
+    designation: body.designation,
+    employmentType: body.employmentType,
+    location: body.workLocation || body.location,
+    hiringManager: body.hiringManager,
+    openings: Number.isFinite(openings) && openings > 0 ? openings : 1,
+    status: body.status,
+    minExperience: Number.isFinite(minExp) ? minExp : undefined,
+    maxExperience: Number.isFinite(maxExp) ? maxExp : undefined,
+    minAnnualCTC: Number.isFinite(Number(body.minCTC)) ? Number(body.minCTC) : (Number.isFinite(Number(body.minAnnualCTC)) ? Number(body.minAnnualCTC) : undefined),
+    maxAnnualCTC: Number.isFinite(Number(body.maxCTC)) ? Number(body.maxCTC) : (Number.isFinite(Number(body.maxAnnualCTC)) ? Number(body.maxAnnualCTC) : undefined),
+    acceptableNoticeDays: Number.isFinite(Number(body.noticePeriodDays)) ? Number(body.noticePeriodDays) : (Number.isFinite(Number(body.acceptableNoticeDays)) ? Number(body.acceptableNoticeDays) : undefined),
+    mandatorySkills: mandatory,
+    goodToHaveSkills: good,
+    description: body.description,
+    qualificationRequired: body.qualificationRequired,
+  };
+}
+function jobOpeningToFrontend(doc) {
+  if (!doc) return doc;
+  const obj = (doc.toObject ? doc.toObject() : JSON.parse(JSON.stringify(doc)));
+  const mandatory = Array.isArray(obj.mandatorySkills)
+    ? obj.mandatorySkills.map((s) => (s && typeof s === 'object' ? (s.name || '') : String(s || ''))).filter(Boolean)
+    : [];
+  return {
+    ...obj,
+    id: obj._id || obj.id,
+    position: obj.position || obj.title,
+    workLocation: obj.workLocation || obj.location,
+    minCTC: obj.minCTC ?? obj.minAnnualCTC,
+    maxCTC: obj.maxCTC ?? obj.maxAnnualCTC,
+    noticePeriodDays: obj.noticePeriodDays ?? obj.acceptableNoticeDays,
+    mandatorySkills: mandatory,
+    goodToHaveSkills: Array.isArray(obj.goodToHaveSkills) ? obj.goodToHaveSkills : [],
+  };
+}
+const openPositionInput = z.object({
+  position: z.string().min(1, 'Position title is required'),
+  department: z.string().min(1, 'Department is required'),
+  hiringManager: optionalString.or(z.string().min(1)),
+  employmentType: z.string().optional(),
+  workLocation: optionalString,
+  status: z.enum(['Open','On Hold','Closed','Filled']).optional(),
+  minExperience: z.coerce.number().nonnegative(),
+  maxExperience: z.coerce.number().nonnegative(),
+  minCTC: z.coerce.number().nonnegative(),
+  maxCTC: z.coerce.number().nonnegative(),
+  noticePeriodDays: z.coerce.number().nonnegative().optional(),
+  mandatorySkills: z.array(z.string()).optional().default([]),
+  goodToHaveSkills: z.array(z.string()).optional().default([]),
+  description: optionalString,
+  openings: z.coerce.number().int().positive().optional().default(1),
+}).refine((v) => v.maxExperience >= v.minExperience, { message: 'Max experience must be >= min experience', path: ['maxExperience'] })
+  .refine((v) => v.maxCTC >= v.minCTC, { message: 'Max CTC must be >= min CTC', path: ['maxCTC'] });
+
+router.get('/open-positions', authorize(...hrRoles), asyncHandler(async (_req,res)=>{
+  const docs = await JobOpening.find().sort({ createdAt: -1 });
+  res.json({ success: true, data: docs.map(jobOpeningToFrontend) });
+}));
+router.post('/open-positions', authorize(...hrRoles), asyncHandler(async (req,res)=>{
+  const input = openPositionInput.parse(req.body || {});
+  const created = await JobOpening.create(frontendToJobOpening(input));
+  res.status(201).json({ success: true, data: jobOpeningToFrontend(created) });
+}));
+router.put('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{
+  const parsed = openPositionInput.partial().safeParse(req.body || {});
+  if (!parsed.success) throw new HttpError(422, parsed.error.issues[0]?.message || 'Invalid input', { details: parsed.error.issues });
+  const patch = frontendToJobOpening(parsed.data);
+  // Remove undefined fields before $set (keep mongoose update clean)
+  for (const key of Object.keys(patch)) if (patch[key] === undefined) delete patch[key];
+  const updated = await JobOpening.findByIdAndUpdate(req.params.id, patch, { new:true, runValidators:true });
+  if (!updated) throw new HttpError(404, 'Open position not found');
+  res.json({ success: true, data: jobOpeningToFrontend(updated) });
+}));
+router.delete('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{
+  const removed = await JobOpening.findByIdAndDelete(req.params.id);
+  if (!removed) throw new HttpError(404, 'Open position not found');
+  res.json({ success: true, data: { message: 'Open position deleted successfully' } });
+}))
 router.get('/reports/summary', authorize('super_admin'), asyncHandler(async (_req,res)=>{const [sources,departments,stages]=await Promise.all([Candidate.aggregate([{$group:{_id:'$source',count:{$sum:1}}}]),Candidate.aggregate([{$group:{_id:'$department',count:{$sum:1}}}]),Candidate.aggregate([{$group:{_id:'$currentStage',count:{$sum:1}}}])]);res.json({success:true,data:{sources,departments,stages}})}))
 router.get('/settings', authorize('super_admin'), asyncHandler(async (_req,res)=>res.json({success:true,data:await RecruitmentSetting.find()})))
 router.put('/settings/:key', authorize('super_admin'), asyncHandler(async (req,res)=>res.json({success:true,data:await RecruitmentSetting.findOneAndUpdate({key:req.params.key},{value:req.body.value,updatedBy:req.user._id},{new:true,upsert:true})})))
