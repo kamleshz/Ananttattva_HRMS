@@ -176,10 +176,78 @@ router.delete('/job-openings/:id', authorize(...hrRoles), asyncHandler(async (re
 //                 mandatorySkills/goodToHaveSkills as plain string[].
 // Model expects:   title,  location,   minAnnualCTC/maxAnnualCTC,
 //                  acceptableNoticeDays, mandatorySkills as {name,weight}[].
+const MONGODB_OID_RE = /^[0-9a-fA-F]{24}$/;
+function looksLikeObjectId(s) {
+  if (s == null) return false;
+  const v = String(s).trim();
+  if (v.length !== 24) return false;
+  return MONGODB_OID_RE.test(v);
+}
+function extractObjectIdRefOrUndef(raw) {
+  // For mongoose ref fields (e.g. hiringManager: User ObjectId).
+  // Return undefined unless we got a clean valid 24-hex ObjectId,
+  // so mongoose never tries "Cast to ObjectId failed for value..." 422.
+  if (raw == null) return undefined;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (looksLikeObjectId(t)) return t;
+    return undefined;
+  }
+  if (typeof raw === 'object') {
+    const candidates = [raw._id, raw.id, raw.value, raw.userId, raw.user];
+    for (const cand of candidates) {
+      if (cand == null) continue;
+      if (typeof cand === 'object') {
+        if (cand._id && looksLikeObjectId(cand._id)) return String(cand._id);
+        if (cand.id && looksLikeObjectId(cand.id)) return String(cand.id);
+        continue;
+      }
+      if (looksLikeObjectId(cand)) return String(cand).trim();
+    }
+  }
+  return undefined;
+}
+function extractDisplayStringOrUndef(raw) {
+  // For mongoose STRING fields (department, location — NOT refs).
+  // Priority: human display name > any ObjectId hex / value.
+  if (raw == null) return undefined;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t.length > 0 ? t : undefined;
+  }
+  if (typeof raw === 'object') {
+    const displayCandidates = [
+      raw.departmentName, raw.department_name,
+      raw.locationName, raw.location_name,
+      raw.displayName, raw.label, raw.name,
+      raw.text, raw.title, raw.value,
+      raw._id, raw.id,
+    ];
+    for (const cand of displayCandidates) {
+      if (cand == null) continue;
+      const t = String(cand).trim();
+      if (t.length > 0) return t;
+    }
+  }
+  const t = String(raw).trim();
+  return t.length > 0 ? t : undefined;
+}
+function mapStatusToEnum(statusRaw) {
+  if (statusRaw == null) return undefined;
+  const s = String(statusRaw).trim();
+  if (!s) return undefined;
+  const legal = ['Open', 'On Hold', 'Closed', 'Filled'];
+  if (legal.includes(s)) return s;
+  const low = s.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const allowed of legal) {
+    if (allowed.toLowerCase() === low) return allowed;
+  }
+  return s; // if unsupported, mongoose will still accept because default fallback set below
+}
 function frontendToJobOpening(body) {
   const mandatory = Array.isArray(body?.mandatorySkills)
     ? body.mandatorySkills.map((s) => (s && typeof s === 'object')
-        ? { name: String(s?.name || '').trim(), weight: Number(s?.weight || 10) }
+        ? { name: String(s?.name || '').trim(), weight: Number.isFinite(Number(s?.weight)) ? Number(s.weight) : 10 }
         : { name: String(s || '').trim(), weight: 10 })
     .filter((o) => Boolean(o.name))
     : [];
@@ -189,36 +257,15 @@ function frontendToJobOpening(body) {
   const minExp = Number(body?.minExperience);
   const maxExp = Number(body?.maxExperience);
   const openings = Number(body?.openings);
-  const hmRaw = body?.hiringManager;
-  let hiringManager = undefined;
-  if (hmRaw && typeof hmRaw === 'object' && (hmRaw._id || hmRaw.id)) hiringManager = String(hmRaw._id || hmRaw.id);
-  else if (hmRaw && typeof hmRaw === 'object' && hmRaw.value) hiringManager = String(hmRaw.value);
-  else if (hmRaw != null && String(hmRaw).trim() && String(hmRaw).trim() !== 'null' && String(hmRaw).trim() !== 'undefined') hiringManager = String(hmRaw).trim();
-  const deptRaw = body?.department;
-  let department = undefined;
-  if (deptRaw && typeof deptRaw === 'object' && (deptRaw._id || deptRaw.id)) department = String(deptRaw._id || deptRaw.id);
-  else if (deptRaw && typeof deptRaw === 'object' && deptRaw.name) department = String(deptRaw.name).trim();
-  else if (deptRaw && typeof deptRaw === 'object' && deptRaw.value) department = String(deptRaw.value);
-  else if (deptRaw != null && String(deptRaw).trim()) department = String(deptRaw).trim();
-  const locRaw = body?.workLocation || body?.location;
-  let location = undefined;
-  if (locRaw && typeof locRaw === 'object' && (locRaw._id || locRaw.id)) location = String(locRaw._id || locRaw.id);
-  else if (locRaw && typeof locRaw === 'object' && locRaw.name) location = String(locRaw.name).trim();
-  else if (locRaw && typeof locRaw === 'object' && locRaw.value) location = String(locRaw.value);
-  else if (locRaw != null && String(locRaw).trim()) location = String(locRaw).trim();
-  const statusRaw = body?.status;
-  const statusAllowed = new Set(['Open','On Hold','Closed','Filled','open','on_hold','closed','filled']);
-  let status = 'Open';
-  if (statusRaw != null && statusAllowed.has(String(statusRaw))) status = String(statusRaw);
-  else if (statusRaw != null && String(statusRaw).trim()) status = String(statusRaw);
-  return {
-    code: body?.code || undefined,
-    title: String(body?.position || body?.title || '').trim() || undefined,
-    department,
-    designation: body?.designation || undefined,
-    employmentType: body?.employmentType || undefined,
-    location,
-    hiringManager,
+  const status = mapStatusToEnum(body?.status) || 'Open';
+  const payload = {
+    code: extractDisplayStringOrUndef(body?.code),
+    title: extractDisplayStringOrUndef(body?.position || body?.title),
+    department: extractDisplayStringOrUndef(body?.department),
+    designation: extractDisplayStringOrUndef(body?.designation),
+    employmentType: extractDisplayStringOrUndef(body?.employmentType),
+    location: extractDisplayStringOrUndef(body?.workLocation || body?.location),
+    hiringManager: extractObjectIdRefOrUndef(body?.hiringManager),
     openings: Number.isFinite(openings) && openings > 0 ? Math.floor(openings) : 1,
     status,
     minExperience: Number.isFinite(minExp) && minExp >= 0 ? minExp : undefined,
@@ -234,8 +281,34 @@ function frontendToJobOpening(body) {
       : ((Number.isFinite(Number(body?.acceptableNoticeDays)) && Number(body?.acceptableNoticeDays) >= 0) ? Number(body.acceptableNoticeDays) : undefined),
     mandatorySkills: mandatory,
     goodToHaveSkills: good,
-    description: body?.description || undefined,
-    qualificationRequired: body?.qualificationRequired || undefined,
+    description: extractDisplayStringOrUndef(body?.description || body?.jobDescription),
+    qualificationRequired: extractDisplayStringOrUndef(body?.qualificationRequired),
+  };
+  for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
+  return payload;
+}
+function getMongooseErrorDetails(err) {
+  if (err && err.name === 'ValidationError' && err.errors) {
+    const details = Object.keys(err.errors).map((path) => ({
+      path: [path],
+      message: err.errors[path]?.message || `Invalid value for ${path}`,
+    }));
+    return {
+      message: details[0]?.message || err.message || 'Invalid form input',
+      details,
+    };
+  }
+  if (err && err.name === 'CastError') {
+    const path = err.path || 'unknown';
+    const kind = err.kind || 'ObjectId';
+    return {
+      message: `Invalid value for "${path}" (expected ${kind}). Please select a valid option from the dropdown.`,
+      details: [{ path: [path], message: `Cast to ${kind} failed at ${path}` }],
+    };
+  }
+  return {
+    message: (err && err.message) || 'Invalid form input',
+    details: err && err.details ? err.details : undefined,
   };
 }
 function jobOpeningToFrontend(doc) {
@@ -263,11 +336,13 @@ router.get('/open-positions', authorize(...hrRoles), asyncHandler(async (_req,re
 router.post('/open-positions', authorize(...hrRoles), asyncHandler(async (req,res)=>{
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
   const payload = frontendToJobOpening(body);
-  if (!payload.title) throw new HttpError(422, 'Position title is required');
-  if (!payload.department) throw new HttpError(422, 'Department is required');
-  if (!payload.hiringManager) throw new HttpError(422, 'Hiring manager is required');
-  const created = await JobOpening.create(payload);
-  res.status(201).json({ success: true, data: jobOpeningToFrontend(created) });
+  try {
+    const created = await JobOpening.create(payload);
+    res.status(201).json({ success: true, data: jobOpeningToFrontend(created) });
+  } catch (err) {
+    const fmt = getMongooseErrorDetails(err);
+    throw new HttpError(422, fmt.message, fmt.details ? { details: fmt.details } : undefined);
+  }
 }));
 router.put('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{
   const body = (req.body && typeof req.body === 'object') ? req.body : {};
@@ -278,9 +353,14 @@ router.put('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req
     if (!unchanged) throw new HttpError(404, 'Open position not found');
     return res.json({ success: true, data: jobOpeningToFrontend(unchanged) });
   }
-  const updated = await JobOpening.findByIdAndUpdate(req.params.id, patch, { new:true, runValidators:true });
-  if (!updated) throw new HttpError(404, 'Open position not found');
-  res.json({ success: true, data: jobOpeningToFrontend(updated) });
+  try {
+    const updated = await JobOpening.findByIdAndUpdate(req.params.id, patch, { new:true, runValidators:true, context:'query' });
+    if (!updated) throw new HttpError(404, 'Open position not found');
+    res.json({ success: true, data: jobOpeningToFrontend(updated) });
+  } catch (err) {
+    const fmt = getMongooseErrorDetails(err);
+    throw new HttpError(422, fmt.message, fmt.details ? { details: fmt.details } : undefined);
+  }
 }));
 router.delete('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{
   const removed = await JobOpening.findByIdAndDelete(req.params.id);
