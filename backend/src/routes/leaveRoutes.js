@@ -252,10 +252,10 @@ const FULL_DAY_MINUTES_LEAVE = 510
 const createSchema = z.object({
   leaveType: z.enum(['paid_leave', 'unpaid_leave', 'casual', 'sick', 'earned', 'unpaid']),
   dayType: z.enum(['full_day', 'half_day', 'early_leave']).default('full_day'),
-  startDate: z.string().min(8).or(z.coerce.date()),
-  endDate: z.string().min(8).or(z.coerce.date()),
-  reason: z.string().trim().min(5).max(500),
-  earlyLeaveMinutes: z.number().int().min(1).max(FULL_DAY_MINUTES_LEAVE - 1).optional(),
+  startDate: z.string().min(8).or(z.coerce.date()).transform(v => (v instanceof Date ? v.toISOString().slice(0,10) : String(v).slice(0,10))),
+  endDate: z.string().min(8).or(z.coerce.date()).transform(v => (v instanceof Date ? v.toISOString().slice(0,10) : String(v).slice(0,10))),
+  reason: z.preprocess((v) => String(v ?? '').trim(), z.string().min(5, 'Reason must be at least 5 characters').max(500)),
+  earlyLeaveMinutes: z.coerce.number().int().min(1).max(FULL_DAY_MINUTES_LEAVE - 1).optional().nullable().transform(v => (v == null || Number.isNaN(Number(v)) ? undefined : Math.max(1, Math.min(FULL_DAY_MINUTES_LEAVE - 1, Math.floor(Number(v)))))),
 }).refine(value => new Date(value.endDate) >= new Date(value.startDate), { message: 'End date must be on or after start date', path: ['endDate'] })
   .refine(value => value.dayType !== 'half_day' || new Date(value.startDate).toDateString() === new Date(value.endDate).toDateString(), { message: 'Half-day leave must start and end on the same date', path: ['endDate'] })
   .refine(value => value.dayType !== 'early_leave' || new Date(value.startDate).toDateString() === new Date(value.endDate).toDateString(), { message: 'Early leave must start and end on the same date', path: ['endDate'] })

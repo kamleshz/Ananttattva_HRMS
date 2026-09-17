@@ -1560,13 +1560,28 @@ function LeaveDrawer({ close, saved, balance }) {
     return { mode: unpaid === workingDays ? "unpaid" : paid === workingDays ? "paid" : "partially_paid", paid, unpaid };
   }, [workingDays, form.leaveType, balance, isEarlyLeave]);
   async function submit(event) {
-    event.preventDefault();
+    if (event && typeof event.preventDefault === "function") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (busy) return;
     if (!isEarlyLeave && form.leaveType === "paid_leave" && !canApplyPaid) {
       setError("Paid leaves are locked until your probation is confirmed. Please select unpaid leave.");
       return;
     }
-    if (isEarlyLeave && (!Number(form.earlyLeaveMinutes) || Number(form.earlyLeaveMinutes) < 1 || Number(form.earlyLeaveMinutes) > 509)) {
-      setError("Please enter valid minutes for early leave (1 – 509).");
+    if (isEarlyLeave) {
+      const minutes = Number(form.earlyLeaveMinutes);
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 509) {
+        setError("Please enter valid minutes for early leave (1 – 509).");
+        return;
+      }
+    }
+    if (!form.startDate || !form.endDate) {
+      setError("Please select start and end dates.");
+      return;
+    }
+    if (!form.reason || form.reason.trim().length < 5) {
+      setError("Please enter a reason (at least 5 characters).");
       return;
     }
     if (isLongLeave && !longLeaveNoticeOk) {
@@ -1576,13 +1591,36 @@ function LeaveDrawer({ close, saved, balance }) {
     setBusy(true);
     setError("");
     try {
+      const days = Number(form.earlyLeaveMinutes);
+      const finalEarly = isEarlyLeave && Number.isFinite(days) ? Math.max(1, Math.min(509, Math.floor(days))) : null;
       const payload = isEarlyLeave
-        ? { ...form, leaveType: "unpaid_leave", earlyLeaveMinutes: Number(form.earlyLeaveMinutes) }
-        : form;
+        ? {
+            ...form,
+            leaveType: "unpaid_leave",
+            earlyLeaveMinutes: finalEarly,
+            startDate: String(form.startDate).slice(0, 10),
+            endDate: String(form.endDate || form.startDate).slice(0, 10),
+            reason: String(form.reason || "").trim(),
+          }
+        : {
+            ...form,
+            startDate: String(form.startDate).slice(0, 10),
+            endDate: String(form.endDate).slice(0, 10),
+            leaveType: form.leaveType,
+            dayType: form.dayType,
+            reason: String(form.reason || "").trim(),
+          };
       saved(await leaveApi.create(payload));
       close();
     } catch (e) {
-      setError(e.message);
+      const msg = (e && (e.details?.[0]?.message || e.message || String(e))) || "Could not submit leave request.";
+      if (msg === "Authentication required" || (e && e.status === 401)) {
+        setError("Your session is stale. Please sign out and sign back in, then try again.");
+      } else if (/authentication/i.test(msg) || /unauthorized|401/i.test(String(e?.status || ""))) {
+        setError("Permission or authentication issue — please sign in again and verify your role allows leave submissions.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -1596,7 +1634,7 @@ function LeaveDrawer({ close, saved, balance }) {
             <p className="eyebrow">New request</p>
             <h2>Apply for leave</h2>
           </div>
-          <button onClick={close} aria-label="Close"><X size={20} /></button>
+          <button type="button" onClick={close} aria-label="Close"><X size={20} /></button>
         </div>
 
         {!canApplyPaid && (
@@ -1609,7 +1647,7 @@ function LeaveDrawer({ close, saved, balance }) {
           </div>
         )}
 
-        <form onSubmit={submit}>
+        <form onSubmit={submit} noValidate action="javascript:void(0)" method="post" autoComplete="off">
           <label>
             Leave type
             <select
@@ -1746,8 +1784,15 @@ function LeaveDrawer({ close, saved, balance }) {
           </label>
           {error && <StateMessage error>{error}</StateMessage>}
           <div className="drawer-actions">
-            <button type="button" className="secondary-button" onClick={close}>Cancel</button>
-            <button className="primary-button" disabled={busy}>
+            <button type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={busy}
+              onClick={() => {
+                if (typeof submit === "function") setTimeout(() => submit(null), 0);
+              }}
+            >
               {busy ? "Submitting…" : "Submit request"}
             </button>
           </div>

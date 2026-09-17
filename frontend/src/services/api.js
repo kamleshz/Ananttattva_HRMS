@@ -16,15 +16,29 @@ export const session = {
 };
 
 export async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...options.headers };
+  const headers = { "Content-Type": "application/json", Accept: "application/json", ...options.headers };
   const token = session.getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(apiUrl(path), { ...options, headers });
+  let response;
+  try {
+    response = await fetch(apiUrl(path), {
+      credentials: "omit",
+      redirect: "error",
+      mode: "cors",
+      ...options,
+      headers,
+    });
+  } catch (cause) {
+    const err = new Error("Could not reach the server. Please check your internet connection.");
+    err.status = 0;
+    err.responseStatus = 0;
+    err.cause = cause;
+    throw err;
+  }
   const payload = await response
     .json()
-    .catch(() => ({ message: "Invalid server response" }));
+    .catch(() => ({ message: `Invalid server response (status ${response.status})` }));
   if (!response.ok) {
-    if (response.status === 401) session.clear();
     function stringifyMessage(m) {
       if (m == null) return "";
       if (typeof m === "string") return m;
@@ -35,17 +49,25 @@ export async function api(path, options = {}) {
       }
       return String(m);
     }
+    if (response.status === 401) {
+      session.clear();
+      if (typeof window !== "undefined" && window.location && !String(window.location.pathname || "").startsWith("/login")) {
+        try { window.location.href = "/login?stale=1"; } catch (_) {}
+      }
+    }
     const issue = Array.isArray(payload.details) ? payload.details[0] : null;
     const field = issue?.path?.length ? `${issue.path.join(".")}: ` : "";
     const issueText = issue?.message ? stringifyMessage(issue.message) : "";
     const payloadText = stringifyMessage(payload.message);
-    const combinedText = issue ? `${field}${issueText || payloadText}` : (payloadText || "Request failed");
+    const combinedText = issue ? `${field}${issueText || payloadText}` : (payloadText || `Request failed with status ${response.status}`);
     const error = new Error(combinedText);
     if (issue?.code) error.code = issue.code;
+    error.status = response.status;
     error.responseStatus = response.status;
+    error.details = Array.isArray(payload.details) ? payload.details : (payload.details ? [payload.details] : undefined);
     throw error;
   }
-  return payload.data;
+  return payload.data !== undefined ? payload.data : payload;
 }
 
 async function biometricRequest(path, options = {}) {
