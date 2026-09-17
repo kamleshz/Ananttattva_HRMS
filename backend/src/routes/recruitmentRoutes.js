@@ -177,32 +177,65 @@ router.delete('/job-openings/:id', authorize(...hrRoles), asyncHandler(async (re
 // Model expects:   title,  location,   minAnnualCTC/maxAnnualCTC,
 //                  acceptableNoticeDays, mandatorySkills as {name,weight}[].
 function frontendToJobOpening(body) {
-  const mandatory = Array.isArray(body.mandatorySkills)
-    ? body.mandatorySkills.map((s) => typeof s === 'string' ? { name: s, weight: 10 } : { name: String(s?.name || ''), weight: Number(s?.weight || 10) })
+  const mandatory = Array.isArray(body?.mandatorySkills)
+    ? body.mandatorySkills.map((s) => (s && typeof s === 'object')
+        ? { name: String(s?.name || '').trim(), weight: Number(s?.weight || 10) }
+        : { name: String(s || '').trim(), weight: 10 })
+    .filter((o) => Boolean(o.name))
     : [];
-  const good = Array.isArray(body.goodToHaveSkills) ? body.goodToHaveSkills.map(String) : [];
-  const minExp = Number(body.minExperience);
-  const maxExp = Number(body.maxExperience);
-  const openings = Number(body.openings);
+  const good = Array.isArray(body?.goodToHaveSkills)
+    ? body.goodToHaveSkills.map((s) => String(s || '').trim()).filter(Boolean)
+    : [];
+  const minExp = Number(body?.minExperience);
+  const maxExp = Number(body?.maxExperience);
+  const openings = Number(body?.openings);
+  const hmRaw = body?.hiringManager;
+  let hiringManager = undefined;
+  if (hmRaw && typeof hmRaw === 'object' && (hmRaw._id || hmRaw.id)) hiringManager = String(hmRaw._id || hmRaw.id);
+  else if (hmRaw && typeof hmRaw === 'object' && hmRaw.value) hiringManager = String(hmRaw.value);
+  else if (hmRaw != null && String(hmRaw).trim() && String(hmRaw).trim() !== 'null' && String(hmRaw).trim() !== 'undefined') hiringManager = String(hmRaw).trim();
+  const deptRaw = body?.department;
+  let department = undefined;
+  if (deptRaw && typeof deptRaw === 'object' && (deptRaw._id || deptRaw.id)) department = String(deptRaw._id || deptRaw.id);
+  else if (deptRaw && typeof deptRaw === 'object' && deptRaw.name) department = String(deptRaw.name).trim();
+  else if (deptRaw && typeof deptRaw === 'object' && deptRaw.value) department = String(deptRaw.value);
+  else if (deptRaw != null && String(deptRaw).trim()) department = String(deptRaw).trim();
+  const locRaw = body?.workLocation || body?.location;
+  let location = undefined;
+  if (locRaw && typeof locRaw === 'object' && (locRaw._id || locRaw.id)) location = String(locRaw._id || locRaw.id);
+  else if (locRaw && typeof locRaw === 'object' && locRaw.name) location = String(locRaw.name).trim();
+  else if (locRaw && typeof locRaw === 'object' && locRaw.value) location = String(locRaw.value);
+  else if (locRaw != null && String(locRaw).trim()) location = String(locRaw).trim();
+  const statusRaw = body?.status;
+  const statusAllowed = new Set(['Open','On Hold','Closed','Filled','open','on_hold','closed','filled']);
+  let status = 'Open';
+  if (statusRaw != null && statusAllowed.has(String(statusRaw))) status = String(statusRaw);
+  else if (statusRaw != null && String(statusRaw).trim()) status = String(statusRaw);
   return {
-    code: body.code,
-    title: String(body.position || body.title || '').trim() || undefined,
-    department: body.department,
-    designation: body.designation,
-    employmentType: body.employmentType,
-    location: body.workLocation || body.location,
-    hiringManager: body.hiringManager,
-    openings: Number.isFinite(openings) && openings > 0 ? openings : 1,
-    status: body.status,
-    minExperience: Number.isFinite(minExp) ? minExp : undefined,
-    maxExperience: Number.isFinite(maxExp) ? maxExp : undefined,
-    minAnnualCTC: Number.isFinite(Number(body.minCTC)) ? Number(body.minCTC) : (Number.isFinite(Number(body.minAnnualCTC)) ? Number(body.minAnnualCTC) : undefined),
-    maxAnnualCTC: Number.isFinite(Number(body.maxCTC)) ? Number(body.maxCTC) : (Number.isFinite(Number(body.maxAnnualCTC)) ? Number(body.maxAnnualCTC) : undefined),
-    acceptableNoticeDays: Number.isFinite(Number(body.noticePeriodDays)) ? Number(body.noticePeriodDays) : (Number.isFinite(Number(body.acceptableNoticeDays)) ? Number(body.acceptableNoticeDays) : undefined),
+    code: body?.code || undefined,
+    title: String(body?.position || body?.title || '').trim() || undefined,
+    department,
+    designation: body?.designation || undefined,
+    employmentType: body?.employmentType || undefined,
+    location,
+    hiringManager,
+    openings: Number.isFinite(openings) && openings > 0 ? Math.floor(openings) : 1,
+    status,
+    minExperience: Number.isFinite(minExp) && minExp >= 0 ? minExp : undefined,
+    maxExperience: Number.isFinite(maxExp) && maxExp >= 0 ? maxExp : undefined,
+    minAnnualCTC: (Number.isFinite(Number(body?.minCTC)) && Number(body?.minCTC) >= 0)
+      ? Number(body.minCTC)
+      : ((Number.isFinite(Number(body?.minAnnualCTC)) && Number(body?.minAnnualCTC) >= 0) ? Number(body.minAnnualCTC) : undefined),
+    maxAnnualCTC: (Number.isFinite(Number(body?.maxCTC)) && Number(body?.maxCTC) >= 0)
+      ? Number(body.maxCTC)
+      : ((Number.isFinite(Number(body?.maxAnnualCTC)) && Number(body?.maxAnnualCTC) >= 0) ? Number(body.maxAnnualCTC) : undefined),
+    acceptableNoticeDays: (Number.isFinite(Number(body?.noticePeriodDays)) && Number(body?.noticePeriodDays) >= 0)
+      ? Number(body.noticePeriodDays)
+      : ((Number.isFinite(Number(body?.acceptableNoticeDays)) && Number(body?.acceptableNoticeDays) >= 0) ? Number(body.acceptableNoticeDays) : undefined),
     mandatorySkills: mandatory,
     goodToHaveSkills: good,
-    description: body.description,
-    qualificationRequired: body.qualificationRequired,
+    description: body?.description || undefined,
+    qualificationRequired: body?.qualificationRequired || undefined,
   };
 }
 function jobOpeningToFrontend(doc) {
@@ -224,39 +257,84 @@ function jobOpeningToFrontend(doc) {
   };
 }
 const openPositionInput = z.object({
-  position: z.string().min(1, 'Position title is required'),
-  department: z.string().min(1, 'Department is required'),
-  hiringManager: optionalString.or(z.string().min(1)),
-  employmentType: z.string().optional(),
-  workLocation: optionalString,
-  status: z.enum(['Open','On Hold','Closed','Filled']).optional(),
-  minExperience: z.coerce.number().nonnegative(),
-  maxExperience: z.coerce.number().nonnegative(),
-  minCTC: z.coerce.number().nonnegative(),
-  maxCTC: z.coerce.number().nonnegative(),
-  noticePeriodDays: z.coerce.number().nonnegative().optional(),
-  mandatorySkills: z.array(z.string()).optional().default([]),
-  goodToHaveSkills: z.array(z.string()).optional().default([]),
-  description: optionalString,
-  openings: z.coerce.number().int().positive().optional().default(1),
-}).refine((v) => v.maxExperience >= v.minExperience, { message: 'Max experience must be >= min experience', path: ['maxExperience'] })
-  .refine((v) => v.maxCTC >= v.minCTC, { message: 'Max CTC must be >= min CTC', path: ['maxCTC'] });
+  position: z.union([z.string(), z.number(), z.null(), z.undefined()]).transform((v) => (v == null ? '' : String(v).trim())).refine((v) => v.length >= 1, { message: 'Position title is required' }),
+  department: z.union([z.string(), z.number(), z.null(), z.undefined(), z.object({}).passthrough()]),
+  hiringManager: z.any().optional(),
+  employmentType: z.any().optional(),
+  workLocation: z.any().optional(),
+  status: z.any().optional(),
+  minExperience: z.any().optional(),
+  maxExperience: z.any().optional(),
+  minCTC: z.any().optional(),
+  maxCTC: z.any().optional(),
+  noticePeriodDays: z.any().optional(),
+  mandatorySkills: z.any().optional(),
+  goodToHaveSkills: z.any().optional(),
+  description: z.any().optional(),
+  designation: z.any().optional(),
+  qualificationRequired: z.any().optional(),
+  openings: z.any().optional(),
+}).passthrough().superRefine((val, ctx) => {
+  const deptRaw = val.department;
+  let deptOk = false;
+  if (deptRaw && typeof deptRaw === 'object') deptOk = Boolean(deptRaw._id || deptRaw.id || (deptRaw.name && String(deptRaw.name).trim()) || (deptRaw.value && String(deptRaw.value).trim()));
+  else if (deptRaw != null && String(deptRaw).trim()) deptOk = true;
+  if (!deptOk) ctx.addIssue({ code: 'custom', message: 'Department is required', path: ['department'] });
+  const minExp = Number(val.minExperience);
+  const maxExp = Number(val.maxExperience);
+  if (Number.isFinite(minExp) && Number.isFinite(maxExp) && maxExp < minExp) {
+    ctx.addIssue({ code: 'custom', message: 'Max experience must be >= min experience', path: ['maxExperience'] });
+  }
+  if (Number.isFinite(minExp) && minExp < 0) {
+    ctx.addIssue({ code: 'custom', message: 'Min experience cannot be negative', path: ['minExperience'] });
+  }
+  if (Number.isFinite(maxExp) && maxExp < 0) {
+    ctx.addIssue({ code: 'custom', message: 'Max experience cannot be negative', path: ['maxExperience'] });
+  }
+  const minC = Number(val.minCTC);
+  const maxC = Number(val.maxCTC);
+  if (Number.isFinite(minC) && Number.isFinite(maxC) && maxC < minC) {
+    ctx.addIssue({ code: 'custom', message: 'Max CTC must be >= min CTC', path: ['maxCTC'] });
+  }
+  if (Number.isFinite(minC) && minC < 0) {
+    ctx.addIssue({ code: 'custom', message: 'Min CTC cannot be negative', path: ['minCTC'] });
+  }
+  if (Number.isFinite(maxC) && maxC < 0) {
+    ctx.addIssue({ code: 'custom', message: 'Max CTC cannot be negative', path: ['maxCTC'] });
+  }
+  const np = Number(val.noticePeriodDays);
+  if (val.noticePeriodDays != null && String(val.noticePeriodDays).trim() !== '' && (!Number.isFinite(np) || np < 0)) {
+    ctx.addIssue({ code: 'custom', message: 'Notice period must be >= 0 days', path: ['noticePeriodDays'] });
+  }
+  const ops = Number(val.openings);
+  if (val.openings != null && String(val.openings).trim() !== '' && (!Number.isFinite(ops) || ops <= 0)) {
+    ctx.addIssue({ code: 'custom', message: 'Openings count must be a positive number', path: ['openings'] });
+  }
+});
 
 router.get('/open-positions', authorize(...hrRoles), asyncHandler(async (_req,res)=>{
   const docs = await JobOpening.find().sort({ createdAt: -1 });
   res.json({ success: true, data: docs.map(jobOpeningToFrontend) });
 }));
 router.post('/open-positions', authorize(...hrRoles), asyncHandler(async (req,res)=>{
-  const input = openPositionInput.parse(req.body || {});
-  const created = await JobOpening.create(frontendToJobOpening(input));
+  const parsed = openPositionInput.safeParse(req.body || {});
+  if (!parsed.success) throw new HttpError(422, parsed.error.issues[0]?.message || 'Invalid form input', { details: parsed.error.issues });
+  const payload = frontendToJobOpening(parsed.data);
+  if (!payload.title) throw new HttpError(422, 'Position title is required');
+  if (!payload.department) throw new HttpError(422, 'Department is required');
+  const created = await JobOpening.create(payload);
   res.status(201).json({ success: true, data: jobOpeningToFrontend(created) });
 }));
 router.put('/open-positions/:id', authorize(...hrRoles), asyncHandler(async (req,res)=>{
-  const parsed = openPositionInput.partial().safeParse(req.body || {});
+  const parsed = openPositionInput.deepPartial().safeParse(req.body || {});
   if (!parsed.success) throw new HttpError(422, parsed.error.issues[0]?.message || 'Invalid input', { details: parsed.error.issues });
   const patch = frontendToJobOpening(parsed.data);
-  // Remove undefined fields before $set (keep mongoose update clean)
   for (const key of Object.keys(patch)) if (patch[key] === undefined) delete patch[key];
+  if (Object.keys(patch).length === 0) {
+    const unchanged = await JobOpening.findById(req.params.id);
+    if (!unchanged) throw new HttpError(404, 'Open position not found');
+    return res.json({ success: true, data: jobOpeningToFrontend(unchanged) });
+  }
   const updated = await JobOpening.findByIdAndUpdate(req.params.id, patch, { new:true, runValidators:true });
   if (!updated) throw new HttpError(404, 'Open position not found');
   res.json({ success: true, data: jobOpeningToFrontend(updated) });
