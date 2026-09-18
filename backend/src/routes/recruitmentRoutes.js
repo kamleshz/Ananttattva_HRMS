@@ -17,10 +17,18 @@ const hrRoles = ['super_admin','admin','hr_admin']
 const upload = multer({ storage:multer.memoryStorage(), limits:{fileSize:5*1024*1024}, fileFilter:(_req,file,cb) => cb(null,['application/pdf','image/jpeg','image/png','image/webp'].includes(file.mimetype)) })
 const optionalString = z.string().optional().or(z.literal(''))
 const optionalNumber = z.coerce.number().nonnegative().optional()
+const optionalJobOpeningId = z.union([
+  z.string().regex(/^[0-9a-fA-F]{24}$/),
+  z.string().length(0).transform(() => undefined),
+  z.null().transform(() => undefined),
+  z.undefined(),
+]).optional();
+
 const candidateInput = z.object({
   firstName:z.string().min(1), middleName:optionalString, lastName:z.string().min(1), photo:optionalString, email:z.email(), mobile:z.string().min(7), alternateMobile:optionalString,
   dateOfBirth:z.coerce.date().optional(), gender:optionalString, currentCity:optionalString, address:optionalString, preferredLocation:optionalString, pan:optionalString,
   position:z.string().min(1), department:z.string().min(1), designation:optionalString, employmentType:z.enum(['Permanent','Probation','Contract','Internship','Consultant']).optional(), workLocation:optionalString,
+  jobOpening: optionalJobOpeningId, jobOpeningId: optionalJobOpeningId,
   hiringManager:z.string().optional(), recruiter:z.string().optional(), source:optionalString, expectedJoiningDate:z.coerce.date().optional(), totalExperience:optionalNumber, relevantExperience:optionalNumber,
   currentCompany:optionalString, currentDesignation:optionalString, currentCTC:optionalNumber, expectedCTC:optionalNumber, noticePeriod:optionalString, lastWorkingDate:z.coerce.date().optional(), negotiableNoticePeriod:z.boolean().optional(),
   skills:z.array(z.string()).optional(), qualification:optionalString, employmentStatus:z.enum(['Employed','Serving Notice Period','Unemployed','Fresher']).optional(), notes:optionalString, duplicateOverride:z.boolean().optional(),
@@ -41,7 +49,12 @@ router.get('/candidates', authorize(...hrRoles), asyncHandler(async (req,res) =>
   const filter={}
   if(req.query.search) filter.$text={$search:req.query.search}
   for(const field of ['department','source','currentStage','status','position']) if(req.query[field]) filter[field]=req.query[field]
-  const items=await Candidate.find(filter).populate('recruiter hiringManager','firstName lastName').sort({updatedAt:-1}).limit(200)
+  const jobOpeningRaw = req.query.jobOpeningId || req.query.jobOpening;
+  if (jobOpeningRaw) {
+    const JOID_RE = /^[0-9a-fA-F]{24}$/;
+    if (JOID_RE.test(String(jobOpeningRaw).trim())) filter.jobOpening = jobOpeningRaw;
+  }
+  const items=await Candidate.find(filter).populate('recruiter hiringManager','firstName lastName').populate('jobOpening','title department employmentType status position location openings minExperience maxExperience').sort({updatedAt:-1}).limit(200)
   res.json({success:true,data:items})
 }))
 router.post('/candidates', authorize(...hrRoles), asyncHandler(async (req,res) => {
@@ -49,19 +62,25 @@ router.post('/candidates', authorize(...hrRoles), asyncHandler(async (req,res) =
   const duplicate=await Candidate.findOne({$or:[{email:input.email.toLowerCase()},{mobile:input.mobile},...(input.pan?[{pan:input.pan.toUpperCase()}]:[])]})
   if(duplicate&&!input.duplicateOverride) throw new HttpError(409,'A candidate with the same email, mobile number or PAN already exists.',{existingCandidateId:duplicate.id})
   if(duplicate&&!['super_admin','admin'].includes(req.user.role)) throw new HttpError(403,'Only Admin or Super Admin can continue with a possible duplicate candidate')
-  const candidate=await Candidate.create({...input,candidateCode:`CAND-${Date.now().toString().slice(-6)}`,createdBy:req.user._id,updatedBy:req.user._id})
-  await recordActivity(req,{action:'Candidate Created',candidate:candidate._id,message:`Candidate created by ${req.user.firstName} ${req.user.lastName}`})
+  const jobOpeningRef = input.jobOpening || input.jobOpeningId || null;
+  const candidate=await Candidate.create({...input,jobOpening:jobOpeningRef,candidateCode:`CAND-${Date.now().toString().slice(-6)}`,createdBy:req.user._id,updatedBy:req.user._id})
+  if (jobOpeningRef) {
+    try { await JobOpening.updateOne({ _id: jobOpeningRef }, { $set: { updatedAt: new Date() } }).exec(); } catch (_) {}
+  }
+  await recordActivity(req,{action:'Candidate Created',candidate:candidate._id,message:`Candidate created by ${req.user.firstName} ${req.user.lastName}${jobOpeningRef ? ' for selected job opening' : ''}`})
   res.status(201).json({success:true,data:candidate})
 }))
 router.get('/candidates/:id', authorize(...hrRoles), asyncHandler(async (req,res) => {
-  const candidate=await Candidate.findById(req.params.id).populate('recruiter hiringManager','firstName lastName email')
+  const candidate=await Candidate.findById(req.params.id).populate('recruiter hiringManager','firstName lastName email').populate('jobOpening','title department employmentType position status location openings minExperience maxExperience')
   if(!candidate) throw new HttpError(404,'Candidate not found')
   const [interviews,feedback,documents,offers,activity]=await Promise.all([Interview.find({candidate:candidate._id}).populate('interviewers','firstName lastName email').sort({date:-1}),InterviewFeedback.find({candidate:candidate._id}).populate('interviewer','firstName lastName'),CandidateDocument.find({candidate:candidate._id}),OfferLetter.find({candidate:candidate._id}).select('-compensation').sort({version:-1}),CandidateActivity.find({candidate:candidate._id}).populate('performedBy','firstName lastName').sort({createdAt:-1})])
   res.json({success:true,data:{candidate,interviews,feedback,documents,offers,activity}})
 }))
 router.put('/candidates/:id', authorize(...hrRoles), asyncHandler(async (req,res) => {
-  const input=candidateInput.partial().parse(req.body), candidate=await Candidate.findById(req.params.id)
+  const schema = candidateInput.partial();
+  const input=schema.parse(req.body); const candidate=await Candidate.findById(req.params.id)
   if(!candidate) throw new HttpError(404,'Candidate not found')
+  if (input.jobOpening || input.jobOpeningId) candidate.jobOpening = input.jobOpening || input.jobOpeningId || candidate.jobOpening;
   const oldValues=candidate.toObject(); Object.assign(candidate,input,{updatedBy:req.user._id}); await candidate.save()
   await recordActivity(req,{action:'Candidate Updated',candidate:candidate._id,oldValues,newValues:candidate.toObject(),message:'Candidate details updated'})
   res.json({success:true,data:candidate})
@@ -313,7 +332,7 @@ function getMongooseErrorDetails(err) {
 }
 function jobOpeningToFrontend(doc) {
   if (!doc) return doc;
-  const obj = (doc.toObject ? doc.toObject() : JSON.parse(JSON.stringify(doc)));
+  const obj = (doc && doc.toObject ? doc.toObject() : JSON.parse(JSON.stringify(doc || {})));
   const mandatory = Array.isArray(obj.mandatorySkills)
     ? obj.mandatorySkills.map((s) => (s && typeof s === 'object' ? (s.name || '') : String(s || ''))).filter(Boolean)
     : [];
@@ -327,11 +346,48 @@ function jobOpeningToFrontend(doc) {
     noticePeriodDays: obj.noticePeriodDays ?? obj.acceptableNoticeDays,
     mandatorySkills: mandatory,
     goodToHaveSkills: Array.isArray(obj.goodToHaveSkills) ? obj.goodToHaveSkills : [],
+    allocatedCandidates: Array.isArray(obj.allocatedCandidates) ? obj.allocatedCandidates : [],
+    allocatedCount: Number(obj.allocatedCount ?? (Array.isArray(obj.allocatedCandidates) ? obj.allocatedCandidates.length : 0)) || 0,
+    activeCandidatesCount: Number(obj.activeCandidatesCount ?? 0) || 0,
+    filledVsOpenings: typeof obj.filledVsOpenings === 'string' ? obj.filledVsOpenings : (() => {
+      const active = Number(obj.activeCandidatesCount ?? 0);
+      const headcount = Number(obj.openings || obj.headcount || 1);
+      return `${active}/${headcount > 0 ? headcount : 1}`;
+    })(),
   };
 }
 router.get('/open-positions', authorize(...hrRoles), asyncHandler(async (_req,res)=>{
-  const docs = await JobOpening.find().sort({ createdAt: -1 });
-  res.json({ success: true, data: docs.map(jobOpeningToFrontend) });
+  const docs = await JobOpening.find().sort({ createdAt: -1 }).lean();
+  const openingIds = docs.map(d => d._id).filter(Boolean);
+  let byOpening = new Map();
+  if (openingIds.length) {
+    const rows = await Candidate.find({ jobOpening: { $in: openingIds } }, 'jobOpening firstName lastName currentStage status email').lean();
+    for (const r of rows) {
+      const key = String(r.jobOpening);
+      if (!byOpening.has(key)) byOpening.set(key, []);
+      byOpening.get(key).push({
+        _id: r._id,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        currentStage: r.currentStage || "New Candidate",
+        status: r.status || "Active",
+        email: r.email,
+      });
+    }
+  }
+  const enriched = docs.map(doc => {
+    const arr = byOpening.get(String(doc._id)) || [];
+    const headcount = Number(doc.openings || doc.headcount || 1) || 1;
+    const activeCount = arr.filter(c => c.status !== "Rejected").length;
+    return jobOpeningToFrontend({
+      ...doc,
+      allocatedCandidates: arr,
+      allocatedCount: arr.length,
+      activeCandidatesCount: activeCount,
+      filledVsOpenings: `${activeCount}/${headcount}`,
+    });
+  });
+  res.json({ success: true, data: enriched });
 }));
 router.post('/open-positions', authorize(...hrRoles), asyncHandler(async (req,res)=>{
   const body = (req.body && typeof req.body === 'object') ? req.body : {};

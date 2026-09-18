@@ -495,15 +495,39 @@ function CandidateForm({ onClose, onCreated }) {
               {openPositionsList.length ? (
                 <select
                   value={form.jobOpening}
-                  onChange={(e) => { update("jobOpening", e.target.value); if (validationErrors.jobOpening) setValidationErrors({...validationErrors, jobOpening:""}); }}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const chosen = openPositionsList.find((p) => (p._id || p.id || "") === String(val).trim());
+                    update("jobOpening", val);
+                    if (validationErrors.jobOpening) setValidationErrors({...validationErrors, jobOpening:""});
+                    if (chosen) {
+                      const next = { ...form };
+                      if (chosen.position && !next.position) next.position = String(chosen.position);
+                      else if (chosen.position) next.position = String(chosen.position);
+                      if (chosen.department && !next.department) next.department = String(chosen.department);
+                      else if (chosen.department) next.department = String(chosen.department);
+                      if (chosen.designation) next.designation = String(chosen.designation);
+                      if (chosen.employmentType && !next.employmentType) next.employmentType = String(chosen.employmentType);
+                      else if (chosen.employmentType) next.employmentType = String(chosen.employmentType);
+                      if (chosen.workLocation && !next.workLocation) next.workLocation = String(chosen.workLocation);
+                      else if (chosen.workLocation) next.workLocation = String(chosen.workLocation);
+                      next.jobOpening = val;
+                      const resetValidation = { ...validationErrors };
+                      delete resetValidation.position; delete resetValidation.department; delete resetValidation.jobOpening; delete resetValidation.workLocation; delete resetValidation.employmentType; delete resetValidation.designation;
+                      setValidationErrors(resetValidation);
+                      setForm(next);
+                    }
+                  }}
                   style={validationErrors.jobOpening?{borderColor:"#dc2626"}:undefined}
                 >
                   <option value="">Select opening</option>
-                  {openPositionsList.map((p) => (
-                    <option key={p._id || p.id || p.position} value={p._id || p.id || p.position}>
-                      {p.position} {p.department ? `· ${p.department}` : ""}
-                    </option>
-                  ))}
+                  {openPositionsList.map((p) => {
+                    const id = String(p._id || p.id || p.position || "");
+                    const hc = Number(p.openings || p.headcount || 1) || 1;
+                    const active = Number(p.activeCandidatesCount || 0);
+                    const title = `${p.position || ""}${p.department ? ` · ${p.department}` : ""}${hc ? ` · ${hc} headcount${active ? ` · ${active} active` : ""}` : ""}`;
+                    return (<option key={id} value={id} title={title}>{p.position}{p.department ? ` · ${p.department}` : ""}{hc ? ` (${active}/${hc})` : ""}</option>);
+                  })}
                 </select>
               ) : (
                 <input
@@ -3411,6 +3435,7 @@ function OpenPositionsPage() {
                     <th>Min CTC</th>
                     <th>Max CTC</th>
                     <th>Notice Days</th>
+                    <th>Candidates</th>
                     <th>Status</th>
                     <th style={{textAlign:"right"}}>Actions</th>
                   </tr>
@@ -3418,6 +3443,20 @@ function OpenPositionsPage() {
                 <tbody>
                   {pagedItems.map((p) => {
                     const stat = String(p.status || "Open").toLowerCase();
+                    const headcount = Number(p.openings || p.headcount || 1) || 1;
+                    const actives = (Array.isArray(p.allocatedCandidates) ? p.allocatedCandidates.filter(c => String(c.status || "") !== "Rejected") : []);
+                    const firstFew = actives.slice(0, 4);
+                    const restCount = Math.max(0, actives.length - firstFew.length);
+                    function initialsOf(c) {
+                      const a = String(c.firstName || "").trim().slice(0, 1).toUpperCase();
+                      const b = String(c.lastName || "").trim().slice(0, 1).toUpperCase();
+                      return (a + b) || "C";
+                    }
+                    const candidateTooltip = (
+                      actives.length
+                        ? actives.map(c => `${c.firstName} ${c.lastName} — ${c.currentStage || "New Candidate"}`).join("\n")
+                        : "No candidates allocated yet. Add candidates from Recruitment → Candidates and choose this opening from the Job Opening dropdown."
+                    );
                     return (
                       <tr key={p._id || p.id || p.position}>
                         <td>
@@ -3446,6 +3485,46 @@ function OpenPositionsPage() {
                           <span className="salary-range">₹{p.maxCTC ?? p.maxSalary ?? 0} L</span>
                         </td>
                         <td style={{fontSize:13,color:"#334155",fontWeight:600}}>{p.noticePeriodDays ?? p.noticeDays ?? "—"}d</td>
+                        <td title={candidateTooltip} style={{verticalAlign:"middle"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,minWidth:120}}>
+                            <div style={{display:"inline-flex",alignItems:"center"}}>
+                              {!firstFew.length ? (
+                                <span style={{
+                                  display:"inline-flex",alignItems:"center",justifyContent:"center",
+                                  width:26,height:26,borderRadius:"50%",border:"1.5px dashed #cbd5e1",
+                                  color:"#94a3b8",fontSize:12,fontWeight:600,background:"#f8fafc",
+                                }}>0</span>
+                              ) : firstFew.map((c, idx) => {
+                                const palette = ["#0f766e","#1e40af","#9a3412","#7c2d12","#6d28d9","#0e7490","#365314"];
+                                const bg = palette[idx % palette.length];
+                                return (
+                                  <span key={String(c._id || idx)} title={`${c.firstName} ${c.lastName} · ${c.currentStage || "New Candidate"}`} style={{
+                                    display:"inline-flex",alignItems:"center",justifyContent:"center",
+                                    width:26,height:26,borderRadius:"50%",border:"2px solid #ffffff",background:bg,color:"#ffffff",
+                                    fontSize:11,fontWeight:700,letterSpacing:0.2,marginLeft:idx === 0 ? 0 : -8,position:"relative",zIndex:firstFew.length - idx,
+                                  }}>{initialsOf(c)}</span>
+                                );
+                              })}
+                              {restCount > 0 && (
+                                <span title={`+${restCount} more allocated candidates`} style={{
+                                  display:"inline-flex",alignItems:"center",justifyContent:"center",
+                                  width:26,height:26,borderRadius:"50%",border:"2px solid #ffffff",background:"#f1f5f9",color:"#475569",
+                                  fontSize:10.5,fontWeight:700,marginLeft:-8,position:"relative",zIndex:0,
+                                }}>+{restCount}</span>
+                              )}
+                            </div>
+                            <div style={{display:"flex",flexDirection:"column",lineHeight:1.25}}>
+                              <span style={{fontSize:13,fontWeight:700,color:"#0f172a"}}>
+                                {actives.length}/{headcount}
+                              </span>
+                              <small style={{fontSize:11,color: actives.length >= headcount ? "#b91c1c" : "#475569"}}>
+                                {actives.length >= headcount
+                                  ? `Fully sourced (${actives.length})`
+                                  : actives.length === 0 ? "No candidates yet" : `${actives.length} active · need ${Math.max(0, headcount - actives.length)} more`}
+                              </small>
+                            </div>
+                          </div>
+                        </td>
                         <td>
                           <span className={`pos-status status-${stat}`}>
                             <i /> {p.status || "Open"}
