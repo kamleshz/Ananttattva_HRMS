@@ -211,14 +211,17 @@ function Field({ label, children, className = "" }) {
   );
 }
 
-function CandidateForm({ onClose, onCreated }) {
-  const [form, setForm] = useState({
+function CandidateForm({ onClose, onCreated, editTargetId = null, onUpdated = null }) {
+  const isEdit = Boolean(editTargetId && String(editTargetId).trim().length >= 12);
+  const EMPTY_FORM = {
       firstName: "",
       middleName: "",
       lastName: "",
       email: "",
       mobile: "",
       alternateMobile: "",
+      dateOfBirth: "",
+      gender: "",
       currentCity: "",
       address: "",
       preferredLocation: "",
@@ -241,8 +244,13 @@ function CandidateForm({ onClose, onCreated }) {
       qualification: "",
       employmentStatus: "Employed",
       notes: "",
-    }),
+      expectedJoiningDate: "",
+      lastWorkingDate: "",
+      negotiableNoticePeriod: false,
+    };
+  const [form, setForm] = useState({ ...EMPTY_FORM }),
     [busy, setBusy] = useState(false),
+    [editLoading, setEditLoading] = useState(isEdit),
     [error, setError] = useState(""),
     [validationErrors, setValidationErrors] = useState({}),
     [isDragging, setIsDragging] = useState(false),
@@ -260,6 +268,58 @@ function CandidateForm({ onClose, onCreated }) {
       } catch (_) {}
     })();
   }, []);
+
+  useEffect(() => {
+    if (!isEdit) { setEditLoading(false); return; }
+    setEditLoading(true); setError(""); setForm({ ...EMPTY_FORM });
+    let alive = true;
+    recruitmentApi.candidate(String(editTargetId).trim()).then((payload) => {
+      if (!alive) return;
+      const c = payload && payload.candidate ? payload.candidate : (payload || null);
+      if (!c) { setError("Could not load candidate for editing."); setEditLoading(false); return; }
+      function dStr(d) { if (!d) return ""; const dt = new Date(d); if (Number.isNaN(dt.getTime())) return ""; const m = String(dt.getMonth()+1).padStart(2,"0"); const day = String(dt.getDate()).padStart(2,"0"); return `${dt.getFullYear()}-${m}-${day}`; }
+      const skills = Array.isArray(c.skills) ? c.skills.filter(Boolean).join(", ") : (typeof c.skills === "string" ? c.skills : "");
+      const next = {
+        firstName: String(c.firstName || ""),
+        middleName: String(c.middleName || ""),
+        lastName: String(c.lastName || ""),
+        email: String(c.email || ""),
+        mobile: String(c.mobile || ""),
+        alternateMobile: String(c.alternateMobile || ""),
+        dateOfBirth: dStr(c.dateOfBirth),
+        gender: String(c.gender || ""),
+        currentCity: String(c.currentCity || ""),
+        address: String(c.address || ""),
+        preferredLocation: String(c.preferredLocation || ""),
+        pan: String(c.pan || ""),
+        position: String(c.position || ""),
+        department: String(c.department || ""),
+        jobOpening: String((c.jobOpening && (c.jobOpening._id || c.jobOpening.id)) ? (c.jobOpening._id || c.jobOpening.id) : (c.jobOpening ? String(c.jobOpening) : "")),
+        designation: String(c.designation || ""),
+        employmentType: ["Permanent","Probation","Contract","Internship","Consultant"].includes(String(c.employmentType || "")) ? String(c.employmentType) : "Permanent",
+        workLocation: String(c.workLocation || ""),
+        source: String(c.source || "LinkedIn"),
+        totalExperience: Number.isFinite(Number(c.totalExperience)) ? Number(c.totalExperience) : 0,
+        relevantExperience: Number.isFinite(Number(c.relevantExperience)) ? Number(c.relevantExperience) : 0,
+        currentCompany: String(c.currentCompany || ""),
+        currentDesignation: String(c.currentDesignation || ""),
+        currentCTC: Number.isFinite(Number(c.currentCTC)) ? Number(c.currentCTC) : 0,
+        expectedCTC: Number.isFinite(Number(c.expectedCTC)) ? Number(c.expectedCTC) : 0,
+        noticePeriod: String(c.noticePeriod || ""),
+        skills,
+        qualification: String(c.qualification || ""),
+        employmentStatus: ["Employed","Serving Notice Period","Unemployed","Fresher"].includes(String(c.employmentStatus || "")) ? String(c.employmentStatus) : "Employed",
+        notes: String(c.notes || ""),
+        expectedJoiningDate: dStr(c.expectedJoiningDate),
+        lastWorkingDate: dStr(c.lastWorkingDate),
+        negotiableNoticePeriod: Boolean(c.negotiableNoticePeriod),
+      };
+      setForm(next);
+      setValidationErrors({});
+      setEditLoading(false);
+    }).catch((e) => { if (!alive) return; setError(e.message || "Failed to load candidate"); setEditLoading(false); });
+    return () => { alive = false; };
+  }, [editTargetId, isEdit]);
 
   const acceptResumeTypes = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword", "application/rtf", "text/rtf"];
   const acceptResumeExts = [".pdf", ".docx", ".doc", ".rtf"];
@@ -355,28 +415,42 @@ function CandidateForm({ onClose, onCreated }) {
     if (form.totalExperience === "" || form.totalExperience === null || Number(form.totalExperience) < 0) errs.totalExperience = "Experience required";
     if (!form.currentCompany.trim()) errs.currentCompany = "Current company required";
     if (!form.noticePeriod.trim()) errs.noticePeriod = "Notice period required";
-    if (!resumeFile) errs.resume = "Resume file required for screening";
+    if (!isEdit && !resumeFile) errs.resume = "Resume file required for screening";
     setValidationErrors(errs);
     return Object.keys(errs).length === 0;
+  }
+
+  function buildPayload({ stage }) {
+    const base = { ...form };
+    base.totalExperience = Number(form.totalExperience) || 0;
+    base.relevantExperience = Number(form.relevantExperience) || 0;
+    base.currentCTC = Number(form.currentCTC) || 0;
+    base.expectedCTC = Number(form.expectedCTC) || 0;
+    base.skills = (typeof form.skills === "string" ? form.skills : "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (stage) base.currentStage = stage;
+    return base;
   }
 
   async function saveAsDraft() {
     setBusy(true); setError(""); setValidationErrors({});
     try {
-      const payload = {
-        ...form,
-        currentStage: "New Candidate",
-        totalExperience: Number(form.totalExperience) || 0,
-        relevantExperience: Number(form.relevantExperience) || 0,
-        currentCTC: Number(form.currentCTC) || 0,
-        expectedCTC: Number(form.expectedCTC) || 0,
-        skills: form.skills.split(",").map((x) => x.trim()).filter(Boolean),
-      };
-      const data = await recruitmentApi.createCandidate(payload);
-      if (data?._id && resumeFile) {
-        try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+      const payload = buildPayload({ stage: isEdit ? undefined : "New Candidate" });
+      let data;
+      if (isEdit) {
+        const res = await recruitmentApi.updateCandidate(String(editTargetId).trim(), payload);
+        data = res && res.data ? res.data : res;
+        if (data?._id && resumeFile) {
+          try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+        }
+        if (typeof onUpdated === "function") onUpdated(data);
+        else onCreated(data);
+      } else {
+        data = await recruitmentApi.createCandidate(payload);
+        if (data?._id && resumeFile) {
+          try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+        }
+        onCreated(data);
       }
-      onCreated(data);
     } catch (e) {
       setError(e.message || "Failed to save draft");
     } finally {
@@ -388,20 +462,23 @@ function CandidateForm({ onClose, onCreated }) {
     if (!validateForScreening()) return;
     setBusy(true); setError("");
     try {
-      const payload = {
-        ...form,
-        currentStage: "Screening",
-        totalExperience: Number(form.totalExperience) || 0,
-        relevantExperience: Number(form.relevantExperience) || 0,
-        currentCTC: Number(form.currentCTC) || 0,
-        expectedCTC: Number(form.expectedCTC) || 0,
-        skills: form.skills.split(",").map((x) => x.trim()).filter(Boolean),
-      };
-      const data = await recruitmentApi.createCandidate(payload);
-      if (data?._id && resumeFile) {
-        try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+      const payload = buildPayload({ stage: isEdit ? undefined : "Screening" });
+      let data;
+      if (isEdit) {
+        const res = await recruitmentApi.updateCandidate(String(editTargetId).trim(), payload);
+        data = res && res.data ? res.data : res;
+        if (data?._id && resumeFile) {
+          try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+        }
+        if (typeof onUpdated === "function") onUpdated(data);
+        else onCreated(data);
+      } else {
+        data = await recruitmentApi.createCandidate(payload);
+        if (data?._id && resumeFile) {
+          try { await recruitmentApi.uploadDocument(data._id, resumeFile, { category: "resume" }); } catch (_) {}
+        }
+        onCreated(data);
       }
-      onCreated(data);
     } catch (e) {
       setError(e.message || "Failed to submit candidate");
     } finally {
@@ -409,10 +486,18 @@ function CandidateForm({ onClose, onCreated }) {
     }
   }
 
+  if (editLoading) {
+    return (
+      <Drawer title={isEdit ? "Edit candidate" : "Add candidate"} onClose={onClose} wide>
+        <div className="state-message">Loading candidate details…</div>
+      </Drawer>
+    );
+  }
+
   return (
     <Drawer
-      title="Add candidate"
-      subtitle="Create candidate and upload resume"
+      title={isEdit ? "Edit candidate" : "Add candidate"}
+      subtitle={isEdit ? "Update candidate personal details, position, documents and notes." : "Create candidate and upload resume"}
       onClose={onClose}
       wide
     >
@@ -674,11 +759,18 @@ function CandidateForm({ onClose, onCreated }) {
             Cancel
           </button>
           <button type="button" className="btn-draft" onClick={saveAsDraft} disabled={busy}>
-            <Save size={15} /> Save as Draft
+            <Save size={15} /> {isEdit ? (busy ? "Saving…" : "Save changes") : "Save as Draft"}
           </button>
-          <button type="button" className="btn-screening" onClick={submitForScreening} disabled={busy}>
-            <PlayCircle size={15} /> {busy ? "Submitting…" : "Submit & Start Screening"}
-          </button>
+          {!isEdit && (
+            <button type="button" className="btn-screening" onClick={submitForScreening} disabled={busy}>
+              <PlayCircle size={15} /> {busy ? "Submitting…" : "Submit & Start Screening"}
+            </button>
+          )}
+          {isEdit && (
+            <button type="button" className="btn-screening" onClick={submitForScreening} disabled={busy}>
+              <PlayCircle size={15} /> {busy ? "Saving…" : "Validate & Save"}
+            </button>
+          )}
         </div>
       </div>
     </Drawer>
@@ -812,7 +904,7 @@ function RejectionDialog({ candidateId, onClose, onSubmitted }) {
   );
 }
 
-function CandidateTable({ items, onView, onSchedule, onSelect, onOffer }) {
+function CandidateTable({ items, onView, onSchedule, onSelect, onOffer, onEdit }) {
   return items.length ? (
     <div className="recruitment-table-wrap">
       <table className="recruitment-table">
@@ -861,6 +953,11 @@ function CandidateTable({ items, onView, onSchedule, onSelect, onOffer }) {
               <td>{item.source}</td>
               <td>
                 <div className="row-actions">
+                  {typeof onEdit === "function" && (
+                    <button title="Edit candidate" onClick={() => onEdit(item)}>
+                      <Pencil size={15} />
+                    </button>
+                  )}
                   <button
                     title="Schedule interview"
                     onClick={() => onSchedule(item)}
@@ -1529,7 +1626,7 @@ function TablePaginationTop({ page, totalItems, pageSize, onChange }) {
   );
 }
 
-function CandidatesView({ selectedOnly = false, onAdd }) {
+function CandidatesView({ selectedOnly = false, onAdd, onEditCandidate }) {
   const navigate = useNavigate();
   const [items, setItems] = useState([]),
     [search, setSearch] = useState(""),
@@ -1614,6 +1711,9 @@ function CandidatesView({ selectedOnly = false, onAdd }) {
           onSchedule={setSchedule}
           onSelect={setSelecting}
           onOffer={setOffer}
+          onEdit={(item) => {
+            if (typeof onEditCandidate === "function") onEditCandidate(item);
+          }}
         />
         <nav className="table-pagination" aria-label="Table pagination">
           <span>
@@ -2245,7 +2345,7 @@ function CandidateDocuments({ candidateId, documents, onDone }) {
   );
 }
 
-function CandidateProfile({ user }) {
+function CandidateProfile({ user, onEditCandidate }) {
   const navigate = useNavigate(),
     id = useLocation().pathname.split("/").pop();
   const [data, setData] = useState(null),
@@ -2353,6 +2453,11 @@ function CandidateProfile({ user }) {
         </div>
         <Status>{c.currentStage}</Status>
         <div className="profile-actions">
+          {typeof onEditCandidate === "function" && (
+            <button className="primary-button" onClick={() => onEditCandidate({ _id: id, id: id })}>
+              <Pencil size={15} /> Edit candidate
+            </button>
+          )}
           {["New Candidate", "Screening", "Shortlisted"].includes(
             c.currentStage,
           ) && (
@@ -3753,17 +3858,54 @@ function OpenPositionsPage() {
 export default function RecruitmentPage({ user }) {
   const path = useLocation().pathname;
   const [add, setAdd] = useState(false);
+  const [editingCandidateId, setEditingCandidateId] = useState(null);
+  const onEditCandidate = (candidateOrId) => {
+    const id = (candidateOrId && (candidateOrId._id || candidateOrId.id || candidateOrId)) || null;
+    if (!id) return;
+    setAdd(false);
+    setEditingCandidateId(String(id));
+  };
+  const closeForms = () => { setAdd(false); setEditingCandidateId(null); };
+  const afterCreate = () => {
+    setAdd(false);
+    setEditingCandidateId(null);
+    window.location.assign("/recruitment/candidates");
+  };
+  const afterUpdate = () => {
+    const prev = editingCandidateId;
+    setAdd(false);
+    setEditingCandidateId(null);
+    if (path.startsWith("/recruitment/candidates/") && path.endsWith("/" + prev)) {
+      window.location.reload();
+    } else if (path === "/recruitment/candidates" || path === "/recruitment/selected") {
+      window.location.reload();
+    } else {
+      window.location.assign("/recruitment/candidates");
+    }
+  };
   if (path.startsWith("/recruitment/candidates/"))
-    return <CandidateProfile user={user} />;
+    return (
+      <>
+        <CandidateProfile user={user} onEditCandidate={onEditCandidate} />
+        {editingCandidateId && (
+          <CandidateForm
+            onClose={closeForms}
+            onCreated={afterCreate}
+            editTargetId={editingCandidateId}
+            onUpdated={afterUpdate}
+          />
+        )}
+      </>
+    );
   let content;
   if (path === "/recruitment" || path === "/recruitment/dashboard")
     content = <RecruitmentDashboard onAdd={() => setAdd(true)} />;
   else if (path === "/recruitment/open-positions")
     content = <OpenPositionsPage />;
   else if (path === "/recruitment/candidates")
-    content = <CandidatesView onAdd={() => setAdd(true)} />;
+    content = <CandidatesView onAdd={() => setAdd(true)} onEditCandidate={onEditCandidate} />;
   else if (path === "/recruitment/selected")
-    content = <CandidatesView selectedOnly />;
+    content = <CandidatesView selectedOnly onEditCandidate={onEditCandidate} />;
   else if (
     path === "/recruitment/interviews" ||
     path === "/recruitment/my-interviews" ||
@@ -3787,13 +3929,18 @@ export default function RecruitmentPage({ user }) {
   return (
     <>
       {content}
-      {add && (
+      {add && !editingCandidateId && (
         <CandidateForm
-          onClose={() => setAdd(false)}
-          onCreated={() => {
-            setAdd(false);
-            window.location.assign("/recruitment/candidates");
-          }}
+          onClose={closeForms}
+          onCreated={afterCreate}
+        />
+      )}
+      {editingCandidateId && (
+        <CandidateForm
+          onClose={closeForms}
+          onCreated={afterCreate}
+          editTargetId={editingCandidateId}
+          onUpdated={afterUpdate}
         />
       )}
     </>

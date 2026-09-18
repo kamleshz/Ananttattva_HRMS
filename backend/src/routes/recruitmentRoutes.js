@@ -80,6 +80,22 @@ router.put('/candidates/:id', authorize(...hrRoles), asyncHandler(async (req,res
   const schema = candidateInput.partial();
   const input=schema.parse(req.body); const candidate=await Candidate.findById(req.params.id)
   if(!candidate) throw new HttpError(404,'Candidate not found')
+  const email = input.email ? String(input.email).toLowerCase() : null;
+  const mobile = input.mobile ? String(input.mobile).trim() : null;
+  const pan = input.pan ? String(input.pan).toUpperCase().trim() : null;
+  if (email || mobile || pan) {
+    const dupQ = { $and: [{ _id: { $ne: candidate._id } }], $or: [] };
+    if (email) dupQ.$or.push({ email });
+    if (mobile) dupQ.$or.push({ mobile });
+    if (pan) dupQ.$or.push({ pan });
+    if (dupQ.$or.length) {
+      const duplicate = await Candidate.findOne(dupQ);
+      if (duplicate) {
+        if (!input.duplicateOverride) throw new HttpError(409, 'Another candidate with the same email, mobile number or PAN already exists.', { existingCandidateId: duplicate.id });
+        if (!['super_admin','admin'].includes(req.user.role)) throw new HttpError(403, 'Only Admin or Super Admin can save changes when a duplicate candidate exists.');
+      }
+    }
+  }
   if (input.jobOpening || input.jobOpeningId) candidate.jobOpening = input.jobOpening || input.jobOpeningId || candidate.jobOpening;
   const oldValues=candidate.toObject(); Object.assign(candidate,input,{updatedBy:req.user._id}); await candidate.save()
   await recordActivity(req,{action:'Candidate Updated',candidate:candidate._id,oldValues,newValues:candidate.toObject(),message:'Candidate details updated'})
