@@ -59,6 +59,27 @@ async function findNextManagerUser(employeeId, reportingManagerId) {
   if (!employee?.manager) return null
   return User.findOne({ employee: employee.manager, isActive: true }).select('_id email firstName role').populate('employee', 'firstName lastName employeeCode')
 }
+
+async function syncPendingManagerAssignment(request) {
+  if (!request || request.status !== 'pending' || request.workflow?.nextRole !== 'manager') return false
+  const currentManagerId = request.employee?.manager?._id || request.employee?.manager || null
+  if (!currentManagerId) return false
+  const assignedManagerId = request.reportingManager?._id || request.reportingManager || null
+  const managerStep = Array.isArray(request.workflow?.steps)
+    ? request.workflow.steps.find(step => step.role === 'manager' && step.status === 'pending')
+    : null
+  const stepManagerId = managerStep?.expectedActorEmployee || null
+  const assignmentChanged = String(assignedManagerId || '') !== String(currentManagerId)
+    || String(stepManagerId || '') !== String(currentManagerId)
+  if (!assignmentChanged) return false
+
+  request.reportingManager = currentManagerId
+  if (managerStep) managerStep.expectedActorEmployee = currentManagerId
+  request.markModified('workflow.steps')
+  await request.save()
+  await request.populate('reportingManager', 'firstName lastName employeeCode')
+  return true
+}
 async function notifyStep({ request, employeeUser, chainMap, notifyEmployee = false }) {
   const nextRole = request.workflow?.nextRole
   if (!nextRole) return
@@ -241,10 +262,11 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   if (req.query.status) filter.status = req.query.status
   const items = await LeaveRequest.find(filter)
-    .populate('employee', 'firstName lastName employeeCode profilePhoto department designation')
+    .populate('employee', 'firstName lastName employeeCode profilePhoto department designation manager')
     .populate('reportingManager', 'firstName lastName employeeCode')
     .sort({ createdAt: -1 })
     .limit(200)
+  await Promise.all(items.map(item => syncPendingManagerAssignment(item)))
   res.json({ success: true, data: { items, meta: { isReportingManager: Boolean(isReportingManager), directReportsCount } } })
 }))
 
@@ -378,6 +400,7 @@ router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'ma
     .populate('employee', 'firstName lastName employeeCode officialEmail manager')
     .populate('reportingManager', 'firstName lastName employeeCode')
   if (!request || request.status !== 'pending') throw new HttpError(409, 'This leave request is no longer pending')
+  await syncPendingManagerAssignment(request)
   const currentEmployee = await resolveEmployee(req)
   // HARD BLOCK: self-review is never allowed (Tushar cannot approve his own leave even if Employee.manager=Tushar by accident)
   const selfRequest = Boolean(currentEmployee && String(request.employee?._id) === String(currentEmployee._id))

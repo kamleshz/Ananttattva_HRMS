@@ -8,6 +8,7 @@ const approvalStepSchema = new mongoose.Schema({
   comment: { type: String, trim: true, maxlength: 500, default: '' },
   actedAt: Date,
   expectedActor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  expectedActorEmployee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
 }, { _id: false })
 
 const amendmentRecordSchema = new mongoose.Schema({

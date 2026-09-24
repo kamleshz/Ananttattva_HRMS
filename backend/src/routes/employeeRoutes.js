@@ -4,6 +4,7 @@ import writeXlsxFile from 'write-excel-file/node'
 import { z } from 'zod'
 import { authenticate, authorize } from '../middleware/auth.js'
 import { Employee } from '../models/Employee.js'
+import { LeaveRequest } from '../models/LeaveRequest.js'
 import { User } from '../models/User.js'
 import { Notification } from '../models/Recruitment.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
@@ -156,6 +157,18 @@ router.put('/:id',authorize('super_admin','admin','hr_admin'),asyncHandler(async
   const previousManagerId = employee.manager
   Object.assign(employee, patch)
   await employee.save()
+  if (patch.manager !== undefined && String(previousManagerId || '') !== String(employee.manager || '')) {
+    await LeaveRequest.updateMany(
+      { employee: employee._id, status: 'pending', 'workflow.nextRole': 'manager' },
+      {
+        $set: {
+          reportingManager: employee.manager || null,
+          'workflow.steps.$[managerStep].expectedActorEmployee': employee.manager || null,
+        },
+      },
+      { arrayFilters: [{ 'managerStep.role': 'manager', 'managerStep.status': 'pending' }] }
+    )
+  }
   if(loginUser&&(input.officialEmail||input.firstName||input.lastName||input.role))await User.findByIdAndUpdate(loginUser._id,{email:input.officialEmail||employee.officialEmail,firstName:input.firstName||employee.firstName,lastName:input.lastName||employee.lastName,role:input.role||loginUser.role},{runValidators:true})
   // AUTO-PROMOTE manager convenience: whenever an employee is assigned as someone's
   // reporting manager (Employee.manager field updated), auto-promote their User.role
