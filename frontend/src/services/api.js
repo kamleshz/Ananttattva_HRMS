@@ -1,8 +1,30 @@
-const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/+$/, "");
+function resolveBaseWithApi(rawFallback, rawOverride) {
+  const raw = (typeof rawOverride === "string" && rawOverride.length ? rawOverride : rawFallback).replace(/\/+$/, "");
+  if (!raw) return "/api";
+  const isAbsolute = /^(https?:)?\/\//i.test(raw);
+  if (isAbsolute) {
+    if (/\/api$/i.test(raw)) return raw.replace(/\/+$/, "");
+    return `${raw}/api`.replace(/\/+$/, "");
+  }
+  return raw;
+}
+const API_URL = resolveBaseWithApi("/api", import.meta.env.VITE_API_URL);
 const TOKEN_KEY = "peoplepulse_access_token";
 const FACE_ENGINE = import.meta.env.VITE_FACE_ENGINE || 'opencv_sface';
 export const SERVER_FACE_ENABLED = ['opencv_sface','uniface'].includes(FACE_ENGINE);
-const BIOMETRIC_API_URL = (import.meta.env.VITE_BIOMETRIC_API_URL || API_URL).replace(/\/+$/, '');
+const BIOMETRIC_API_URL = (() => {
+  const biometricOverride = import.meta.env.VITE_BIOMETRIC_API_URL;
+  if (typeof biometricOverride === "string" && biometricOverride.length) {
+    const biometricRaw = resolveBaseWithApi(API_URL, biometricOverride);
+    if (/^(https?:)?\/\//i.test(biometricOverride)) {
+      const raw = biometricOverride.replace(/\/+$/, "");
+      if (/\/api$/i.test(raw)) return raw;
+      return `${raw}/api`;
+    }
+    return biometricRaw;
+  }
+  return API_URL;
+})().replace(/\/+$/, '');
 
 export function apiUrl(path = "") {
   if (!path) return API_URL;
