@@ -17,6 +17,7 @@ import {
   IndianRupee,
   Mail,
   MapPin,
+  Megaphone,
   Network,
   Pencil,
   Plane,
@@ -2731,7 +2732,8 @@ export function PeoplePage({ user }) {
     [query, setQuery] = useState(""),
     [loading, setLoading] = useState(true),
     [exporting, setExporting] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [announcingId, setAnnouncingId] = useState(null);
   function load(search = "") {
     setLoading(true);
     employeeApi
@@ -2768,6 +2770,18 @@ export function PeoplePage({ user }) {
       setError(requestError.message);
     } finally {
       setExporting(false);
+    }
+  }
+  async function quickAnnounceEmployee(emp, force = true) {
+    if (!emp?._id) return;
+    setAnnouncingId(emp._id);
+    try {
+      await employeeApi.announceTeam(emp._id, force);
+      setTimeout(() => window.alert(`📣 Team announcement sent for ${emp.firstName || ''} ${emp.lastName || ''}`), 50);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setTimeout(() => setAnnouncingId(null), 2000);
     }
   }
   const canManagePeople = ['super_admin','admin','hr_admin'].includes(user?.role);
@@ -2835,7 +2849,7 @@ export function PeoplePage({ user }) {
                     <dd>{employee.workLocation}</dd>
                   </div>
                 </dl>
-                {canManagePeople && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button></div>}
+                {canManagePeople && <div className="employee-card-actions"><button onClick={() => navigate(`/people/${employee._id}/edit`)}>Edit details <ArrowRight size={14} /></button><button onClick={() => navigate(`/people/${employee._id}/biometrics`)}>Re-enroll face <ArrowRight size={14} /></button><button disabled={announcingId === employee._id} onClick={(e) => { e.preventDefault(); e.stopPropagation(); quickAnnounceEmployee(employee, true); }} style={{ border: '1px solid #bbf7d0', color: '#065f46', background: 'linear-gradient(180deg,#f0fdf4,#ecfeff)', fontWeight: 750 }}><Megaphone size={14} /> {announcingId === employee._id ? 'Sending…' : 'Announce'}</button></div>}
               </article>
             ))}
           </div>
@@ -2854,6 +2868,8 @@ export function EmployeeEditPage({ employeeId, user }) {
   const [confirmModal, setConfirmModal] = useState(false);
   const [confirmForm, setConfirmForm] = useState({ reviewNote: "", confirmationDate: new Date().toISOString().slice(0, 10), updateEmploymentType: true });
   const [confirming, setConfirming] = useState(false);
+  const [announcing, setAnnouncing] = useState(false);
+  const [announceMsg, setAnnounceMsg] = useState("");
   useEffect(() => {
     Promise.all([employeeApi.get(employeeId), employeeApi.list()])
       .then(([employee, list]) => {
@@ -2943,6 +2959,26 @@ export function EmployeeEditPage({ employeeId, user }) {
       setConfirming(false);
     }
   }
+  async function announceTeam(force = true) {
+    setAnnouncing(true);
+    setError("");
+    setAnnounceMsg("");
+    try {
+      const res = await employeeApi.announceTeam(employeeId, force);
+      if (res && res.success && res.data) {
+        setAnnounceMsg(`📣 Announcement sent · ${res.data.emailedCount || 0} emails · ${res.data.notifiedCount || 0} dashboard notifications`);
+      } else if (res && res.skipped) {
+        setAnnounceMsg(`⏳ ${res.reason || 'Recently sent. Use "Force" to re-send.'}`);
+      } else {
+        setAnnounceMsg("✅ Announcement complete.");
+      }
+      setTimeout(() => setAnnounceMsg(""), 9000);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setAnnouncing(false);
+    }
+  }
   if (error && !form) return <><button className="back-link" onClick={() => navigate("/people")}><ArrowLeft size={15} /> Back to employees</button><StateMessage error>{error}</StateMessage></>;
   if (!form) return <StateMessage>Loading employee details…</StateMessage>;
   const probationStatus = form.probation?.confirmationStatus || "in_probation";
@@ -2951,6 +2987,7 @@ export function EmployeeEditPage({ employeeId, user }) {
   const selectedManager = typeof form.manager === "object" ? form.manager?._id : form.manager;
   const canAssignAdminRoles = ["super_admin", "admin"].includes(user?.role);
   const protectedRole = ["super_admin", "admin"].includes(form.role);
+  const canAnnounceTeam = ["super_admin", "admin", "hr_admin"].includes(user?.role);
   return (
     <>
       <button className="back-link" onClick={() => navigate("/people")}>
@@ -2961,6 +2998,21 @@ export function EmployeeEditPage({ employeeId, user }) {
         title={`Edit ${form.firstName} ${form.lastName}`}
         description={`${form.employeeCode} · Update personal, employment and shift details.`}
       />
+      {canAnnounceTeam && (
+        <div className="info-banner" style={{ margin: '14px 0 18px', padding: '12px 16px', borderRadius: '14px', border: '1px solid #dce9e6', background: 'linear-gradient(180deg,#f0f9f4,#eff6fb)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            <div style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a', letterSpacing: '-.1px' }}>📣 Team announcement</div>
+            <div style={{ fontSize: '12px', color: '#475569', lineHeight: '1.6' }}>Send a BCC email + in-app notification blast to ALL active staff introducing this employee. Works for already-registered employees too.</div>
+            {announceMsg && <div style={{ fontSize: '12px', color: '#065f46', fontWeight: '750', marginTop: '2px' }}>{announceMsg}</div>}
+            {form.teamAnnouncementCount ? <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Previously sent {form.teamAnnouncementCount} time{form.teamAnnouncementCount === 1 ? '' : 's'}{form.teamAnnouncementLastSentAt ? ` · last ${new Date(form.teamAnnouncementLastSentAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}` : ''}</div> : null}
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button type="button" className="primary-button" onClick={() => announceTeam(true)} disabled={announcing} style={{ background: 'linear-gradient(135deg,#065f46,#10b981,#22c55e)', border: 'none' }}>
+              <Megaphone size={15} /> {announcing ? 'Sending…' : 'Announce to all staff'}
+            </button>
+          </div>
+        </div>
+      )}
       <form className="onboarding-form employee-edit-form" onSubmit={save}>
         <aside className="onboarding-steps">
           <div className="active"><span>01</span><div><strong>Personal details</strong><small>Identity and contact information</small></div></div>

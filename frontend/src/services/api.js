@@ -209,6 +209,8 @@ export const employeeApi = {
     api(`/employees/${id}/biometrics`, { method: "PUT", body: JSON.stringify(data) }),
   confirmProbation: (id, data) =>
     api(`/employees/${id}/confirm-probation`, { method: "PATCH", body: JSON.stringify(data) }),
+  announceTeam: (id, force = true) =>
+    api(`/employees/${id}/announce-team`, { method: "POST", body: JSON.stringify({ force }) }),
 };
 export const leaveApi = {
   balance: () => api('/leaves/balance'),

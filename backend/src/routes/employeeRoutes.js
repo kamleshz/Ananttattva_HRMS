@@ -15,6 +15,106 @@ import { addMonths, proratedAnnualPaidLeaves } from '../services/leavePolicyServ
 import { sendProbationConfirmation, sendWelcomeEmail, sendNewHireAnnouncementEmail } from '../services/mailService.js'
 
 const router = Router()
+
+async function announceTeamForEmployee({ employee, user, requestedBy, force = false }) {
+  if (!employee?._id) return { emailedCount: 0, notifiedCount: 0, skipped: true, reason: 'Employee missing' }
+  const skipAnnounce = !force && (employee.teamAnnouncementLastSentAt && Date.now() - new Date(employee.teamAnnouncementLastSentAt).getTime() < 60_000 * 30)
+  if (!force && skipAnnounce) return { emailedCount: 0, notifiedCount: 0, skipped: true, reason: 'Recently sent (within 30 min). Use force=true to override.' }
+  const linkedUserId = user?._id || employee.user || null
+  const eligibleUsers = await User.find({
+    isActive: true,
+    ...(linkedUserId ? { _id: { $ne: linkedUserId } } : {}),
+    employee: { $ne: null },
+  }).populate({
+    path: 'employee',
+    match: { employeeStatus: 'active' },
+    select: 'employeeStatus firstName lastName designation department workLocation officialEmail mobile',
+  }).lean()
+  const activeRecipients = eligibleUsers.filter(u => u.employee && String(u.employee.employeeStatus).toLowerCase() === 'active')
+  const bccList = activeRecipients.map(u => String(u.email || '').trim().toLowerCase()).filter(Boolean)
+  const employeeFirstName = String(employee.firstName || user?.firstName || '').trim()
+  const employeeLastName = String(employee.lastName || user?.lastName || '').trim()
+  const employeeMiddle = String(employee.middleName || '').trim()
+  const fullName = [employeeFirstName, employeeMiddle, employeeLastName].filter(Boolean).join(' ').trim()
+  const joiningDt = employee.joiningDate ? new Date(employee.joiningDate) : new Date()
+  const formattedJoining = Number.isNaN(joiningDt.getTime()) ? '' : joiningDt.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' })
+  let managerName = ''
+  if (employee.manager) {
+    const mgr = await Employee.findById(employee.manager).select('firstName middleName lastName designation').lean().catch(() => null)
+    if (mgr) {
+      const mgrName = [String(mgr.firstName || ''), String(mgr.middleName || ''), String(mgr.lastName || '')].filter(Boolean).join(' ').trim()
+      managerName = mgrName + (mgr.designation ? ` (${String(mgr.designation)})` : '')
+    }
+  }
+  const details = []
+  if (fullName) details.push({ label: 'Full Name', value: fullName })
+  if (employee.employeeCode) details.push({ label: 'Employee ID', value: String(employee.employeeCode) })
+  if (employee.designation) details.push({ label: 'Designation', value: String(employee.designation) })
+  if (employee.department) details.push({ label: 'Department', value: String(employee.department) })
+  if (employee.workLocation) details.push({ label: 'Work Location', value: String(employee.workLocation) })
+  if (formattedJoining) details.push({ label: 'Joining Date', value: formattedJoining })
+  if (managerName) details.push({ label: 'Reporting To', value: managerName })
+  if (employee.officialEmail) details.push({ label: 'Official Email', value: String(employee.officialEmail) })
+  if (employee.mobile) details.push({ label: 'Mobile', value: String(employee.mobile) })
+  if (employee.employmentType) details.push({ label: 'Employment Type', value: String(employee.employmentType).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) })
+  const addedByName = [String(requestedBy?.firstName || ''), String(requestedBy?.lastName || '')].filter(Boolean).join(' ').trim()
+  const addedByRole = String(requestedBy?.role || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
+  const onboardedByLine = addedByName ? `Announced by ${addedByName}${addedByRole ? ` (${addedByRole})` : ''}. ` : ''
+  const summary = `Please join us in welcoming or re-connecting with ${employeeFirstName || 'this team member'}! ${onboardedByLine}Feel free to reach out, say hello, and support them through their journey at Ananttattva.`
+  const baseUrl = env.clientUrl ? env.clientUrl.replace(/\/$/, '') : ''
+  let emailSent = false
+  if (bccList.length) {
+    try {
+      await sendNewHireAnnouncementEmail({
+        bccRecipients: bccList,
+        newHire: { firstName: employeeFirstName, fullName, employee, user: user || null },
+        addedBy: { firstName: String(requestedBy?.firstName || ''), lastName: String(requestedBy?.lastName || ''), role: String(requestedBy?.role || '') },
+        details,
+        summary,
+        actionLabel: baseUrl ? 'Open Employee Directory' : '',
+        actionUrl: baseUrl ? `${baseUrl}/organization/directory` : '',
+      })
+      emailSent = true
+    } catch (e) { console.warn('[announceTeamForEmployee] Email send failed:', e?.message || e) }
+  }
+  let notifiedInserted = 0
+  if (activeRecipients.length) {
+    try {
+      const notifTitle = `👋 Team announcement: ${employeeFirstName || 'New member'}${employeeLastName ? ' ' + employeeLastName : ''}`
+      const notifMsgParts = []
+      if (employee.designation) notifMsgParts.push(String(employee.designation))
+      if (employee.department) notifMsgParts.push(String(employee.department))
+      if (employee.workLocation) notifMsgParts.push(String(employee.workLocation))
+      const notifMessage = notifMsgParts.join(' · ')
+      const baseDedupe = `newHire:${employee._id}:${new Date().toISOString().slice(0,10)}`
+      const docs = activeRecipients.map((u) => ({
+        recipient: u._id,
+        type: 'newHire',
+        title: notifTitle,
+        message: notifMessage,
+        employee: employee._id,
+        dedupeKey: `${baseDedupe}:u:${u._id}:${Date.now()}_${Math.floor(Math.random()*1e9)}`,
+        createdAt: new Date(),
+      }))
+      const result = await Notification.insertMany(docs, { ordered: false }).catch(() => null)
+      if (result && Array.isArray(result)) notifiedInserted = result.length
+    } catch (notifErr) {
+      console.warn('[announceTeamForEmployee] In-app notification insert failed:', notifErr?.message || notifErr)
+    }
+  }
+  try {
+    const now = new Date()
+    await Employee.updateOne({ _id: employee._id }, {
+      $set: {
+        teamAnnouncementLastSentAt: now,
+        ...(employee.teamAnnouncementSentAt ? {} : { teamAnnouncementSentAt: now }),
+      },
+      $inc: { teamAnnouncementCount: 1 },
+    })
+  } catch (_) {}
+  return { emailedCount: emailSent ? bccList.length : 0, notifiedCount: notifiedInserted, skipped: false }
+}
+
 const biometricSampleSchema = z.object({
   pose: z.enum(['front','left','right']),
   photo: z.string().startsWith('data:image/').max(4_500_000),
@@ -329,79 +429,14 @@ router.post('/', authorize('super_admin','admin','hr_admin'), asyncHandler(async
     try {
       const skipAnnounce = Boolean(input.disableTeamAnnouncement || req.body.disableTeamAnnouncement || false)
       if (!skipAnnounce && user?._id && employee?._id) {
-        const eligibleUsers = await User.find({
-          isActive: true,
-          _id: { $ne: user._id },
-          employee: { $ne: null },
-        }).populate({
-          path: 'employee',
-          match: { employeeStatus: 'active' },
-          select: 'employeeStatus firstName lastName designation department workLocation officialEmail mobile',
-        }).lean()
-        const activeRecipients = eligibleUsers.filter(u => u.employee && String(u.employee.employeeStatus).toLowerCase() === 'active')
-        const bccList = activeRecipients.map(u => String(u.email || '').trim().toLowerCase()).filter(Boolean)
-        const employeeFirstName = String(employee.firstName || user.firstName || '').trim()
-        const employeeLastName = String(employee.lastName || user.lastName || '').trim()
-        const employeeMiddle = String(employee.middleName || '').trim()
-        const fullName = [employeeFirstName, employeeMiddle, employeeLastName].filter(Boolean).join(' ').trim()
-        const joiningDt = employee.joiningDate ? new Date(employee.joiningDate) : new Date()
-        const formattedJoining = Number.isNaN(joiningDt.getTime()) ? '' : joiningDt.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' })
-        let managerName = ''
-        if (employee.manager) {
-          const mgr = await Employee.findById(employee.manager).select('firstName middleName lastName designation').lean().catch(() => null)
-          if (mgr) {
-            const mgrName = [String(mgr.firstName || ''), String(mgr.middleName || ''), String(mgr.lastName || '')].filter(Boolean).join(' ').trim()
-            managerName = mgrName + (mgr.designation ? ` (${String(mgr.designation)})` : '')
-          }
-        }
-        const details = []
-        if (fullName) details.push({ label: 'Full Name', value: fullName })
-        if (employee.employeeCode) details.push({ label: 'Employee ID', value: String(employee.employeeCode) })
-        if (employee.designation) details.push({ label: 'Designation', value: String(employee.designation) })
-        if (employee.department) details.push({ label: 'Department', value: String(employee.department) })
-        if (employee.workLocation) details.push({ label: 'Work Location', value: String(employee.workLocation) })
-        if (formattedJoining) details.push({ label: 'Joining Date', value: formattedJoining })
-        if (managerName) details.push({ label: 'Reporting To', value: managerName })
-        if (employee.officialEmail) details.push({ label: 'Official Email', value: String(employee.officialEmail) })
-        if (employee.mobile) details.push({ label: 'Mobile', value: String(employee.mobile) })
-        if (employee.employmentType) details.push({ label: 'Employment Type', value: String(employee.employmentType).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) })
-        const addedByName = [String(req.user.firstName || ''), String(req.user.lastName || '')].filter(Boolean).join(' ').trim()
-        const addedByRole = String(req.user.role || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim()
-        const onboardedByLine = addedByName ? `Onboarded by ${addedByName}${addedByRole ? ` (${addedByRole})` : ''}. ` : ''
-        const summary = `Please join us in welcoming the newest member of the Ananttattva team! ${onboardedByLine}Feel free to reach out, say hello, and support them through their onboarding journey. Below are their details to help you connect.`
-        const baseUrl = env.clientUrl ? env.clientUrl.replace(/\/$/, '') : ''
-        if (bccList.length) {
-          await sendNewHireAnnouncementEmail({
-            bccRecipients: bccList,
-            newHire: { firstName: employeeFirstName, fullName, employee, user },
-            addedBy: { firstName: String(req.user.firstName || ''), lastName: String(req.user.lastName || ''), role: String(req.user.role || '') },
-            details,
-            summary,
-            actionLabel: baseUrl ? 'Open Employee Directory' : '',
-            actionUrl: baseUrl ? `${baseUrl}/organization/directory` : '',
-          }).catch((e) => { console.warn('[newHireAnnouncement] Email send failed:', e?.message || e) })
-        }
-        if (activeRecipients.length) {
-          try {
-            const notifTitle = `👋 New team member: ${employeeFirstName || user.firstName}${employeeLastName ? ' ' + employeeLastName : ''}`
-            const notifMsgParts = []
-            if (employee.designation) notifMsgParts.push(String(employee.designation))
-            if (employee.department) notifMsgParts.push(String(employee.department))
-            if (employee.workLocation) notifMsgParts.push(String(employee.workLocation))
-            const notifMessage = notifMsgParts.join(' · ')
-            const baseDedupe = `newHire:${employee._id}:${user._id}`
-            await Notification.insertMany(activeRecipients.map((u) => ({
-              recipient: u._id,
-              type: 'newHire',
-              title: notifTitle,
-              message: notifMessage,
-              employee: employee._id,
-              dedupeKey: `${baseDedupe}:u:${u._id}`,
-              createdAt: new Date(),
-            })), { ordered: false }).catch(() => null)
-          } catch (notifErr) {
-            console.warn('[newHireAnnouncement] In-app notification insert failed:', notifErr?.message || notifErr)
-          }
+        const announceResult = await announceTeamForEmployee({
+          employee,
+          user,
+          requestedBy: req.user,
+          force: Boolean(req.body.forceAnnouncement || false),
+        })
+        if (announceResult?.skipped) {
+          console.warn('[newHireAnnouncement] skipped:', announceResult.reason)
         }
       }
     } catch (announceErr) {
@@ -417,4 +452,24 @@ router.post('/', authorize('super_admin','admin','hr_admin'), asyncHandler(async
     throw error
   }
 }))
+
+router.post('/:id/announce-team', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req, res) => {
+  const employee = await Employee.findById(req.params.id).populate('manager', 'firstName middleName lastName designation').lean()
+  if (!employee) throw new HttpError(404, 'Employee not found')
+  let linkedUser = employee.user ? await User.findById(employee.user).select('email firstName lastName role isActive employee').lean() : null
+  if (!linkedUser) linkedUser = { email: employee.officialEmail, firstName: employee.firstName, lastName: employee.lastName, _id: employee.user || undefined }
+  const force = Boolean(req.body?.force ?? true)
+  const result = await announceTeamForEmployee({
+    employee,
+    user: linkedUser,
+    requestedBy: req.user,
+    force,
+  })
+  if (result.skipped) {
+    res.status(200).json({ success: false, skipped: true, reason: result.reason, data: result })
+    return
+  }
+  res.status(200).json({ success: true, data: result })
+}))
+
 export default router

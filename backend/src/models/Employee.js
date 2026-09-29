@@ -49,7 +49,10 @@ const employeeSchema = new mongoose.Schema({
     cycleStartMonth: { type: Number, min: 1, max: 12, default: 4 },
     accrualMode: { type: String, enum: ['monthly_1_5', 'grant_on_confirmation'], default: 'grant_on_confirmation' },
   },
+  teamAnnouncementSentAt: { type: Date, default: null },
+  teamAnnouncementLastSentAt: { type: Date, default: null },
+  teamAnnouncementCount: { type: Number, min: 0, default: 0 },
 }, { timestamps: true })
 
 employeeSchema.index({ firstName: 'text', lastName: 'text', employeeCode: 'text', officialEmail: 'text' })
-export const Employee = mongoose.model('Employee', employeeSchema)
+export const Employee = mongoose.models.Employee || mongoose.model('Employee', employeeSchema)
