@@ -26,16 +26,24 @@ async function getGraphAccessToken() {
   return payload.access_token
 }
 
-export async function sendGraphEmail({ recipient, subject, html, attachments = [], ccRecipients = [] }) {
+export async function sendGraphEmail({ recipient, subject, html, attachments = [], ccRecipients = [], bccRecipients = [] }) {
   assertMailConfiguration()
   const accessToken = await getGraphAccessToken()
   const normalizedRecipient=String(recipient).trim().toLowerCase()
-  const uniqueCc=[...new Set(ccRecipients.map(address=>String(address).trim().toLowerCase()).filter(address=>address&&address!==normalizedRecipient))]
+  const seenAddresses = new Set([normalizedRecipient])
+  const uniqueCc=[...new Set(ccRecipients.map(address=>String(address).trim().toLowerCase()).filter(address=>{
+    if(!address || seenAddresses.has(address)) return false
+    seenAddresses.add(address); return true
+  }))]
+  const uniqueBcc=[...new Set(bccRecipients.map(address=>String(address).trim().toLowerCase()).filter(address=>{
+    if(!address || seenAddresses.has(address)) return false
+    seenAddresses.add(address); return true
+  }))]
   let response
   try {
     response = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(env.otpSenderEmail)}/sendMail`, {
       method:'POST', headers:{ Authorization:`Bearer ${accessToken}`, 'Content-Type':'application/json' },
-      body:JSON.stringify({ message:{ subject, body:{ contentType:'HTML', content:html }, toRecipients:[{emailAddress:{address:recipient}}], ...(uniqueCc.length?{ccRecipients:uniqueCc.map(address=>({emailAddress:{address}}))}:{}), attachments:attachments.map(file => ({ '@odata.type':'#microsoft.graph.fileAttachment', name:file.name, contentType:file.contentType || 'application/octet-stream', contentBytes:Buffer.from(file.content).toString('base64') })), ...(env.mailReplyTo ? {replyTo:[{emailAddress:{address:env.mailReplyTo}}]} : {}) }, saveToSentItems:true }),
+      body:JSON.stringify({ message:{ subject, body:{ contentType:'HTML', content:html }, toRecipients:[{emailAddress:{address:recipient}}], ...(uniqueCc.length?{ccRecipients:uniqueCc.map(address=>({emailAddress:{address}}))}:{}), ...(uniqueBcc.length?{bccRecipients:uniqueBcc.map(address=>({emailAddress:{address}}))}:{}), attachments:attachments.map(file => ({ '@odata.type':'#microsoft.graph.fileAttachment', name:file.name, contentType:file.contentType || 'application/octet-stream', contentBytes:Buffer.from(file.content).toString('base64') })), ...(env.mailReplyTo ? {replyTo:[{emailAddress:{address:env.mailReplyTo}}]} : {}) }, saveToSentItems:true }),
     })
   } catch (error) {
     console.error('Microsoft Graph sendMail connection failed:', error?.message || error, error?.cause?.code || '', error?.cause?.message || '')
@@ -202,6 +210,35 @@ export async function sendWelcomeEmail({recipient,firstName,loginId,temporaryPas
     footer:'We are delighted to have you with Ananttattva Private Limited.',
   })
   return sendGraphEmail({recipient,subject:'Welcome to Ananttattva Private Limited | Your AT Connect account',html})
+}
+
+export async function sendNewHireAnnouncementEmail({ bccRecipients = [], newHire = {}, addedBy = {}, details = [], summary = '', actionLabel = '', actionUrl = '' }) {
+  if (!Array.isArray(bccRecipients) || !bccRecipients.length) return null
+  const firstName = String(newHire.firstName || newHire.employee?.firstName || 'Team Member').trim()
+  const fullName = String(newHire.fullName || newHire.employee?.fullName || firstName).trim()
+  const addedByName = [String(addedBy.firstName || ''), String(addedBy.lastName || '')].filter(Boolean).join(' ').trim()
+  const addedByRole = String(addedBy.role || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim()
+  const intro = summary && summary.length ? summary : `Please join us in welcoming ${firstName} to Ananttattva Private Limited! ${addedByName ? `${addedByName}${addedByRole ? ` (${addedByRole})` : ''} has successfully completed their onboarding in AT Connect. ` : ''}Feel free to reach out, say hello, and support them as they get started.`
+  const base = env.clientUrl ? env.clientUrl.replace(/\/$/, '') : ''
+  const html = companyEmailTemplate({
+    variant: 'success',
+    employeeName: fullName,
+    greeting: `👋 Welcoming ${firstName} to the team!`,
+    summary: intro,
+    details: Array.isArray(details) && details.length ? details : [
+      { label: 'Name', value: fullName },
+    ],
+    actionLabel: actionLabel || (base ? 'Open Employee Directory' : ''),
+    actionUrl: actionUrl || (base ? `${base}/organization/directory` : ''),
+    footer: `This is an automated team announcement from AT Connect. For questions about this onboarding, please contact HR.`,
+  })
+  const toAddress = env.mailReplyTo || env.otpSenderEmail || 'no-reply@ananttattva.com'
+  return sendGraphEmail({
+    recipient: toAddress,
+    bccRecipients,
+    subject: `New team member · ${firstName}${fullName !== firstName ? ` ${fullName.split(' ').slice(-1)[0]}` : ''} joins Ananttattva`,
+    html,
+  })
 }
 
 export async function sendAllowanceReminder({recipient,firstName,allowanceMonth,deadline}){
