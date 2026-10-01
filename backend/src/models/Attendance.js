@@ -106,4 +106,9 @@ attendanceSchema.path('missedCheckOut').set(function (value) {
 
 attendanceSchema.index({ employee: 1, date: 1 }, { unique: true })
 attendanceSchema.index({ employee: 1, date: 1, 'missingCheckout.justificationStatus': 1 }, { sparse: true })
+attendanceSchema.index({ date: -1, employee: 1 })
+attendanceSchema.index({ date: 1, employee: 1 })
+attendanceSchema.index({ status: 1, date: -1 })
+attendanceSchema.index({ employee: 1, createdAt: -1, _id: -1 })
+attendanceSchema.index({ updatedAt: -1, _id: -1 })
 export const Attendance = mongoose.models.Attendance || mongoose.model('Attendance', attendanceSchema)

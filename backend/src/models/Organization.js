@@ -51,6 +51,6 @@ const officeLocationSchema = new mongoose.Schema({
 }, { timestamps:true, collection:'officeLocations' })
 
 officeLocationSchema.index({ isActive:1, isPrimary:-1 })
-export const OrganizationProfile = mongoose.model('OrganizationProfile', profileSchema)
-export const OrganizationContact = mongoose.model('OrganizationContact', contactSchema)
-export const OfficeLocation = mongoose.model('OfficeLocation', officeLocationSchema)
+export const OrganizationProfile = mongoose.models.OrganizationProfile || mongoose.model('OrganizationProfile', profileSchema)
+export const OrganizationContact = mongoose.models.OrganizationContact || mongoose.model('OrganizationContact', contactSchema)
+export const OfficeLocation = mongoose.models.OfficeLocation || mongoose.model('OfficeLocation', officeLocationSchema)

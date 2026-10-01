@@ -31,7 +31,7 @@ const claimSchema=z.object({
 router.get('/', asyncHandler(async (req,res) => {
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=elevated&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
-  const claims=await AllowanceClaim.find(filter).populate('employee','firstName lastName employeeCode department').sort({createdAt:-1}).limit(100)
+  const claims=await AllowanceClaim.find(filter).allowDiskUse(true).populate('employee','firstName lastName employeeCode department').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:claims})
 }))
 async function getMonthlyUsage(date,employeeId){
@@ -39,7 +39,7 @@ async function getMonthlyUsage(date,employeeId){
   const [usage]=await AllowanceClaim.aggregate([
     {$match:{employee:employeeId,travelDate:{$gte:start,$lt:end},status:{$in:['pending','approved']}}},
     {$group:{_id:null,total:{$sum:{$ifNull:['$capTravelAcceptableAmount',{$min:['$travelAllowance',{$ifNull:['$capAcceptableAmount',{$ifNull:['$acceptableAmount','$totalAmount']}]}]}]}}}},
-  ])
+  ], { allowDiskUse: true })
   return currency(usage?.total||0)
 }
 router.get('/monthly-usage', asyncHandler(async (req,res) => {
@@ -49,7 +49,7 @@ router.get('/monthly-usage', asyncHandler(async (req,res) => {
   res.json({success:true,data:{limit:2000,used,remaining:currency(Math.max(0,2000-used))}})
 }))
 router.get('/export', authorize('super_admin','admin','hr_admin'), asyncHandler(async (_req,res) => {
-  const claims=await AllowanceClaim.find({}).populate('employee','firstName lastName employeeCode department').sort({travelDate:-1,createdAt:-1}).lean()
+  const claims=await AllowanceClaim.find({}).allowDiskUse(true).populate('employee','firstName lastName employeeCode department').sort({travelDate:-1,createdAt:-1}).lean()
   const headers=['Employee ID','Employee Name','Department','Travel Date/ Extra Allowance Date','Travel Location','Travel Allowance','Extra Allowance','Extra Details','Total','Acceptable','Not Acceptable','Claim Status','Special Approval']
   const theme=ATTENDANCE_REPORT_THEME,empty=Array(headers.length).fill(null)
   const data=[[{value:'AT Connect – All Employee Allowances',columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...empty.slice(1)],[{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date())} · ${claims.length} records`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...empty.slice(1)],reportSectionRow([{label:'EMPLOYEE',span:3},{label:'CLAIM DETAILS',span:6},{label:'ALLOWANCE DECISION',span:4}],theme),reportHeaderRow(headers,[3,6,4],theme)]

@@ -52,5 +52,5 @@ quotationSchema.pre('save', function (next) {
   next()
 })
 
-export const ServiceQuotation = mongoose.model('ServiceQuotation', quotationSchema)
+export const ServiceQuotation = mongoose.models.ServiceQuotation || mongoose.model('ServiceQuotation', quotationSchema)
 export default ServiceQuotation

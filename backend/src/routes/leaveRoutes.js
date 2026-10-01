@@ -262,6 +262,7 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   if (req.query.status) filter.status = req.query.status
   const items = await LeaveRequest.find(filter)
+    .allowDiskUse(true)
     .populate('employee', 'firstName lastName employeeCode profilePhoto department designation manager')
     .populate('reportingManager', 'firstName lastName employeeCode')
     .sort({ createdAt: -1 })

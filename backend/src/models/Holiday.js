@@ -8,4 +8,4 @@ const holidaySchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true })
 
-export const Holiday = mongoose.model('Holiday', holidaySchema)
+export const Holiday = mongoose.models.Holiday || mongoose.model('Holiday', holidaySchema)

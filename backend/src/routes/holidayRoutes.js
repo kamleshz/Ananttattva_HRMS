@@ -11,7 +11,7 @@ const holidaySchema = z.object({ name:z.string().trim().min(2).max(100), date:z.
 
 router.get('/', asyncHandler(async (req,res) => {
   const year = Number(req.query.year || new Date().getFullYear())
-  const holidays = await Holiday.find({ date:{ $gte:new Date(year,0,1), $lt:new Date(year+1,0,1) } }).sort({date:1})
+  const holidays = await Holiday.find({ date:{ $gte:new Date(year,0,1), $lt:new Date(year+1,0,1) } }).allowDiskUse(true).sort({date:1})
   res.json({success:true,data:holidays})
 }))
 router.post('/', authorize('super_admin','hr_admin'), asyncHandler(async (req,res) => {

@@ -11,5 +11,6 @@ const userSchema = new mongoose.Schema({
   mustChangePassword: { type: Boolean, default: false },
   lastLogin: Date,
 }, { timestamps: true })
-
-export const User = mongoose.model('User', userSchema)
+userSchema.index({ isActive:1, role:1 })
+userSchema.index({ role:1, isActive:1, createdAt:-1, _id:-1 })
+export const User = mongoose.models.User || mongoose.model('User', userSchema)

@@ -12,4 +12,4 @@ const scheduledEmailSchema = new mongoose.Schema({
   lastError: { type: String, default: '' },
 }, { timestamps: true })
 
-export const ScheduledEmail = mongoose.model('ScheduledEmail', scheduledEmailSchema)
+export const ScheduledEmail = mongoose.models.ScheduledEmail || mongoose.model('ScheduledEmail', scheduledEmailSchema)

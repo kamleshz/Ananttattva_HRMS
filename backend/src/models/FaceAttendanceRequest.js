@@ -60,6 +60,8 @@ faceAttendanceRequestSchema.index(
 )
 faceAttendanceRequestSchema.index({employee:1,date:1,action:1,status:1})
 faceAttendanceRequestSchema.index({requestedBy:1,clientRequestId:1},{unique:true,sparse:true})
+faceAttendanceRequestSchema.index({ createdAt:-1, _id:-1 })
+faceAttendanceRequestSchema.index({ status:1, createdAt:-1, _id:-1 })
 faceAttendanceRequestSchema.pre('validate',function(){if(!this.requestedAt)this.requestedAt=this.attemptedAt||this.createdAt||new Date();if(!this.action)this.action='check_in'})
 
-export const FaceAttendanceRequest = mongoose.model('FaceAttendanceRequest', faceAttendanceRequestSchema)
+export const FaceAttendanceRequest = mongoose.models.FaceAttendanceRequest || mongoose.model('FaceAttendanceRequest', faceAttendanceRequestSchema)

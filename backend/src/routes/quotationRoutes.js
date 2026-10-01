@@ -66,6 +66,7 @@ router.get('/', authorize(...bizRoles), asyncHandler(async (req, res) => {
     ]
   }
   const items = await ServiceQuotation.find(filter)
+    .allowDiskUse(true)
     .populate('createdBy assignedTo approvedBy sentBy', 'firstName lastName email')
     .sort({ createdAt: -1 })
     .limit(200)

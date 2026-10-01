@@ -41,5 +41,10 @@ const allowanceClaimSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 allowanceClaimSchema.index({ employee: 1, travelDate: -1 })
-allowanceClaimSchema.index({ employee:1, allowanceMonth:1, status:1 })
-export const AllowanceClaim = mongoose.model('AllowanceClaim', allowanceClaimSchema)
+allowanceClaimSchema.index({ employee: 1, allowanceMonth: 1, status: 1 })
+allowanceClaimSchema.index({ createdAt: -1, _id: -1 })
+allowanceClaimSchema.index({ travelDate: -1, createdAt: -1, _id: -1 })
+allowanceClaimSchema.index({ status: 1, createdAt: -1, _id: -1 })
+allowanceClaimSchema.index({ employee: 1, createdAt: -1, _id: -1 })
+allowanceClaimSchema.index({ updatedAt: -1, _id: -1 })
+export const AllowanceClaim = mongoose.models.AllowanceClaim || mongoose.model('AllowanceClaim', allowanceClaimSchema)

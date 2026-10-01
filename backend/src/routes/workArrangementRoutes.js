@@ -38,7 +38,7 @@ router.get('/',asyncHandler(async(req,res)=>{
     const reports=await Employee.find({manager:currentEmployee?._id}).distinct('_id')
     filter={employee:{$in:reports}}
   }
-  const items=await WorkArrangementRequest.find(filter).populate('employee','employeeCode firstName lastName department designation').populate('reviewedBy','firstName lastName').sort({createdAt:-1}).limit(200)
+  const items=await WorkArrangementRequest.find(filter).allowDiskUse(true).populate('employee','employeeCode firstName lastName department designation').populate('reviewedBy','firstName lastName').sort({createdAt:-1}).limit(200)
   res.json({success:true,data:items})
 }))
 

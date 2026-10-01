@@ -38,8 +38,8 @@ router.get('/employee', asyncHandler(async (req, res) => {
   const [attendance,birthdayEmployees,weekRecords,holidays,organization, weeklySummary] = await Promise.all([
     employee ? Attendance.findOne({employee:employee._id,date:today}) : null,
     Employee.find({employeeStatus:'active',dateOfBirth:{$ne:null}}).select('firstName lastName profilePhoto dateOfBirth'),
-    employee?Attendance.find({employee:employee._id,date:{$gte:weekStart,$lt:weekEnd}}).sort({date:1}).lean():[],
-    Holiday.find({date:{$gte:today,$lte:holidayEnd}}).sort({date:1}).limit(5).lean(),
+    employee?Attendance.find({employee:employee._id,date:{$gte:weekStart,$lt:weekEnd}}).allowDiskUse(true).sort({date:1}).lean():[],
+    Holiday.find({date:{$gte:today,$lte:holidayEnd}}).allowDiskUse(true).sort({date:1}).limit(5).lean(),
     OrganizationProfile.findOne({singletonKey:'organization'}).select('companyName shortName logo').lean(),
     employee?getWeeklySummary(employee, currentWeekMonday):null,
   ])

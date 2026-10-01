@@ -10,4 +10,4 @@ const loginOtpSchema = new mongoose.Schema({
   usedAt: { type: Date, default: null },
 }, { timestamps: true })
 
-export const LoginOtp = mongoose.model('LoginOtp', loginOtpSchema)
+export const LoginOtp = mongoose.models.LoginOtp || mongoose.model('LoginOtp', loginOtpSchema)

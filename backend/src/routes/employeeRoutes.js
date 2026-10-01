@@ -141,7 +141,7 @@ router.get('/', authorize('super_admin','admin','hr_admin','manager'), asyncHand
     const currentEmployee = await Employee.findOne({ user: req.user._id }).select('_id')
     if (currentEmployee) filter.manager = currentEmployee._id
   }
-  const [items,total] = await Promise.all([Employee.find(filter).populate('manager','firstName lastName').skip((page-1)*limit).limit(limit).sort({createdAt:-1}), Employee.countDocuments(filter)])
+  const [items,total] = await Promise.all([Employee.find(filter).allowDiskUse(true).populate('manager','firstName lastName').skip((page-1)*limit).limit(limit).sort({createdAt:-1}), Employee.countDocuments(filter)])
   res.json({ success: true, data: items, pagination: { page, limit, total, pages: Math.ceil(total/limit) } })
 }))
 router.get('/demographics/list',authorize('super_admin','admin','hr_admin','it_admin'),asyncHandler(async(req,res)=>{
@@ -149,13 +149,14 @@ router.get('/demographics/list',authorize('super_admin','admin','hr_admin','it_a
   const gender=group==='other_private'?{$in:['non_binary','prefer_not_to_say']}:group
   const employees=await Employee.find({employeeStatus:'active',gender})
     .select('employeeCode firstName lastName profilePhoto department designation workLocation')
+    .allowDiskUse(true)
     .sort({firstName:1,lastName:1})
     .lean()
   res.json({success:true,data:employees})
 }))
 router.get('/organization-chart', authorize('super_admin','hr_admin','manager','it_admin'), asyncHandler(async (_req,res)=>{
   const existingUserIds=await User.distinct('_id',{isActive:true})
-  const employees=await Employee.find({user:{$in:existingUserIds},employeeStatus:{$ne:'terminated'}}).select('employeeCode firstName lastName profilePhoto department designation workLocation employeeStatus manager').sort({firstName:1,lastName:1}).lean()
+  const employees=await Employee.find({user:{$in:existingUserIds},employeeStatus:{$ne:'terminated'}}).select('employeeCode firstName lastName profilePhoto department designation workLocation employeeStatus manager').allowDiskUse(true).sort({firstName:1,lastName:1}).lean()
   const employeeIds=new Set(employees.map(employee=>String(employee._id)))
   const items=employees.map(employee=>({...employee,manager:employee.manager&&employeeIds.has(String(employee.manager))?employee.manager:null}))
   res.json({success:true,data:items})
@@ -167,6 +168,7 @@ router.get('/export',authorize('super_admin','admin','hr_admin'),asyncHandler(as
     employeeStatus:{$nin:['notice_period','resigned','terminated']},
   })
     .populate('manager','employeeCode firstName lastName')
+    .allowDiskUse(true)
     .sort({employeeCode:1})
     .lean()
   const headers=['Employee Number','Employee Name','Official Email','Mobile','Department','Designation','Branch','Work Location','Reporting Manager','Joining Date','Employment Type','Employee Status','Shift','Probation Status','Probation End Date','Annual Paid Leaves']

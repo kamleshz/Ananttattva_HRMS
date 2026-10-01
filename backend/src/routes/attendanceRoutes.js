@@ -282,7 +282,7 @@ router.post('/face-match-requests', asyncHandler(async (req,res)=>{
 router.get('/face-match-requests', asyncHandler(async (req,res)=>{
   const reviewer=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=reviewer&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
-  const requests=await FaceAttendanceRequest.find(filter).populate('employee','firstName lastName employeeCode department designation').populate('reviewedBy','firstName lastName role').populate('attendance','date checkIn status attendanceMode').sort({createdAt:-1}).limit(100)
+  const requests=await FaceAttendanceRequest.find(filter).allowDiskUse(true).populate('employee','firstName lastName employeeCode department designation').populate('reviewedBy','firstName lastName role').populate('attendance','date checkIn status attendanceMode').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
 }))
 router.patch('/face-match-requests/:id/:decision', authorize('super_admin','hr_admin'), asyncHandler(async (req,res)=>{
@@ -348,30 +348,30 @@ router.get('/all', authorize('super_admin','admin','hr_admin','finance_admin','i
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100),complete:z.enum(['true','false']).default('false')}).parse(req.query)
   const {start,end}=organizationMonthBoundsFor(input.year,input.month)
   const [records, meta] = await Promise.all([
-    Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:-1,employee:1}),
+    Attendance.find({date:{$gte:start,$lt:end}}).allowDiskUse(true).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:-1,employee:1}),
     buildMetaPolicyEnvelope(),
   ])
   const canViewCompleteRoster=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(input.complete!=='true'||!canViewCompleteRoster)return res.json({success:true,meta,data:records})
   const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
   const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
-  const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({firstName:1,lastName:1}).lean()
+  const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').allowDiskUse(true).sort({firstName:1,lastName:1}).lean()
   res.json({success:true,meta,data:buildAttendanceRoster({employees,records,start,end:rosterEnd})})
 }))
 router.get('/corrections', asyncHandler(async (req,res)=>{
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   const filter=elevated&&req.query.scope==='all'?{}:{employee:req.user.employee?._id}
-  const requests=await AttendanceCorrectionRequest.find(filter).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout').sort({createdAt:-1}).limit(100)
+  const requests=await AttendanceCorrectionRequest.find(filter).allowDiskUse(true).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
 }))
 router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res) => {
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
   const {start,end}=organizationMonthBoundsFor(input.year,input.month)
-  let records=await Attendance.find({date:{$gte:start,$lt:end}}).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:1,employee:1})
+  let records=await Attendance.find({date:{$gte:start,$lt:end}}).allowDiskUse(true).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:1,employee:1})
   if(['super_admin','admin','hr_admin'].includes(req.user.role)){
     const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
     const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
-    const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({firstName:1,lastName:1}).lean()
+    const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').allowDiskUse(true).sort({firstName:1,lastName:1}).lean()
     records=buildAttendanceRoster({employees,records,start,end:rosterEnd}).sort((left,right)=>new Date(left.date)-new Date(right.date)||`${left.employee?.firstName||''} ${left.employee?.lastName||''}`.localeCompare(`${right.employee?.firstName||''} ${right.employee?.lastName||''}`))
   }
   const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'}).format(start)
@@ -906,7 +906,7 @@ router.get('/me', asyncHandler(async (req, res) => {
   const filter = { employee: req.user.employee._id }
   if (month && year) { const {start,end}=organizationMonthBoundsFor(Number(year),Number(month));filter.date={$gte:start,$lt:end} }
   const [data, meta] = await Promise.all([
-    Attendance.find(filter).sort({ date: -1 }).limit(100),
+    Attendance.find(filter).allowDiskUse(true).sort({ date: -1 }).limit(100),
     buildMetaPolicyEnvelope(),
   ])
   res.json({ success: true, meta, data })
