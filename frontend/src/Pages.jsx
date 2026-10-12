@@ -731,12 +731,16 @@ export function AttendancePage({ user }) {
         hrCompensationDecision: fillPunchForm.action === "waive_no_deduction" ? "waive_no_deduction" : "unpaid",
         finalPayMode: payMode,
         missingPunchType: fillPunchForm.missingType,
+        ...(fillPunchRecord.isRosterPlaceholder ? {
+          rosterEmployeeId: String(fillPunchRecord.employee?._id || fillPunchRecord.employee || ""),
+          rosterDate: fillPunchRecord.date,
+        } : {}),
       };
       await attendanceApi.hrOverrideCorrection(fillPunchRecord._id, body);
       setFillPunchOpen(false);
       setFillPunchRecord(null);
       setApprovalNotice({ decision: "approve", action: "punch override", employeeName: `${fillPunchRecord.employee?.firstName || "Employee"} ${fillPunchRecord.employee?.lastName || ""}`.trim() });
-      const { data: refreshed } = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
+      const refreshed = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
       if (Array.isArray(refreshed)) setRecords(refreshed);
     } catch (err) {
       const msg = err.message || "Failed";
@@ -757,8 +761,12 @@ export function AttendancePage({ user }) {
         reason: "HR / Admin waived: no working hours recorded",
         hrCompensationDecision: "waive_no_deduction",
         finalPayMode: "waive_excused",
+        ...(record.isRosterPlaceholder ? {
+          rosterEmployeeId: String(record.employee?._id || record.employee || ""),
+          rosterDate: record.date,
+        } : {}),
       });
-      const { data: refreshed } = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
+      const refreshed = await attendanceApi.allHistory(month, year, canViewCompleteRoster);
       if (Array.isArray(refreshed)) setRecords(refreshed);
     } catch (err) {
       const msg = err.message || "Failed to waive";

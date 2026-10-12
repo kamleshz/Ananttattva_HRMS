@@ -679,12 +679,30 @@ router.patch('/corrections/:attendanceId/hr-override', authorize('hr_admin','adm
     hrCompensationDecision:z.enum(['waive_no_deduction','unpaid']),
     finalPayMode:z.enum(['waive_excused','unpaid_half','unpaid_full']),
     missingPunchType:z.enum(['checkin','checkout','both']).optional(),
+    rosterEmployeeId:z.string().regex(/^[a-f\d]{24}$/i,'Invalid roster employee').optional(),
+    rosterDate:z.coerce.date().optional(),
   })
   const input=overrideSchema.parse(req.body)
   if(!input.requestedCheckinTime && !input.requestedCheckoutTime && input.finalPayMode!=='waive_excused'){
     throw new HttpError(422,'Provide at least requestedCheckinTime or requestedCheckoutTime unless waiving to 0h excused')
   }
-  const attendance=await Attendance.findById(req.params.attendanceId)
+  let attendance
+  if(req.params.attendanceId.startsWith('roster-')){
+    const placeholderMatch=req.params.attendanceId.match(/^roster-([a-f\d]{24})-(\d{4}-\d{2}-\d{2})$/i)
+    if(!placeholderMatch||!input.rosterEmployeeId||!input.rosterDate)throw new HttpError(422,'Invalid roster attendance record')
+    if(placeholderMatch[1].toLowerCase()!==input.rosterEmployeeId.toLowerCase())throw new HttpError(422,'Roster employee does not match the selected record')
+    const validDateKeys=new Set([organizationDateKey(input.rosterDate),input.rosterDate.toISOString().slice(0,10)])
+    if(!validDateKeys.has(placeholderMatch[2]))throw new HttpError(422,'Roster date does not match the selected record')
+    const rosterDate=startOfLocalDay(input.rosterDate)
+    const tomorrow=new Date(startOfLocalDay().getTime()+24*60*60*1000)
+    if(rosterDate>=tomorrow)throw new HttpError(422,'Attendance cannot be filled for a future date')
+    if(!await Employee.exists({_id:input.rosterEmployeeId}))throw new HttpError(404,'Employee for attendance not found')
+    attendance=await Attendance.findOne({employee:input.rosterEmployeeId,date:rosterDate})
+    if(!attendance)attendance=new Attendance({employee:input.rosterEmployeeId,date:rosterDate,status:'absent',attendanceMode:'office',workingMinutes:0,missedCheckIn:true,missedCheckOut:true,completionStatus:'incomplete'})
+  }else{
+    if(!/^[a-f\d]{24}$/i.test(req.params.attendanceId))throw new HttpError(422,'Invalid attendance record')
+    attendance=await Attendance.findById(req.params.attendanceId)
+  }
   if(!attendance)throw new HttpError(404,'Attendance record not found')
   const employee=await Employee.findById(attendance.employee).select('firstName lastName employeeCode shift department').lean()
   if(!employee)throw new HttpError(404,'Employee for attendance not found')
