@@ -278,6 +278,7 @@ const createSchema = z.object({
   startDate: z.string().min(8).or(z.coerce.date()).transform(v => (v instanceof Date ? v.toISOString().slice(0,10) : String(v).slice(0,10))),
   endDate: z.string().min(8).or(z.coerce.date()).transform(v => (v instanceof Date ? v.toISOString().slice(0,10) : String(v).slice(0,10))),
   reason: z.preprocess((v) => String(v ?? '').trim(), z.string().min(5, 'Reason must be at least 5 characters').max(500)),
+  clientRequestId: z.string().uuid().optional(),
   earlyLeaveMinutes: z.coerce.number().int().min(1).max(FULL_DAY_MINUTES_LEAVE - 1).optional().nullable().transform(v => (v == null || Number.isNaN(Number(v)) ? undefined : Math.max(1, Math.min(FULL_DAY_MINUTES_LEAVE - 1, Math.floor(Number(v)))))),
 }).refine(value => new Date(value.endDate) >= new Date(value.startDate), { message: 'End date must be on or after start date', path: ['endDate'] })
   .refine(value => value.dayType !== 'half_day' || new Date(value.startDate).toDateString() === new Date(value.endDate).toDateString(), { message: 'Half-day leave must start and end on the same date', path: ['endDate'] })
@@ -290,6 +291,12 @@ router.post('/', asyncHandler(async (req, res) => {
   const input = createSchema.parse(req.body)
   const employee = await Employee.findById(currentEmployee._id)
   if (!employee) throw new HttpError(404, 'Employee profile not found')
+  if (input.clientRequestId) {
+    const existingRequest = await LeaveRequest.findOne({ employee: employee._id, clientRequestId: input.clientRequestId })
+      .populate('employee', 'firstName lastName employeeCode department')
+      .populate('reportingManager', 'firstName lastName employeeCode')
+    if (existingRequest) return res.json({ success: true, data: existingRequest })
+  }
   const normalizedLeaveType = normalizeLeaveType(input.leaveType)
   const { workingDays, fyStart, fyEnd, fyLabel } = await computeLeaveDays({ startDate: input.startDate, endDate: input.endDate })
   if (input.dayType === 'half_day' && workingDays !== 1) throw new HttpError(422, 'Half-day leave must be selected on a working day.')
@@ -347,40 +354,51 @@ router.post('/', asyncHandler(async (req, res) => {
     }
     return step
   })
-  const request = await LeaveRequest.create({
-    employee: employee._id,
-    reportingManager,
-    leaveType: normalizedLeaveType,
-    dayType: input.dayType,
-    startDate: new Date(input.startDate),
-    endDate: new Date(input.endDate),
-    days,
-    workingDays: days,
-    reason: input.reason,
-    fyLabel,
-    earlyLeaveMinutes: input.dayType === 'early_leave' ? Number(input.earlyLeaveMinutes) : null,
-    hrCompensationDecision: null,
-    policySnapshot: {
-      annualPaidLeaves: plan.annualPaidLeaves,
-      cycleStartMonth: plan.cycleStartMonth,
-      entitledPaidLeaves: plan.entitledPaidLeaves,
-      eligibleMonths: plan.eligibleMonths,
-      canApplyPaidLeave: plan.canApplyPaidLeave,
-      longLeave: {
-        isLongLeave: longLeavePolicy.isLongLeave,
-        noticeDaysRequired: longLeavePolicy.noticeDaysRequired,
-        calendarNoticeDays: longLeavePolicy.calendarNoticeDays,
-        meetsAdvanceNotice: longLeavePolicy.meetsAdvanceNotice,
+  let request
+  try {
+    request = await LeaveRequest.create({
+      employee: employee._id,
+      clientRequestId: input.clientRequestId,
+      reportingManager,
+      leaveType: normalizedLeaveType,
+      dayType: input.dayType,
+      startDate: new Date(input.startDate),
+      endDate: new Date(input.endDate),
+      days,
+      workingDays: days,
+      reason: input.reason,
+      fyLabel,
+      earlyLeaveMinutes: input.dayType === 'early_leave' ? Number(input.earlyLeaveMinutes) : null,
+      hrCompensationDecision: null,
+      policySnapshot: {
+        annualPaidLeaves: plan.annualPaidLeaves,
+        cycleStartMonth: plan.cycleStartMonth,
+        entitledPaidLeaves: plan.entitledPaidLeaves,
+        eligibleMonths: plan.eligibleMonths,
+        canApplyPaidLeave: plan.canApplyPaidLeave,
+        longLeave: {
+          isLongLeave: longLeavePolicy.isLongLeave,
+          noticeDaysRequired: longLeavePolicy.noticeDaysRequired,
+          calendarNoticeDays: longLeavePolicy.calendarNoticeDays,
+          meetsAdvanceNotice: longLeavePolicy.meetsAdvanceNotice,
+        },
       },
-    },
-    payments,
-    workflow: {
-      requiredSteps,
-      currentStepIndex: 0,
-      steps,
-      nextRole: requiredSteps[0] || null,
-    },
-  })
+      payments,
+      workflow: {
+        requiredSteps,
+        currentStepIndex: 0,
+        steps,
+        nextRole: requiredSteps[0] || null,
+      },
+    })
+  } catch (error) {
+    if (error?.code !== 11000 || !input.clientRequestId) throw error
+    request = await LeaveRequest.findOne({ employee: employee._id, clientRequestId: input.clientRequestId })
+    if (!request) throw error
+    await request.populate('employee', 'firstName lastName employeeCode department')
+    await request.populate('reportingManager', 'firstName lastName employeeCode')
+    return res.json({ success: true, data: request })
+  }
   await request.populate('employee', 'firstName lastName employeeCode department')
   await request.populate('reportingManager', 'firstName lastName employeeCode')
   const employeeUser = await User.findOne({ employee: employee._id, isActive: true }).select('_id email firstName')

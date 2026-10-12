@@ -77,6 +77,7 @@ const previousVersionSnapshotSchema = new mongoose.Schema({
 
 const leaveRequestSchema = new mongoose.Schema({
   employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  clientRequestId: { type: String, trim: true, maxlength: 100 },
   reportingManager: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },
   leaveType: { type: String, enum: ['paid_leave', 'unpaid_leave', 'casual', 'sick', 'earned', 'unpaid'], required: true, index: true },
   dayType: { type: String, enum: ['full_day', 'half_day', 'early_leave'], default: 'full_day', required: true },
@@ -130,6 +131,10 @@ const leaveRequestSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 leaveRequestSchema.index({ employee: 1, startDate: -1 })
+leaveRequestSchema.index(
+  { employee: 1, clientRequestId: 1 },
+  { unique: true, partialFilterExpression: { clientRequestId: { $type: 'string' } } },
+)
 leaveRequestSchema.index({ reportingManager: 1, status: 1 })
 leaveRequestSchema.index({ 'workflow.nextRole': 1, status: 1 })
 export const LeaveRequest = mongoose.models.LeaveRequest || mongoose.model('LeaveRequest', leaveRequestSchema)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -1525,6 +1525,8 @@ function PhotoViewer({ photo, close }) {
 }
 
 function LeaveDrawer({ close, saved, balance }) {
+  const submittingRef = useRef(false);
+  const [clientRequestId] = useState(() => crypto.randomUUID());
   const defaultLeaveType = balance?.plan?.canApplyPaidLeave ? "paid_leave" : "unpaid_leave";
   const [form, setForm] = useState({
       leaveType: defaultLeaveType,
@@ -1573,7 +1575,7 @@ function LeaveDrawer({ close, saved, balance }) {
       event.preventDefault();
       event.stopPropagation();
     }
-    if (busy) return;
+    if (busy || submittingRef.current) return;
     if (!isEarlyLeave && form.leaveType === "paid_leave" && !canApplyPaid) {
       setError("Paid leaves are locked until your probation is confirmed. Please select unpaid leave.");
       return;
@@ -1597,6 +1599,7 @@ function LeaveDrawer({ close, saved, balance }) {
       setError(`4+ working days require applying at least 10 days in advance. You are ${10 - calendarNoticeDays} day(s) short.`);
       return;
     }
+    submittingRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -1605,6 +1608,7 @@ function LeaveDrawer({ close, saved, balance }) {
       const payload = isEarlyLeave
         ? {
             ...form,
+            clientRequestId,
             leaveType: "unpaid_leave",
             earlyLeaveMinutes: finalEarly,
             startDate: String(form.startDate).slice(0, 10),
@@ -1613,6 +1617,7 @@ function LeaveDrawer({ close, saved, balance }) {
           }
         : {
             ...form,
+            clientRequestId,
             startDate: String(form.startDate).slice(0, 10),
             endDate: String(form.endDate).slice(0, 10),
             leaveType: form.leaveType,
@@ -1631,6 +1636,7 @@ function LeaveDrawer({ close, saved, balance }) {
         setError(msg);
       }
     } finally {
+      submittingRef.current = false;
       setBusy(false);
     }
   }
@@ -1798,9 +1804,6 @@ function LeaveDrawer({ close, saved, balance }) {
               type="submit"
               className="primary-button"
               disabled={busy}
-              onClick={() => {
-                if (typeof submit === "function") setTimeout(() => submit(null), 0);
-              }}
             >
               {busy ? "Submitting…" : "Submit request"}
             </button>
