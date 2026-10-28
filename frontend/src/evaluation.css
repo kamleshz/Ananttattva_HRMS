@@ -675,6 +675,13 @@
   max-width: 100%;
 }
 
+.evaluation-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .evaluation-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -898,6 +905,35 @@
 .evaluation-badge.failed {
   color: #991b1b;
   background: linear-gradient(135deg, #fee2e2, #fecaca);
+}
+
+.evaluation-report-action-head {
+  text-align: right;
+}
+
+.evaluation-report-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #047857;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.evaluation-report-download:hover:not(:disabled) {
+  border-color: #10b981;
+  background: linear-gradient(135deg, #ecfdf5, #ffffff);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.18);
+}
+
+.evaluation-report-download:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .evaluation-report-empty {

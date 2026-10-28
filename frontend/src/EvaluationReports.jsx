@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardList,
+  Download,
   Loader2,
   RefreshCw,
   Search,
@@ -13,6 +14,192 @@ import {
 } from "lucide-react";
 import { examApi } from "./services/api.js";
 import "./evaluation.css";
+
+const PDF_MARGIN = 36;
+const PDF_EMERALD = [5, 150, 105];
+
+// jsPDF and the table plugin are heavy, so they are pulled in only when someone
+// actually downloads a report.
+const loadPdfLibs = async () => {
+  const [jspdf, autotable] = await Promise.all([import("jspdf"), import("jspdf-autotable")]);
+  return { jsPDF: jspdf.jsPDF, autoTable: autotable.autoTable };
+};
+
+const pdfStamp = () =>
+  new Date().toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const pdfHeader = (doc, title, subtitle) => {
+  const width = doc.internal.pageSize.getWidth();
+  doc.setFillColor(...PDF_EMERALD);
+  doc.rect(0, 0, width, 52, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text("AT Connect", PDF_MARGIN, 24);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.text(title, PDF_MARGIN, 38);
+  doc.setFontSize(9);
+  doc.text(`Generated ${pdfStamp()}`, width - PDF_MARGIN, 38, { align: "right" });
+  if (subtitle) {
+    doc.setTextColor(71, 85, 105);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(subtitle, PDF_MARGIN, 68);
+  }
+};
+
+const pdfFooter = (doc) => {
+  const width = doc.internal.pageSize.getWidth();
+  const height = doc.internal.pageSize.getHeight();
+  const pages = doc.getNumberOfPages();
+  for (let page = 1; page <= pages; page += 1) {
+    doc.setPage(page);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text("AT Connect HRMS - Evaluation Report", PDF_MARGIN, height - 16);
+    doc.text(`Page ${page} of ${pages}`, width - PDF_MARGIN, height - 16, { align: "right" });
+  }
+};
+
+const safeFileName = (value) =>
+  String(value || "report")
+    .trim()
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "report";
+
+const TABLE_STYLE = {
+  theme: "grid",
+  styles: { fontSize: 8.5, cellPadding: 4, textColor: [51, 65, 85], lineColor: [226, 232, 240] },
+  headStyles: { fillColor: PDF_EMERALD, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 8 },
+  alternateRowStyles: { fillColor: [248, 250, 252] },
+  margin: { left: PDF_MARGIN, right: PDF_MARGIN, bottom: 32 },
+};
+
+// One PDF covering every attempt currently shown on the page.
+const buildSummaryPdf = async ({ attempts, sections, summary }) => {
+  const { jsPDF, autoTable } = await loadPdfLibs();
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  pdfHeader(doc, "Evaluation Report", `Pass mark ${summary?.passPercent ?? 60}% - ${attempts.length} attempt${attempts.length === 1 ? "" : "s"}`);
+
+  const stats = [
+    ["Attempts", summary?.attempts ?? 0],
+    ["Passed", summary?.passed ?? 0],
+    ["Failed", summary?.failed ?? 0],
+    ["Pass rate", `${summary?.passRate ?? 0}%`],
+    ["Average", `${summary?.averagePercent ?? 0}%`],
+    ["Best", `${summary?.bestPercent ?? 0}%`],
+  ];
+  autoTable(doc, {
+    ...TABLE_STYLE,
+    startY: 82,
+    body: [stats.map(([, value]) => String(value))],
+    head: [stats.map(([label]) => label)],
+    styles: { ...TABLE_STYLE.styles, halign: "center", fontStyle: "bold" },
+    headStyles: { ...TABLE_STYLE.headStyles, halign: "center" },
+    bodyStyles: { fontSize: 12 },
+  });
+
+  autoTable(doc, {
+    ...TABLE_STYLE,
+    startY: doc.lastAutoTable.finalY + 16,
+    head: [[
+      "Employee",
+      "Email / Code",
+      "Department",
+      "Role",
+      "Submitted",
+      "Score",
+      "%",
+      "Result",
+      ...sections.map((section) => `S${section.id}`),
+      "Time",
+    ]],
+    body: attempts.map((attempt) => [
+      attempt.name,
+      attempt.email || attempt.employeeCode || "-",
+      attempt.department || "-",
+      ROLE_LABELS[attempt.role] || attempt.role || "-",
+      formatDateTime(attempt.submittedAt),
+      `${attempt.score} / ${attempt.total}`,
+      `${attempt.percent}%`,
+      attempt.passed ? "Pass" : "Fail",
+      ...sections.map((section) => {
+        const score = (attempt.sectionScores || []).find((item) => item.section === section.id);
+        return score ? `${score.correct} / ${score.total}` : "-";
+      }),
+      formatDuration(attempt.durationSeconds),
+    ]),
+    columnStyles: Object.fromEntries(
+      [5, 6, 7, 8 + sections.length, ...sections.map((_, position) => 8 + position)]
+        .map((column) => [column, { halign: "center" }])
+    ),
+    didParseCell: (data) => {
+      if (data.section === "body" && data.column.index === 7) {
+        data.cell.styles.textColor = data.cell.raw === "Pass" ? [4, 120, 87] : [153, 27, 27];
+        data.cell.styles.fontStyle = "bold";
+      }
+    },
+  });
+
+  pdfFooter(doc);
+  doc.save(`evaluation-report-${safeFileName(pdfStamp())}.pdf`);
+};
+
+// A single candidate's report card, including the per-section breakdown.
+const buildAttemptPdf = async (attempt, sections) => {
+  const { jsPDF, autoTable } = await loadPdfLibs();
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  pdfHeader(doc, "Evaluation Report - Individual Result", attempt.name);
+
+  autoTable(doc, {
+    ...TABLE_STYLE,
+    startY: 84,
+    head: [["Field", "Detail"]],
+    body: [
+      ["Employee", attempt.name],
+      ["Email", attempt.email || "-"],
+      ["Employee code", attempt.employeeCode || "-"],
+      ["Department", attempt.department || "-"],
+      ["Role", ROLE_LABELS[attempt.role] || attempt.role || "-"],
+      ["Submitted", formatDateTime(attempt.submittedAt)],
+      ["Duration", formatDuration(attempt.durationSeconds)],
+      ["Result", attempt.passed ? "Pass" : "Fail"],
+      ["Score", `${attempt.score} / ${attempt.total} (${attempt.percent}%)`],
+      ["Tab switches", String(attempt.tabSwitches ?? 0)],
+      ["Screenshot attempts", String(attempt.screenshotAttempts ?? 0)],
+    ],
+    columnStyles: { 0: { fontStyle: "bold", cellWidth: 130 } },
+  });
+
+  const rows = (attempt.sectionScores || []).length
+    ? attempt.sectionScores
+    : sections.map((section) => ({ section: section.id, title: section.title, correct: 0, total: 0 }));
+  autoTable(doc, {
+    ...TABLE_STYLE,
+    startY: doc.lastAutoTable.finalY + 18,
+    head: [["Section", "Title", "Correct", "Total", "Score"]],
+    body: rows.map((row) => [
+      `Section ${row.section}`,
+      row.title || "-",
+      String(row.correct),
+      String(row.total),
+      row.total ? `${Math.round((row.correct / row.total) * 100)}%` : "-",
+    ]),
+    columnStyles: { 2: { halign: "center" }, 3: { halign: "center" }, 4: { halign: "center" } },
+  });
+
+  pdfFooter(doc);
+  doc.save(`evaluation-report-${safeFileName(attempt.name)}.pdf`);
+};
 
 const ROLE_LABELS = {
   super_admin: "Super Admin",
@@ -51,6 +238,7 @@ export default function EvaluationReportsPage() {
   const [sections, setSections] = useState([]);
   const [query, setQuery] = useState("");
   const [resultFilter, setResultFilter] = useState("all");
+  const [pdfBusy, setPdfBusy] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,6 +274,19 @@ export default function EvaluationReportsPage() {
   const sectionScoreFor = (attempt, sectionId) =>
     (attempt.sectionScores || []).find((item) => item.section === sectionId) || null;
 
+  const downloadPdf = async (key, build) => {
+    if (pdfBusy) return;
+    setPdfBusy(key);
+    setError("");
+    try {
+      await build();
+    } catch (pdfError) {
+      setError(pdfError?.message || "Could not generate the PDF. Please try again.");
+    } finally {
+      setPdfBusy("");
+    }
+  };
+
   return (
     <div className="evaluation-page evaluation-reports-page">
       <div className="page-title-row">
@@ -97,9 +298,29 @@ export default function EvaluationReportsPage() {
           <h1>Evaluation Reports</h1>
           <p>Scores for every submitted assessment attempt.</p>
         </div>
-        <button type="button" className="secondary-button" onClick={load} disabled={loading}>
-          <RefreshCw size={15} className={loading ? "evaluation-spin" : undefined} /> Refresh
-        </button>
+        <div className="evaluation-page-actions">
+          <button type="button" className="secondary-button" onClick={load} disabled={loading}>
+            <RefreshCw size={15} className={loading ? "evaluation-spin" : undefined} /> Refresh
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={loading || !filtered.length || Boolean(pdfBusy)}
+            onClick={() =>
+              downloadPdf("all", () => buildSummaryPdf({ attempts: filtered, sections, summary }))
+            }
+          >
+            {pdfBusy === "all" ? (
+              <>
+                <Loader2 size={15} className="evaluation-spin" /> Preparing PDF…
+              </>
+            ) : (
+              <>
+                <Download size={15} /> Download PDF
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -217,6 +438,7 @@ export default function EvaluationReportsPage() {
                     </th>
                   ))}
                   <th className="num">Time</th>
+                  <th className="evaluation-report-action-head">Report</th>
                 </tr>
               </thead>
               <tbody>
@@ -251,6 +473,22 @@ export default function EvaluationReportsPage() {
                       );
                     })}
                     <td className="num">{formatDuration(attempt.durationSeconds)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="evaluation-report-download"
+                        title={`Download ${attempt.name}'s report as PDF`}
+                        aria-label={`Download ${attempt.name}'s report as PDF`}
+                        disabled={Boolean(pdfBusy)}
+                        onClick={() => downloadPdf(attempt.id, () => buildAttemptPdf(attempt, sections))}
+                      >
+                        {pdfBusy === attempt.id ? (
+                          <Loader2 size={15} className="evaluation-spin" />
+                        ) : (
+                          <Download size={15} />
+                        )}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
