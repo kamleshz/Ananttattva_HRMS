@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Clock3,
   FileText,
+  GraduationCap,
   HelpCircle,
   Home,
   Inbox,
@@ -66,6 +67,7 @@ import RecruitmentPage, {
   RecruitmentHomeWidgets,
 } from "./Recruitment.jsx";
 import OffboardingPage from "./Offboarding.jsx";
+import EvaluationPage from "./Evaluation.jsx";
 import "./notification-menu.css";
 
 const navigation = [
@@ -89,6 +91,8 @@ const elevatedNavigationRoles = new Set(["super_admin", "admin", "hr_admin", "it
 const isElevatedNavRole = (role) => elevatedNavigationRoles.has(role);
 // Manager allowed paths: same as primary navigation (no direct URL escape).
 const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances"]);
+// Evaluation / assessment is restricted to HR and administrators only.
+const evaluationRoles = new Set(["super_admin", "admin", "hr_admin"]);
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
@@ -181,6 +185,20 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
               {label === "Requests" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
             </button>
           ))}
+          {evaluationRoles.has(user.role) && (
+            <button
+              title={collapsed?'Evaluation':undefined}
+              aria-label="Evaluation"
+              onClick={() => {
+                navigate("/evaluation");
+                close();
+              }}
+              className={`nav-item ${path === "/evaluation" || path.startsWith("/evaluation/") ? "active" : ""}`}
+            >
+              <GraduationCap size={18} />
+              <span>Evaluation</span>
+            </button>
+          )}
           {isElevatedNavRole(user.role) && <p className="nav-label">Team</p>}
           {isElevatedNavRole(user.role) && teamNavigation.map(([label, Icon, route]) => (
             <button
@@ -923,6 +941,7 @@ export default function App() {
   useEffect(() => {
     if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
     if (user?.role === "manager" && !managerAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/public/offers/")) navigate("/");
+    if (user && !evaluationRoles.has(user.role) && location.pathname.startsWith("/evaluation")) navigate("/");
   }, [user, location.pathname, navigate]);
   useEffect(() => {
     if (!user) return;
@@ -1027,6 +1046,7 @@ export default function App() {
     "/reports": <ReportsPage user={user} />,
     "/holidays": <HolidaysPage user={user} />,
     "/allowances": <AllowancesPage user={user} />,
+    "/evaluation": <EvaluationPage />,
     "/offboarding": <OffboardingPage user={user} />,
   };
   const biometricEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/biometrics$/);
