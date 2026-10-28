@@ -432,6 +432,7 @@ export const examApi = {
   submit: (attemptId, flags = {}) =>
     api("/exam/submit", { method: "POST", body: JSON.stringify({ attemptId, ...flags }) }),
   reports: () => api("/exam/reports"),
+  report: (attemptId) => api(`/exam/reports/${attemptId}`),
 };
 export const publicOfferApi = {
   get: (token) => api(`/public/offers/${token}`),

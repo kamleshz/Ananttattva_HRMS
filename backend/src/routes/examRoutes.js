@@ -47,6 +47,37 @@ const loadOwnAttempt = async (attemptId, userId) => {
   return attempt
 }
 
+const attemptToRow = (attempt) => {
+  const user = attempt.user || {}
+  const employee = attempt.employee || {}
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ')
+    || [employee.firstName, employee.lastName].filter(Boolean).join(' ')
+    || user.email
+    || 'Unknown user'
+  return {
+    id: String(attempt._id),
+    name,
+    email: user.email || '',
+    role: user.role || '',
+    employeeCode: employee.employeeCode || '',
+    department: employee.department || '',
+    score: attempt.score,
+    total: attempt.total,
+    percent: attempt.percent,
+    passed: Boolean(attempt.passed),
+    submittedAt: attempt.submittedAt,
+    durationSeconds: attempt.durationSeconds,
+    tabSwitches: attempt.tabSwitches,
+    screenshotAttempts: attempt.screenshotAttempts,
+    sectionScores: (attempt.sectionScores || []).map((item) => ({
+      section: item.section,
+      title: item.title,
+      correct: item.correct,
+      total: item.total,
+    })),
+  }
+}
+
 router.get('/meta', asyncHandler(async (_req, res) => {
   res.json({
     success: true,
@@ -198,6 +229,42 @@ router.post('/submit', asyncHandler(async (req, res) => {
   })
 }))
 
+// Full question-by-question review for a submitted attempt.
+router.get('/reports/:attemptId', asyncHandler(async (req, res) => {
+  const parsed = z.object({
+    attemptId: z.string().trim().regex(OBJECT_ID, 'Invalid exam attempt'),
+  }).parse(req.params)
+
+  const attempt = await ExamAttempt.findOne({ _id: parsed.attemptId, status: 'submitted' })
+    .populate('user', 'firstName lastName email role')
+    .populate('employee', 'firstName lastName employeeCode department')
+    .lean()
+
+  if (!attempt) throw new HttpError(404, 'Exam attempt not found')
+
+  const detail = {
+    ...attemptToRow(attempt),
+    questions: (attempt.questions || []).map((entry) => {
+      const source = QUESTIONS_BY_ID.get(entry.questionId)
+      const options = source?.o || []
+      return {
+        id: entry.questionId,
+        section: entry.section,
+        sectionTitle: SECTION_TITLES.get(entry.section) || '',
+        question: source?.q || 'Question not found',
+        options,
+        selected: entry.selected || '',
+        answered: Boolean(entry.answered),
+        correct: Boolean(entry.correct),
+        correctOption: source ? options[source.a] : '',
+        explanation: source?.e || '',
+      }
+    }),
+  }
+
+  res.json({ success: true, data: detail })
+}))
+
 // Report of every submitted attempt, for HR and administrators.
 router.get('/reports', asyncHandler(async (_req, res) => {
   const attempts = await ExamAttempt.find({ status: 'submitted' })
@@ -208,36 +275,7 @@ router.get('/reports', asyncHandler(async (_req, res) => {
     .limit(500)
     .lean()
 
-  const rows = attempts.map((attempt) => {
-    const user = attempt.user || {}
-    const employee = attempt.employee || {}
-    const name = [user.firstName, user.lastName].filter(Boolean).join(' ')
-      || [employee.firstName, employee.lastName].filter(Boolean).join(' ')
-      || user.email
-      || 'Unknown user'
-    return {
-      id: String(attempt._id),
-      name,
-      email: user.email || '',
-      role: user.role || '',
-      employeeCode: employee.employeeCode || '',
-      department: employee.department || '',
-      score: attempt.score,
-      total: attempt.total,
-      percent: attempt.percent,
-      passed: Boolean(attempt.passed),
-      submittedAt: attempt.submittedAt,
-      durationSeconds: attempt.durationSeconds,
-      tabSwitches: attempt.tabSwitches,
-      screenshotAttempts: attempt.screenshotAttempts,
-      sectionScores: (attempt.sectionScores || []).map((item) => ({
-        section: item.section,
-        title: item.title,
-        correct: item.correct,
-        total: item.total,
-      })),
-    }
-  })
+  const rows = attempts.map(attemptToRow)
 
   const passedCount = rows.filter((row) => row.passed).length
   const summary = {

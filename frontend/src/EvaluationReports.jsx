@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  Eye,
   Loader2,
   RefreshCw,
   Search,
@@ -230,6 +231,12 @@ const formatDuration = (seconds) => {
   return `${Math.floor(safe / 60)}m ${String(safe % 60).padStart(2, "0")}s`;
 };
 
+const formatOption = (options, text) => {
+  if (!text) return null;
+  const index = Array.isArray(options) ? options.indexOf(text) : -1;
+  return index >= 0 ? `${String.fromCharCode(65 + index)}. ${text}` : text;
+};
+
 export default function EvaluationReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -239,6 +246,9 @@ export default function EvaluationReportsPage() {
   const [query, setQuery] = useState("");
   const [resultFilter, setResultFilter] = useState("all");
   const [pdfBusy, setPdfBusy] = useState("");
+  const [reviewId, setReviewId] = useState("");
+  const [reviewLoadingId, setReviewLoadingId] = useState("");
+  const [reviewDetail, setReviewDetail] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -284,6 +294,27 @@ export default function EvaluationReportsPage() {
       setError(pdfError?.message || "Could not generate the PDF. Please try again.");
     } finally {
       setPdfBusy("");
+    }
+  };
+
+  const viewResult = async (attempt) => {
+    if (reviewId === attempt.id && !reviewLoadingId) {
+      setReviewId("");
+      setReviewDetail(null);
+      return;
+    }
+    setReviewId(attempt.id);
+    setReviewLoadingId(attempt.id);
+    setReviewDetail(null);
+    setError("");
+    try {
+      const data = await examApi.report(attempt.id);
+      setReviewDetail(data || null);
+    } catch (loadError) {
+      setError(loadError?.message || "Could not load this evaluation result.");
+      setReviewId("");
+    } finally {
+      setReviewLoadingId("");
     }
   };
 
@@ -474,20 +505,38 @@ export default function EvaluationReportsPage() {
                     })}
                     <td className="num">{formatDuration(attempt.durationSeconds)}</td>
                     <td>
-                      <button
-                        type="button"
-                        className="evaluation-report-download"
-                        title={`Download ${attempt.name}'s report as PDF`}
-                        aria-label={`Download ${attempt.name}'s report as PDF`}
-                        disabled={Boolean(pdfBusy)}
-                        onClick={() => downloadPdf(attempt.id, () => buildAttemptPdf(attempt, sections))}
-                      >
-                        {pdfBusy === attempt.id ? (
-                          <Loader2 size={15} className="evaluation-spin" />
-                        ) : (
-                          <Download size={15} />
-                        )}
-                      </button>
+                      <div className="evaluation-report-actions">
+                        <button
+                          type="button"
+                          className={`evaluation-report-view ${reviewId === attempt.id ? "active" : ""}`}
+                          disabled={Boolean(reviewLoadingId)}
+                          onClick={() => viewResult(attempt)}
+                        >
+                          {reviewLoadingId === attempt.id ? (
+                            <>
+                              <Loader2 size={14} className="evaluation-spin" /> Loading…
+                            </>
+                          ) : (
+                            <>
+                              <Eye size={14} /> {reviewId === attempt.id ? "Hide" : "View Result"}
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="evaluation-report-download"
+                          title={`Download ${attempt.name}'s report as PDF`}
+                          aria-label={`Download ${attempt.name}'s report as PDF`}
+                          disabled={Boolean(pdfBusy)}
+                          onClick={() => downloadPdf(attempt.id, () => buildAttemptPdf(attempt, sections))}
+                        >
+                          {pdfBusy === attempt.id ? (
+                            <Loader2 size={15} className="evaluation-spin" />
+                          ) : (
+                            <Download size={15} />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -501,6 +550,84 @@ export default function EvaluationReportsPage() {
             Showing {filtered.length} of {attempts.length} submitted attempt{attempts.length === 1 ? "" : "s"}
             {summary?.passPercent ? ` · pass mark ${summary.passPercent}%` : ""}
           </p>
+        )}
+
+        {reviewId && (
+          <section className="evaluation-report-review-card">
+            {reviewLoadingId === reviewId ? (
+              <div className="evaluation-report-empty">
+                <Loader2 size={20} className="evaluation-spin" />
+                <p>Loading answered questions…</p>
+              </div>
+            ) : reviewDetail ? (
+              <>
+                <div className="evaluation-report-review-headline">
+                  <div>
+                    <p className="eyebrow">Attempt Review</p>
+                    <h3>{reviewDetail.name}</h3>
+                    <p>
+                      {formatDateTime(reviewDetail.submittedAt)} · {reviewDetail.score} / {reviewDetail.total} ·{" "}
+                      {reviewDetail.percent}% · {reviewDetail.passed ? "Pass" : "Fail"}
+                    </p>
+                  </div>
+                  <div className="evaluation-report-review-meta">
+                    <span>Time {formatDuration(reviewDetail.durationSeconds)}</span>
+                    <span>Tab switches {reviewDetail.tabSwitches ?? 0}</span>
+                    <span>Screenshot attempts {reviewDetail.screenshotAttempts ?? 0}</span>
+                  </div>
+                </div>
+
+                {Array.isArray(reviewDetail.sectionScores) && reviewDetail.sectionScores.length > 0 && (
+                  <div className="evaluation-breakdown">
+                    {reviewDetail.sectionScores.map((item) => (
+                      <div key={item.section} className="evaluation-breakdown-item">
+                        <span>Section {item.section}</span>
+                        <strong className="evaluation-breakdown-score">
+                          {item.correct} / {item.total}
+                        </strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="evaluation-review">
+                  {(reviewDetail.questions || []).map((item, index) => (
+                    <div
+                      key={item.id}
+                      className={`card evaluation-review-item ${item.correct ? "correct" : "wrong"}`}
+                    >
+                      <div className="evaluation-review-head">
+                        <span className="evaluation-review-index">Q{index + 1}</span>
+                        <p>{item.question}</p>
+                        {item.correct ? (
+                          <CheckCircle2 className="evaluation-review-status" size={19} />
+                        ) : (
+                          <XCircle className="evaluation-review-status" size={19} />
+                        )}
+                      </div>
+                      <div className="evaluation-review-body">
+                        {item.sectionTitle && <p className="evaluation-review-section">{item.sectionTitle}</p>}
+                        <p className={`evaluation-review-line ${item.correct ? "correct" : "wrong"}`}>
+                          <span>User answer</span>
+                          {formatOption(item.options, item.selected) || (item.answered ? "Answered" : "Not answered")}
+                        </p>
+                        <p className="evaluation-review-line correct">
+                          <span>Correct answer</span>
+                          {formatOption(item.options, item.correctOption) || item.correctOption || "—"}
+                        </p>
+                        {item.explanation && (
+                          <p className="evaluation-review-explanation">
+                            <span>Why</span>
+                            {item.explanation}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </section>
         )}
       </section>
 
