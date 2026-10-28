@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
+  Loader2,
   Lock,
   RefreshCw,
   Target,
@@ -11,69 +12,14 @@ import {
   Trophy,
   XCircle,
 } from "lucide-react";
+import { examApi } from "./services/api.js";
 import { setNavigationBlockedHandler, setNavigationLock } from "./router.jsx";
 import "./evaluation.css";
 
 const SECONDS_PER_QUESTION = 30;
-
-const EVALUATION_QUESTIONS = [
-  {
-    id: 1,
-    question: "What is the main difference between managing plastic waste and merely disposing of it?",
-    options: [
-      "Management means storing waste, while disposal means collecting it.",
-      "Management covers segregation, collection, recycling, recovery and safe disposal, while disposal is only one part of the process.",
-      "Management means burning waste, while disposal means sorting it.",
-      "Management and disposal mean exactly the same thing.",
-    ],
-    correctIndex: 1,
-  },
-  {
-    id: 2,
-    question: "What is the purpose of maintaining plastic waste records?",
-    options: [
-      "To replace the need for registration.",
-      "To avoid submitting any required reports.",
-      "To track waste quantities, movement and processing, and demonstrate compliance.",
-      "To record only the colour of discarded plastics.",
-    ],
-    correctIndex: 2,
-  },
-  {
-    id: 3,
-    question: "What is the purpose of marking and labelling plastic packaging?",
-    options: [
-      "To provide required identification, material and compliance information.",
-      "To guarantee that every plastic package is biodegradable.",
-      "To exempt the packaging from EPR obligations.",
-      "To make all plastic packaging suitable for food contact.",
-    ],
-    correctIndex: 0,
-  },
-  {
-    id: 4,
-    question: "Why is open burning of plastic waste an environmental concern?",
-    options: [
-      "It converts all plastic waste into useful compost.",
-      "It removes pollutants from the surrounding air.",
-      "It safely recycles plastic without processing equipment.",
-      "It can release harmful pollutants, affecting air quality, human health and the environment.",
-    ],
-    correctIndex: 3,
-  },
-  {
-    id: 5,
-    question: "What is meant by environmentally sound plastic waste management?",
-    options: [
-      "Dumping plastic waste in an unused open area.",
-      "Handling and processing plastic waste in ways that protect human health and the environment.",
-      "Mixing plastic waste with food waste before disposal.",
-      "Burning plastic waste outdoors to reduce its volume.",
-    ],
-    correctIndex: 1,
-  },
-];
-
+const QUESTIONS_PER_SECTION = 10;
+// Fallback until /exam/meta answers; mirrors the backend's active section count.
+const DEFAULT_SECTION_COUNT = 2;
 const OPTION_LABELS = ["A", "B", "C", "D", "E", "F"];
 
 const formatClock = (totalSeconds) => {
@@ -81,33 +27,72 @@ const formatClock = (totalSeconds) => {
   return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
 };
 
+const formatOption = (options, text) => {
+  if (!text) return null;
+  const position = options.indexOf(text);
+  return position >= 0 ? `${OPTION_LABELS[position]}. ${text}` : text;
+};
+
 export default function EvaluationPage() {
-  const total = EVALUATION_QUESTIONS.length;
   const [phase, setPhase] = useState("idle");
+  const [meta, setMeta] = useState(null);
+  const [attemptId, setAttemptId] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [questions, setQuestions] = useState([]);
   const [index, setIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(SECONDS_PER_QUESTION);
-  const [results, setResults] = useState(() => Array(total).fill(null));
+  const [results, setResults] = useState([]);
   const [notice, setNotice] = useState("");
   const [tabSwitches, setTabSwitches] = useState(0);
   const [screenshotAttempts, setScreenshotAttempts] = useState(0);
+  // Guards against grading the same question twice (timer expiry + a click).
+  const submittedRef = useRef(false);
 
-  const question = EVALUATION_QUESTIONS[index];
+  const total = questions.length;
+  const question = questions[index];
   const result = results[index];
   const locked = Boolean(result);
 
   useEffect(() => {
-    if (phase !== "active" || locked) return undefined;
-    if (secondsLeft <= 0) {
+    let active = true;
+    examApi
+      .meta()
+      .then((data) => {
+        if (active && data) setMeta(data);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const submitAnswer = async (selected, timedOut) => {
+    try {
+      const data = await examApi.answer(attemptId, question.id, selected);
       setResults((previous) =>
-        previous.map((entry, position) =>
-          position === index ? { selectedIndex: null, isCorrect: false, timedOut: true } : entry
-        )
+        previous.map((entry, position) => (position === index ? { ...data, timedOut } : entry))
       );
+    } catch (error) {
+      // Let the candidate try again rather than losing the question to a hiccup.
+      submittedRef.current = false;
+      setNotice(error?.message || "Could not submit your answer. Please try again.");
+      if (timedOut) setSecondsLeft(10);
+    }
+  };
+
+  useEffect(() => {
+    if (phase !== "active" || locked || !question) return undefined;
+    if (secondsLeft <= 0) {
+      if (!submittedRef.current) {
+        submittedRef.current = true;
+        submitAnswer("", true);
+      }
       return undefined;
     }
     const timeout = setTimeout(() => setSecondsLeft((value) => value - 1), 1000);
     return () => clearTimeout(timeout);
-  }, [phase, locked, secondsLeft, index]);
+  }, [phase, locked, secondsLeft, index, question]);
 
   // Anti-cheat lock: while the exam is running the user cannot navigate to another
   // screen, go back, refresh/close the tab, copy the question or switch tabs.
@@ -167,46 +152,80 @@ export default function EvaluationPage() {
 
   useEffect(() => {
     if (!notice) return undefined;
-    const timeout = setTimeout(() => setNotice(""), 3600);
+    const timeout = setTimeout(() => setNotice(""), 4000);
     return () => clearTimeout(timeout);
   }, [notice]);
 
-  const startExam = () => {
-    setResults(Array(total).fill(null));
+  const startExam = async () => {
+    setPhase("loading");
+    setNotice("");
+    submittedRef.current = false;
+    setResults([]);
     setIndex(0);
     setSecondsLeft(SECONDS_PER_QUESTION);
-    setNotice("");
     setTabSwitches(0);
     setScreenshotAttempts(0);
-    setPhase("active");
+    try {
+      const data = await examApi.questions(QUESTIONS_PER_SECTION);
+      const paper = Array.isArray(data?.questions) ? data.questions : [];
+      if (!paper.length) throw new Error("No questions are available right now.");
+      setAttemptId(data.attemptId || null);
+      setSummary(null);
+      setQuestions(paper);
+      setResults(Array(paper.length).fill(null));
+      setPhase("active");
+    } catch (error) {
+      setNotice(error?.message || "Could not load the exam. Please try again.");
+      setPhase("idle");
+    }
   };
 
-  const chooseOption = (optionIndex) => {
-    if (locked) return;
-    setResults((previous) =>
-      previous.map((entry, position) =>
-        position === index
-          ? { selectedIndex: optionIndex, isCorrect: optionIndex === question.correctIndex, timedOut: false }
-          : entry
-      )
-    );
+  const chooseOption = (optionText) => {
+    if (locked || submittedRef.current) return;
+    submittedRef.current = true;
+    submitAnswer(optionText, false);
+  };
+
+  // The score is computed and stored server-side on submit, so the report cannot
+  // be faked from the browser.
+  const finishExam = async () => {
+    setSubmitting(true);
+    try {
+      const data = await examApi.submit(attemptId, { tabSwitches, screenshotAttempts });
+      if (data) setSummary(data);
+    } catch (error) {
+      setNotice(error?.message || "Your score could not be saved to the report.");
+    } finally {
+      setSubmitting(false);
+      setPhase("finished");
+    }
   };
 
   const goNext = () => {
     if (index < total - 1) {
+      submittedRef.current = false;
       setIndex((value) => value + 1);
       setSecondsLeft(SECONDS_PER_QUESTION);
       return;
     }
-    setPhase("finished");
+    finishExam();
   };
 
-  const score = useMemo(() => results.filter((entry) => entry?.isCorrect).length, [results]);
-  const answeredCount = useMemo(() => results.filter(Boolean).length, [results]);
+  const score = useMemo(() => results.filter((entry) => entry?.correct).length, [results]);
+  const answeredCount = useMemo(() => results.filter((entry) => entry?.answered).length, [results]);
 
-  if (phase === "idle") {
+  if (phase === "idle" || phase === "loading") {
+    const perSection = meta?.perSection || QUESTIONS_PER_SECTION;
+    const sectionCount = meta?.sectionCount || 0;
+    const totalQuestions = meta?.questionsPerExam || perSection * (sectionCount || DEFAULT_SECTION_COUNT);
     return (
       <div className="evaluation-page">
+        {notice && (
+          <div className="evaluation-notice" role="alert">
+            <AlertTriangle size={17} />
+            <span>{notice}</span>
+          </div>
+        )}
         <div className="page-title-row">
           <div>
             <p className="breadcrumb">
@@ -214,7 +233,7 @@ export default function EvaluationPage() {
             </p>
             <p className="eyebrow">Assessment</p>
             <h1>Evaluation</h1>
-            <p>Test your understanding with a timed multiple-choice assessment.</p>
+            <p>Plastic Waste Management compliance assessment.</p>
           </div>
         </div>
         <section className="card evaluation-intro">
@@ -223,11 +242,17 @@ export default function EvaluationPage() {
           </span>
           <h2>Ready to begin?</h2>
           <p>
-            The exam has <strong>{total} multiple-choice questions</strong>. You get{" "}
-            <strong>{SECONDS_PER_QUESTION} seconds per question</strong> and the timer starts as soon as you press
-            Start Exam. Answers lock once you select an option, and the correct answer is revealed immediately.
+            Each attempt draws{" "}
+            <strong>
+              {perSection} random questions from each of the {sectionCount || DEFAULT_SECTION_COUNT} sections
+            </strong>{" "}
+            — <strong>{totalQuestions} questions</strong> in total — picked at random from a bank of{" "}
+            <strong>{meta?.bankSize || 500}</strong>. You get <strong>{SECONDS_PER_QUESTION} seconds per question</strong>{" "}
+            and the timer starts as soon as you press Start Exam. Answers lock once you select an option, and the correct
+            answer is revealed immediately.
           </p>
           <p>
+            Both the questions and the answer options are shuffled for every attempt, so no two papers are the same.
             Once the exam starts, <strong>navigation is locked</strong> — you cannot open another screen, use the back
             button, or switch tabs until all questions are finished. Copying, right-click and Print Screen are also
             monitored.
@@ -235,22 +260,50 @@ export default function EvaluationPage() {
           <div className="evaluation-meta">
             <div className="evaluation-meta-item">
               <ClipboardList size={17} />
-              <span>Questions</span>
-              <strong>{total}</strong>
+              <span>Per section</span>
+              <strong>{perSection}</strong>
+            </div>
+            <div className="evaluation-meta-item">
+              <ClipboardList size={17} />
+              <span>Sections</span>
+              <strong>{sectionCount || DEFAULT_SECTION_COUNT}</strong>
+            </div>
+            <div className="evaluation-meta-item">
+              <Target size={17} />
+              <span>Total questions</span>
+              <strong>{totalQuestions}</strong>
             </div>
             <div className="evaluation-meta-item">
               <Timer size={17} />
               <span>Time per question</span>
               <strong>{SECONDS_PER_QUESTION} sec</strong>
             </div>
-            <div className="evaluation-meta-item">
-              <Target size={17} />
-              <span>Feedback</span>
-              <strong>Instant</strong>
-            </div>
           </div>
-          <button type="button" className="primary-button evaluation-start" onClick={startExam}>
-            Start Exam <ChevronRight size={16} />
+          {Array.isArray(meta?.sections) && meta.sections.length > 0 && (
+            <ul className="evaluation-section-list">
+              {meta.sections.map((section) => (
+                <li key={section.id}>
+                  <span>Section {section.id}</span>
+                  {section.title}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="primary-button evaluation-start"
+            onClick={startExam}
+            disabled={phase === "loading"}
+          >
+            {phase === "loading" ? (
+              <>
+                <Loader2 size={16} className="evaluation-spin" /> Preparing your paper…
+              </>
+            ) : (
+              <>
+                Start Exam <ChevronRight size={16} />
+              </>
+            )}
           </button>
         </section>
       </div>
@@ -258,8 +311,10 @@ export default function EvaluationPage() {
   }
 
   if (phase === "finished") {
-    const percent = Math.round((score / total) * 100);
-    const passed = percent >= 60;
+    const finalScore = summary?.score ?? score;
+    const finalTotal = summary?.total ?? total;
+    const percent = summary?.percent ?? (finalTotal ? Math.round((finalScore / finalTotal) * 100) : 0);
+    const passed = summary?.passed ?? percent >= 60;
     return (
       <div className="evaluation-page">
         <div className="page-title-row">
@@ -280,10 +335,11 @@ export default function EvaluationPage() {
           <div className="evaluation-score-copy">
             <p className="eyebrow">Your score</p>
             <h2>
-              {score} <span>/ {total}</span>
+              {finalScore} <span>/ {finalTotal}</span>
             </h2>
             <p>
-              {percent}% correct · {answeredCount} of {total} questions attempted
+              {percent}% correct · {answeredCount} of {finalTotal} questions attempted
+              {summary?.durationSeconds ? ` · finished in ${formatClock(summary.durationSeconds)}` : ""}
             </p>
           </div>
           <div className="evaluation-score-ring" style={{ "--evaluation-score": `${percent}%` }}>
@@ -291,35 +347,65 @@ export default function EvaluationPage() {
           </div>
         </section>
 
+        {Array.isArray(summary?.sectionScores) && summary.sectionScores.length > 0 && (
+          <section className="evaluation-breakdown">
+            {summary.sectionScores.map((item) => (
+              <div key={item.section} className="card evaluation-breakdown-item">
+                <p className="eyebrow">Section {item.section}</p>
+                <h3>{item.title}</h3>
+                <div className="evaluation-breakdown-score">
+                  <strong>{item.correct}</strong>
+                  <span>/ {item.total}</span>
+                </div>
+                <div className="evaluation-progress-track">
+                  <span style={{ width: `${item.total ? (item.correct / item.total) * 100 : 0}%` }} />
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {(tabSwitches > 0 || screenshotAttempts > 0) && (
+          <section className="evaluation-tab-warning" role="alert">
+            <AlertTriangle size={16} />
+            <span>
+              This attempt recorded {tabSwitches} tab switch{tabSwitches === 1 ? "" : "es"} and{" "}
+              {screenshotAttempts} screenshot attempt{screenshotAttempts === 1 ? "" : "s"}.
+            </span>
+          </section>
+        )}
+
         <section className="evaluation-review">
-          {EVALUATION_QUESTIONS.map((item, position) => {
+          {questions.map((item, position) => {
             const entry = results[position];
-            const answered = entry && entry.selectedIndex !== null && entry.selectedIndex !== undefined;
+            const yourAnswer = formatOption(item.options, entry?.selected);
             return (
-              <div
-                key={item.id}
-                className={`card evaluation-review-item ${entry?.isCorrect ? "correct" : "wrong"}`}
-              >
+              <div key={item.id} className={`card evaluation-review-item ${entry?.correct ? "correct" : "wrong"}`}>
                 <div className="evaluation-review-head">
                   <span className="evaluation-review-index">Q{position + 1}</span>
                   <p>{item.question}</p>
-                  {entry?.isCorrect ? (
+                  {entry?.correct ? (
                     <CheckCircle2 className="evaluation-review-status" size={19} />
                   ) : (
                     <XCircle className="evaluation-review-status" size={19} />
                   )}
                 </div>
                 <div className="evaluation-review-body">
-                  <p className={`evaluation-review-line ${entry?.isCorrect ? "correct" : "wrong"}`}>
+                  {item.sectionTitle && <p className="evaluation-review-section">{item.sectionTitle}</p>}
+                  <p className={`evaluation-review-line ${entry?.correct ? "correct" : "wrong"}`}>
                     <span>Your answer</span>
-                    {answered
-                      ? `${OPTION_LABELS[entry.selectedIndex]}. ${item.options[entry.selectedIndex]}`
-                      : "Not answered (time expired)"}
+                    {yourAnswer || (entry?.timedOut ? "Not answered (time expired)" : "Not answered")}
                   </p>
-                  {!entry?.isCorrect && (
+                  {!entry?.correct && entry?.correctOption && (
                     <p className="evaluation-review-line correct">
                       <span>Correct answer</span>
-                      {`${OPTION_LABELS[item.correctIndex]}. ${item.options[item.correctIndex]}`}
+                      {formatOption(item.options, entry.correctOption) || entry.correctOption}
+                    </p>
+                  )}
+                  {entry?.explanation && (
+                    <p className="evaluation-review-explanation">
+                      <span>Why</span>
+                      {entry.explanation}
                     </p>
                   )}
                 </div>
@@ -407,12 +493,13 @@ export default function EvaluationPage() {
           </div>
         </div>
 
+        {question.sectionTitle && <p className="evaluation-question-section">{question.sectionTitle}</p>}
         <h2 className="evaluation-question">{question.question}</h2>
 
         <div className="evaluation-options">
           {question.options.map((option, optionIndex) => {
-            const isCorrectOption = optionIndex === question.correctIndex;
-            const isChosen = result?.selectedIndex === optionIndex;
+            const isCorrectOption = locked && option === result?.correctOption;
+            const isChosen = locked && option === result?.selected;
             let stateClass = "";
             if (locked) {
               if (isCorrectOption) stateClass = "is-correct";
@@ -424,36 +511,35 @@ export default function EvaluationPage() {
                 key={option}
                 type="button"
                 className={`evaluation-option ${stateClass}`}
-                onClick={() => chooseOption(optionIndex)}
+                onClick={() => chooseOption(option)}
                 disabled={locked}
               >
                 <span className="evaluation-option-key">{OPTION_LABELS[optionIndex]}</span>
                 <span className="evaluation-option-text">{option}</span>
-                {locked && isCorrectOption && <CheckCircle2 className="evaluation-option-icon" size={19} />}
-                {locked && isChosen && !isCorrectOption && <XCircle className="evaluation-option-icon" size={19} />}
+                {isCorrectOption && <CheckCircle2 className="evaluation-option-icon" size={19} />}
+                {isChosen && !isCorrectOption && <XCircle className="evaluation-option-icon" size={19} />}
               </button>
             );
           })}
         </div>
 
         {locked && (
-          <div className={`evaluation-feedback ${result.isCorrect ? "correct" : "wrong"}`}>
-            {result.isCorrect ? <CheckCircle2 size={19} /> : <XCircle size={19} />}
+          <div className={`evaluation-feedback ${result.correct ? "correct" : "wrong"}`}>
+            {result.correct ? <CheckCircle2 size={19} /> : <XCircle size={19} />}
             <div>
-              <strong>
-                {result.isCorrect ? "Correct answer!" : result.timedOut ? "Time's up!" : "Wrong answer"}
-              </strong>
+              <strong>{result.correct ? "Correct answer!" : result.timedOut ? "Time's up!" : "Wrong answer"}</strong>
               <span>
-                Correct answer: {OPTION_LABELS[question.correctIndex]}. {question.options[question.correctIndex]}
+                Correct answer: {formatOption(question.options, result.correctOption) || result.correctOption}
               </span>
+              {result.explanation && <em className="evaluation-feedback-why">{result.explanation}</em>}
             </div>
           </div>
         )}
 
         <div className="evaluation-quiz-bottom">
           <span className="evaluation-hint">{locked ? "" : "Select an option to continue"}</span>
-          <button type="button" className="primary-button" disabled={!locked} onClick={goNext}>
-            {index < total - 1 ? "Next Question" : "See Results"} <ChevronRight size={16} />
+          <button type="button" className="primary-button" disabled={!locked || submitting} onClick={goNext}>
+            {index < total - 1 ? "Next Question" : submitting ? "Saving…" : "See Results"} <ChevronRight size={16} />
           </button>
         </div>
       </section>

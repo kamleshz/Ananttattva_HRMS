@@ -424,6 +424,15 @@ export const organizationApi = {
   createOfficeLocation: (data) => api('/organization/office-locations', { method:'POST', body:JSON.stringify(data) }),
   updateOfficeLocation: (id, data) => api(`/organization/office-locations/${id}`, { method:'PUT', body:JSON.stringify(data) }),
 };
+export const examApi = {
+  meta: () => api("/exam/meta"),
+  questions: (perSection = 10) => api(`/exam/questions?perSection=${perSection}`),
+  answer: (attemptId, questionId, selected) =>
+    api("/exam/answer", { method: "POST", body: JSON.stringify({ attemptId, questionId, selected }) }),
+  submit: (attemptId, flags = {}) =>
+    api("/exam/submit", { method: "POST", body: JSON.stringify({ attemptId, ...flags }) }),
+  reports: () => api("/exam/reports"),
+};
 export const publicOfferApi = {
   get: (token) => api(`/public/offers/${token}`),
   view: (token) => api(`/public/offers/${token}/view`, { method: "POST" }),

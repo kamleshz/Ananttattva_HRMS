@@ -3,6 +3,7 @@ import {
   Bell,
   BriefcaseBusiness,
   ClipboardCheck,
+  ClipboardList,
   CalendarDays,
   Camera,
   Cake,
@@ -68,6 +69,7 @@ import RecruitmentPage, {
 } from "./Recruitment.jsx";
 import OffboardingPage from "./Offboarding.jsx";
 import EvaluationPage from "./Evaluation.jsx";
+import EvaluationReportsPage from "./EvaluationReports.jsx";
 import "./notification-menu.css";
 
 const navigation = [
@@ -186,18 +188,32 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
             </button>
           ))}
           {evaluationRoles.has(user.role) && (
-            <button
-              title={collapsed?'Evaluation':undefined}
-              aria-label="Evaluation"
-              onClick={() => {
-                navigate("/evaluation");
-                close();
-              }}
-              className={`nav-item ${path === "/evaluation" || path.startsWith("/evaluation/") ? "active" : ""}`}
-            >
-              <GraduationCap size={18} />
-              <span>Evaluation</span>
-            </button>
+            <>
+              <button
+                title={collapsed?'Evaluation':undefined}
+                aria-label="Evaluation"
+                onClick={() => {
+                  navigate("/evaluation");
+                  close();
+                }}
+                className={`nav-item ${path === "/evaluation" ? "active" : ""}`}
+              >
+                <GraduationCap size={18} />
+                <span>Evaluation</span>
+              </button>
+              <button
+                title={collapsed?'Evaluation Reports':undefined}
+                aria-label="Evaluation Reports"
+                onClick={() => {
+                  navigate("/evaluation/reports");
+                  close();
+                }}
+                className={`nav-item ${path.startsWith("/evaluation/reports") ? "active" : ""}`}
+              >
+                <ClipboardList size={18} />
+                <span>Evaluation Reports</span>
+              </button>
+            </>
           )}
           {isElevatedNavRole(user.role) && <p className="nav-label">Team</p>}
           {isElevatedNavRole(user.role) && teamNavigation.map(([label, Icon, route]) => (
@@ -1047,6 +1063,7 @@ export default function App() {
     "/holidays": <HolidaysPage user={user} />,
     "/allowances": <AllowancesPage user={user} />,
     "/evaluation": <EvaluationPage />,
+    "/evaluation/reports": <EvaluationReportsPage />,
     "/offboarding": <OffboardingPage user={user} />,
   };
   const biometricEmployeeMatch = location.pathname.match(/^\/people\/([^/]+)\/biometrics$/);
