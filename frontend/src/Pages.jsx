@@ -601,6 +601,36 @@ export function AttendancePage({ user }) {
       setCorrectionBusy(false);
     }
   }
+  async function approveAllFaceRequests() {
+    const ids = pendingFaceRequests.map((item) => item._id);
+    if (!ids.length) return;
+    if (!window.confirm(`Approve all ${ids.length} pending manual attendance requests?`)) return;
+    setCorrectionBusy(true);
+    setError("");
+    setApprovalNotice(null);
+    try {
+      const result = await attendanceApi.reviewAllManualRequests(ids);
+      const refreshedRequests = await attendanceApi.manualRequests(canReviewFaceRequests ? "all" : "mine");
+      setFaceRequests(refreshedRequests);
+      const refreshedHistory = canViewAllAttendance
+        ? await attendanceApi.allHistory(month, year, canViewCompleteRoster)
+        : await attendanceApi.history(month, year);
+      setRecords(refreshedHistory);
+      setApprovalNotice({
+        decision: "approve",
+        bulk: true,
+        count: result.summary?.approved || ids.length,
+        failed: result.summary?.failed || 0,
+      });
+      if (result.summary?.failed) {
+        setError(`Approved ${result.summary.approved} requests. ${result.summary.failed} could not be processed and were left pending.`);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCorrectionBusy(false);
+    }
+  }
   async function submitArrangement(event) {
     event.preventDefault();setArrangementBusy(true);setError("");
     try {
@@ -839,7 +869,7 @@ export function AttendancePage({ user }) {
           </div>
         }
       />
-      {approvalNotice && <div className={`attendance-decision-notice ${approvalNotice.decision}`} role="status"><span><Check size={20}/></span><div><strong>{approvalNotice.decision==="approve"?"Attendance approved successfully":"Attendance request rejected"}</strong><p>{approvalNotice.employeeName}&apos;s manual {approvalNotice.action} was {approvalNotice.decision==="approve"?"recorded successfully. The employee has been notified in AT Connect and an email has been sent.":"rejected. The employee has been notified in AT Connect and by email."}</p></div><button type="button" aria-label="Dismiss confirmation" onClick={()=>setApprovalNotice(null)}>×</button></div>}
+      {approvalNotice && <div className={`attendance-decision-notice ${approvalNotice.decision}`} role="status"><span><Check size={20}/></span><div><strong>{approvalNotice.bulk?`${approvalNotice.count} manual attendance requests approved`:approvalNotice.decision==="approve"?"Attendance approved successfully":"Attendance request rejected"}</strong><p>{approvalNotice.bulk?`${approvalNotice.count} pending manual attendance requests were recorded successfully.${approvalNotice.failed?` ${approvalNotice.failed} requests could not be processed and were left pending.`:""} Employees have been notified in AT Connect and by email where available.`:`${approvalNotice.employeeName}&apos;s manual ${approvalNotice.action} was ${approvalNotice.decision==="approve"?"recorded successfully. The employee has been notified in AT Connect and an email has been sent.":"rejected. The employee has been notified in AT Connect and by email."}`}</p></div><button type="button" aria-label="Dismiss confirmation" onClick={()=>setApprovalNotice(null)}>×</button></div>}
       <div className="summary-strip">
         <div>
           <span>Present</span>
@@ -1187,6 +1217,13 @@ export function AttendancePage({ user }) {
               <p className="eyebrow">Biometric attendance exceptions</p>
               <h2>{canReviewFaceRequests ? `Manual attendance approvals${pendingFaceRequests.length ? ` (${pendingFaceRequests.length})` : ""}` : "My manual attendance requests"}</h2>
             </div>
+                {canReviewFaceRequests && pendingFaceRequests.length > 1 && (
+                  <div className="section-heading-actions">
+                    <button className="approve-button" type="button" disabled={correctionBusy} onClick={approveAllFaceRequests}>
+                      <Check size={13} /> {correctionBusy ? "Approving..." : `Approve all (${pendingFaceRequests.length})`}
+                    </button>
+                  </div>
+                )}
           </div>
           {faceRequests.length === 0 ? <StateMessage>No manual attendance requests.</StateMessage> : (
             <div className="attendance-correction-list face-request-list">

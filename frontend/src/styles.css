@@ -919,6 +919,12 @@ main {
   color: #0f172a !important;
   letter-spacing: -0.3px !important;
 }
+    .section-heading-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .attendance-log-heading {
       align-items: flex-start !important;
       gap: 16px !important;

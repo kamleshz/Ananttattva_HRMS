@@ -170,6 +170,7 @@ export const attendanceApi = {
     return uploadApi('/attendance/manual',form);
   },
   reviewManualRequest: (id, decision, reviewNote = "") => api(`/attendance/manual/${id}/${decision}`, { method:'PATCH', body:JSON.stringify({reviewNote}) }),
+      reviewAllManualRequests: (ids, reviewNote = "") => api('/attendance/manual/bulk/approve', { method:'PATCH', body:JSON.stringify({ ids, reviewNote }) }),
   manualProof: (id) => downloadApi(`/attendance/manual/${id}/proof`),
   manualMetrics: () => api('/attendance/manual/metrics'),
   triggerAuditNow: () => api('/attendance/audit/run-now', { method: 'POST', body: '{}' }),
