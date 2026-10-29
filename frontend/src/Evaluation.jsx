@@ -39,6 +39,8 @@ export default function EvaluationPage() {
   const [attemptId, setAttemptId] = useState(null);
   const [summary, setSummary] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [answering, setAnswering] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState("");
   const [questions, setQuestions] = useState([]);
   const [index, setIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(SECONDS_PER_QUESTION);
@@ -52,7 +54,8 @@ export default function EvaluationPage() {
   const total = questions.length;
   const question = questions[index];
   const result = results[index];
-  const locked = Boolean(result);
+  const resultLocked = Boolean(result);
+  const locked = resultLocked || answering;
 
   useEffect(() => {
     let active = true;
@@ -68,14 +71,19 @@ export default function EvaluationPage() {
   }, []);
 
   const submitAnswer = async (selected, timedOut) => {
+    setAnswering(true);
     try {
       const data = await examApi.answer(attemptId, question.id, selected);
       setResults((previous) =>
         previous.map((entry, position) => (position === index ? { ...data, timedOut } : entry))
       );
+      setAnswering(false);
+      if (timedOut) setPendingSelection("");
     } catch (error) {
       // Let the candidate try again rather than losing the question to a hiccup.
       submittedRef.current = false;
+      setAnswering(false);
+      setPendingSelection("");
       setNotice(error?.message || "Could not submit your answer. Please try again.");
       if (timedOut) setSecondsLeft(10);
     }
@@ -86,6 +94,7 @@ export default function EvaluationPage() {
     if (secondsLeft <= 0) {
       if (!submittedRef.current) {
         submittedRef.current = true;
+        setPendingSelection("");
         submitAnswer("", true);
       }
       return undefined;
@@ -160,6 +169,8 @@ export default function EvaluationPage() {
     setPhase("loading");
     setNotice("");
     submittedRef.current = false;
+    setAnswering(false);
+    setPendingSelection("");
     setResults([]);
     setIndex(0);
     setSecondsLeft(SECONDS_PER_QUESTION);
@@ -173,8 +184,12 @@ export default function EvaluationPage() {
       setSummary(null);
       setQuestions(paper);
       setResults(Array(paper.length).fill(null));
+      setAnswering(false);
+      setPendingSelection("");
       setPhase("active");
     } catch (error) {
+      setAnswering(false);
+      setPendingSelection("");
       setNotice(error?.message || "Could not load the exam. Please try again.");
       setPhase("idle");
     }
@@ -183,6 +198,7 @@ export default function EvaluationPage() {
   const chooseOption = (optionText) => {
     if (locked || submittedRef.current) return;
     submittedRef.current = true;
+    setPendingSelection(optionText);
     submitAnswer(optionText, false);
   };
 
@@ -204,6 +220,8 @@ export default function EvaluationPage() {
   const goNext = () => {
     if (index < total - 1) {
       submittedRef.current = false;
+      setAnswering(false);
+      setPendingSelection("");
       setIndex((value) => value + 1);
       setSecondsLeft(SECONDS_PER_QUESTION);
       return;
@@ -242,18 +260,18 @@ export default function EvaluationPage() {
           </span>
           <h2>Ready to begin?</h2>
           <p>
-            Each attempt draws{" "}
-            <strong>
-              {perSection} random questions from each of the {sectionCount || DEFAULT_SECTION_COUNT} sections
-            </strong>{" "}
-            — <strong>{totalQuestions} questions</strong> in total — picked at random from a bank of{" "}
-            <strong>{meta?.bankSize || 500}</strong>. You get <strong>{SECONDS_PER_QUESTION} seconds per question</strong>{" "}
-            and the timer starts as soon as you press Start Exam. Answers lock once you select an option, and the correct
-            answer is revealed immediately.
+            Every attempt randomly picks{" "}
+            <strong>{sectionCount || DEFAULT_SECTION_COUNT} sections</strong> out of{" "}
+            <strong>{meta?.sectionPoolSize || DEFAULT_SECTION_COUNT}</strong>, then draws{" "}
+            <strong>{perSection} random questions from each</strong> — <strong>{totalQuestions} questions</strong> in
+            total — all taken from a bank of <strong>{meta?.bankSize || 500}</strong>. You get{" "}
+            <strong>{SECONDS_PER_QUESTION} seconds per question</strong> and the timer starts as soon as you press Start
+            Exam. Answers lock once you select an option, and the correct answer is revealed immediately.
           </p>
           <p>
-            Both the questions and the answer options are shuffled for every attempt, so no two papers are the same.
-            Once the exam starts, <strong>navigation is locked</strong> — you cannot open another screen, use the back
+            The sections, the questions inside them, and the answer options are all randomised per attempt, so no two
+            papers are the same — two people who happen to draw the same sections still get different questions. Once
+            the exam starts, <strong>navigation is locked</strong> — you cannot open another screen, use the back
             button, or switch tabs until all questions are finished. Copying, right-click and Print Screen are also
             monitored.
           </p>
@@ -265,7 +283,7 @@ export default function EvaluationPage() {
             </div>
             <div className="evaluation-meta-item">
               <ClipboardList size={17} />
-              <span>Sections</span>
+              <span>Sections per paper</span>
               <strong>{sectionCount || DEFAULT_SECTION_COUNT}</strong>
             </div>
             <div className="evaluation-meta-item">
@@ -280,14 +298,20 @@ export default function EvaluationPage() {
             </div>
           </div>
           {Array.isArray(meta?.sections) && meta.sections.length > 0 && (
-            <ul className="evaluation-section-list">
-              {meta.sections.map((section) => (
-                <li key={section.id}>
-                  <span>Section {section.id}</span>
-                  {section.title}
-                </li>
-              ))}
-            </ul>
+            <>
+              <p className="evaluation-section-list-caption">
+                The bank covers all {meta.sections.length} sections.{" "}
+                {sectionCount || DEFAULT_SECTION_COUNT} are picked at random for your paper.
+              </p>
+              <ul className="evaluation-section-list">
+                {meta.sections.map((section) => (
+                  <li key={section.id}>
+                    <span>Section {section.id}</span>
+                    {section.title}
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
           <button
             type="button"
@@ -498,13 +522,16 @@ export default function EvaluationPage() {
 
         <div className="evaluation-options">
           {question.options.map((option, optionIndex) => {
-            const isCorrectOption = locked && option === result?.correctOption;
-            const isChosen = locked && option === result?.selected;
+            const isCorrectOption = resultLocked && option === result?.correctOption;
+            const isChosen = resultLocked && option === result?.selected;
+            const isPendingChoice = answering && option === pendingSelection;
             let stateClass = "";
-            if (locked) {
+            if (resultLocked) {
               if (isCorrectOption) stateClass = "is-correct";
               else if (isChosen) stateClass = "is-wrong";
               else stateClass = "is-muted";
+            } else if (isPendingChoice) {
+              stateClass = "is-pending";
             }
             return (
               <button
@@ -516,6 +543,7 @@ export default function EvaluationPage() {
               >
                 <span className="evaluation-option-key">{OPTION_LABELS[optionIndex]}</span>
                 <span className="evaluation-option-text">{option}</span>
+                {isPendingChoice && <Loader2 className="evaluation-option-icon evaluation-spin" size={18} />}
                 {isCorrectOption && <CheckCircle2 className="evaluation-option-icon" size={19} />}
                 {isChosen && !isCorrectOption && <XCircle className="evaluation-option-icon" size={19} />}
               </button>
@@ -523,7 +551,7 @@ export default function EvaluationPage() {
           })}
         </div>
 
-        {locked && (
+        {resultLocked && (
           <div className={`evaluation-feedback ${result.correct ? "correct" : "wrong"}`}>
             {result.correct ? <CheckCircle2 size={19} /> : <XCircle size={19} />}
             <div>
@@ -537,8 +565,10 @@ export default function EvaluationPage() {
         )}
 
         <div className="evaluation-quiz-bottom">
-          <span className="evaluation-hint">{locked ? "" : "Select an option to continue"}</span>
-          <button type="button" className="primary-button" disabled={!locked || submitting} onClick={goNext}>
+          <span className="evaluation-hint">
+            {answering ? "Checking your answer..." : resultLocked ? "" : "Select an option to continue"}
+          </span>
+          <button type="button" className="primary-button" disabled={!resultLocked || submitting} onClick={goNext}>
             {index < total - 1 ? "Next Question" : submitting ? "Saving…" : "See Results"} <ChevronRight size={16} />
           </button>
         </div>

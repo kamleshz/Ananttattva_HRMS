@@ -12,14 +12,14 @@ const router = Router()
 // below are additionally restricted to HR and administrators.
 router.use(authenticate)
 
-// Only these sections are included in the assessment paper.
-const ACTIVE_SECTION_IDS = [6, 8]
+// Every attempt draws a random pair of sections from the full question bank.
+const SECTIONS_PER_EXAM = 2
 const QUESTIONS_PER_SECTION = 10
 const SECONDS_PER_QUESTION = 30
 const PASS_PERCENT = 60
 const OBJECT_ID = /^[0-9a-f]{24}$/i
 
-const EXAM_SECTIONS = PWM_SECTIONS.filter((section) => ACTIVE_SECTION_IDS.includes(section.id))
+const SECTION_POOL = PWM_SECTIONS
 const SECTION_TITLES = new Map(PWM_SECTIONS.map((section) => [section.id, section.title]))
 const QUESTIONS_BY_ID = new Map(PWM_QUESTIONS.map((item) => [item.id, item]))
 const QUESTIONS_BY_SECTION = (() => {
@@ -84,25 +84,28 @@ router.get('/meta', asyncHandler(async (_req, res) => {
     success: true,
     data: {
       bankSize: PWM_TOTAL,
-      sectionCount: EXAM_SECTIONS.length,
+      sectionPoolSize: SECTION_POOL.length,
+      sectionCount: SECTIONS_PER_EXAM,
       perSection: QUESTIONS_PER_SECTION,
-      questionsPerExam: EXAM_SECTIONS.length * QUESTIONS_PER_SECTION,
+      questionsPerExam: SECTIONS_PER_EXAM * QUESTIONS_PER_SECTION,
       secondsPerQuestion: SECONDS_PER_QUESTION,
       passPercent: PASS_PERCENT,
-      sections: EXAM_SECTIONS,
+      sections: SECTION_POOL,
     },
   })
 }))
 
-// Starts a new attempt. The paper is drawn evenly from the active sections, the
-// question order and option order are reshuffled every time, and the answer key
-// stays on the server. The attempt row records what was asked so the report can
-// be rebuilt without trusting the client.
+// Starts a new attempt. Two sections are drawn at random from the bank and ten
+// questions are taken from each, so two candidates rarely face the same paper.
+// The question order and option order are reshuffled every time and the answer
+// key stays on the server. The attempt row records what was asked so the report
+// can be rebuilt without trusting the client.
 router.get('/questions', asyncHandler(async (req, res) => {
   const requested = Number.parseInt(req.query.perSection, 10)
   const perSection = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : QUESTIONS_PER_SECTION
+  const chosenSections = shuffle(SECTION_POOL).slice(0, SECTIONS_PER_EXAM)
   const picked = []
-  for (const section of shuffle(EXAM_SECTIONS)) {
+  for (const section of chosenSections) {
     const pool = QUESTIONS_BY_SECTION.get(section.id) || []
     picked.push(...shuffle(pool).slice(0, perSection))
   }
@@ -290,7 +293,7 @@ router.get('/reports', authorize('super_admin', 'admin', 'hr_admin'), asyncHandl
     passPercent: PASS_PERCENT,
   }
 
-  res.json({ success: true, data: { summary, attempts: rows, sections: EXAM_SECTIONS } })
+  res.json({ success: true, data: { summary, attempts: rows, sections: SECTION_POOL } })
 }))
 
 export default router
