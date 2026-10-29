@@ -1,33 +1,33 @@
 /* Live UI sits over the static illustration; all text, counters and chart are crisp. */
 .reference-login .attendance-art { position: relative; container-type: inline-size; }
-.attendance-demo { position: absolute; left: 0; top: 20%; width: 71.5%; height: 79%; display: flex; flex-direction: column; padding: 2.6cqw 3cqw; border: 1px solid #ededf1; border-radius: 1.8cqw; background: #fff; box-shadow: 0 8px 30px #1c23330a; color: #080b1d; }
-.attendance-demo-header { display: flex; align-items: center; justify-content: space-between; gap: 1cqw; margin-bottom: 1.6cqw; }
-.attendance-demo-header > span { display: flex; align-items: center; gap: .8cqw; font-size: 2.2cqw; letter-spacing: -.06cqw; white-space: nowrap; }
+.attendance-demo { position: absolute; left: 0; top: 22.5%; width: 69.5%; height: 76%; display: flex; flex-direction: column; padding: 2.45cqw 2.8cqw; border: 1px solid #ededf1; border-radius: 1.8cqw; background: #fff; box-shadow: 0 8px 30px #1c23330a; color: #080b1d; }
+.attendance-demo-header { display: flex; align-items: center; justify-content: space-between; gap: 1cqw; margin-bottom: 1.45cqw; }
+.attendance-demo-header > span { display: flex; align-items: center; gap: .8cqw; font-size: 2.05cqw; letter-spacing: -.06cqw; white-space: nowrap; }
 .attendance-demo-header svg { width: 1.8cqw; height: 1.8cqw; color: #7d89ae; }
-.attendance-demo-header > small { display: flex; align-items: center; gap: .7cqw; padding: .7cqw 1cqw; border-radius: .8cqw; background: #fff7f2; color: #7d89ae; font-size: 1.25cqw; white-space: nowrap; }
+.attendance-demo-header > small { display: flex; align-items: center; gap: .7cqw; padding: .55cqw .95cqw; border-radius: .8cqw; background: #fff7f2; color: #7d89ae; font-size: 1.12cqw; white-space: nowrap; }
 .attendance-demo-header i { width: .9cqw; height: .9cqw; border-radius: 50%; background: #ff500b; }
-.attendance-demo-chart { display: grid; grid-template-columns: 33% 67%; align-items: center; flex: 1; min-height: 0; border: 1px solid #ededf1; border-radius: 1cqw; padding: 1.8cqw; }
+.attendance-demo-chart { display: grid; grid-template-columns: 33% 67%; align-items: center; flex: 1; min-height: 0; border: 1px solid #ededf1; border-radius: 1cqw; padding: 1.65cqw; }
 .attendance-demo-rate { display: flex; flex-direction: column; gap: .3cqw; border-right: 1px solid #ededf1; }
-.attendance-demo-rate > span { color: #7d89ae; font-size: 1.6cqw; }
-.attendance-demo-rate > strong { font-size: 4.7cqw; line-height: 1.05; font-weight: 650; letter-spacing: -.2cqw; font-variant-numeric: tabular-nums; }
-.attendance-demo-rate > small { color: #7d89ae; font-size: 1.5cqw; }
-.attendance-demo-trend { padding-left: 2cqw; min-width: 0; }
+.attendance-demo-rate > span { color: #7d89ae; font-size: 1.45cqw; }
+.attendance-demo-rate > strong { font-size: 4.45cqw; line-height: 1.05; font-weight: 650; letter-spacing: -.2cqw; font-variant-numeric: tabular-nums; }
+.attendance-demo-rate > small { color: #7d89ae; font-size: 1.35cqw; }
+.attendance-demo-trend { padding-left: 1.7cqw; min-width: 0; }
 .attendance-demo-trend svg { display: block; width: 100%; height: auto; overflow: visible; }
 .attendance-trend-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: attendance-draw 5s ease-in-out infinite; }
 .attendance-trend-area { animation: attendance-area 5s ease-in-out infinite; }
-.attendance-demo-days { display: flex; justify-content: space-between; color: #7d89ae; font-size: 1.3cqw; padding: .4cqw .3cqw 0; }
-.attendance-demo-team-heading { display: flex; justify-content: space-between; align-items: center; margin: 1.6cqw 0 1.2cqw; font-size: 1.7cqw; }
-.attendance-demo-team-heading small { display: flex; align-items: center; gap: .3cqw; color: #7d89ae; font-size: 1.4cqw; }
+.attendance-demo-days { display: flex; justify-content: space-between; color: #7d89ae; font-size: 1.18cqw; padding: .35cqw .2cqw 0; }
+.attendance-demo-team-heading { display: flex; justify-content: space-between; align-items: center; margin: 1.35cqw 0 1cqw; font-size: 1.55cqw; }
+.attendance-demo-team-heading small { display: flex; align-items: center; gap: .3cqw; color: #7d89ae; font-size: 1.25cqw; }
 .attendance-demo-team-heading svg { width: 1.5cqw; height: 1.5cqw; }
-.attendance-demo-team { display: flex; gap: 1.8cqw; align-items: center; }
+.attendance-demo-team { display: flex; gap: 1.5cqw; align-items: center; }
 .attendance-demo-portraits { display: flex; flex: 1; min-width: 0; align-items: center; }
-.attendance-demo-portraits img, .attendance-demo-portraits > span { width: 4.8cqw; height: 4.8cqw; flex: none; border: .25cqw solid #fff; border-radius: 50%; object-fit: cover; object-position: center; }
+.attendance-demo-portraits img, .attendance-demo-portraits > span { width: 4.45cqw; height: 4.45cqw; flex: none; border: .25cqw solid #fff; border-radius: 50%; object-fit: cover; object-position: center; }
 .attendance-demo-portraits img + img, .attendance-demo-portraits > span { margin-left: -.5cqw; }
-.attendance-demo-portraits > span { display: grid; place-items: center; background: #fff5ef; color: #ff500b; font-size: 1.8cqw; }
+.attendance-demo-portraits > span { display: grid; place-items: center; background: #fff5ef; color: #ff500b; font-size: 1.55cqw; }
 .attendance-demo-metrics { display: grid; grid-template-columns: repeat(4, 1fr); flex: 1; }
 .attendance-demo-metrics > div { display: flex; flex-direction: column; align-items: center; border-left: 1px solid #ededf1; gap: .4cqw; }
-.attendance-demo-metrics strong { font-size: 2cqw; font-weight: 600; font-variant-numeric: tabular-nums; }
-.attendance-demo-metrics small { color: #7d89ae; font-size: 1.3cqw; white-space: nowrap; }
+.attendance-demo-metrics strong { font-size: 1.82cqw; font-weight: 600; font-variant-numeric: tabular-nums; }
+.attendance-demo-metrics small { color: #7d89ae; font-size: 1.14cqw; white-space: nowrap; }
 @keyframes attendance-draw { 0% { stroke-dashoffset: 1; } 55%, 90% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 1; } }
 @keyframes attendance-area { 0%, 8%, 100% { opacity: 0; } 55%, 90% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .attendance-trend-line { animation: none; stroke-dashoffset: 0; } .attendance-trend-area { animation: none; opacity: 1; } }

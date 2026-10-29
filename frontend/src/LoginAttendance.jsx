@@ -32,7 +32,7 @@ export default function LoginAttendance() {
     <section className="attendance-demo" aria-label="Illustrative attendance overview">
       <header className="attendance-demo-header"><span>Attendance Overview <ChevronRight aria-hidden="true"/></span><small><i/>All systems operational</small></header>
       <div className="attendance-demo-chart">
-        <div className="attendance-demo-rate" aria-label="Attendance today: 96 percent"><span>Attendance today</span><strong aria-hidden="true">{Math.round(96 * progress)}%</strong><small>245 of 255 employees</small></div>
+        <div className="attendance-demo-rate" aria-label="Attendance today: 96 percent"><span>Attendance today</span><strong aria-hidden="true">{Math.round(96 * progress)}%</strong><small>236 of 245 employees</small></div>
         <div className="attendance-demo-trend">
           <svg viewBox="0 0 375 100" role="img" aria-label="Weekly attendance trend, Monday through Sunday">
             <defs><linearGradient id="attendance-demo-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ff6b25" stopOpacity=".27"/><stop offset="100%" stopColor="#ff6b25" stopOpacity=".02"/></linearGradient></defs>

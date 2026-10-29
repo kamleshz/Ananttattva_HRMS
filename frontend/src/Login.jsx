@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarCheck, Crown, UserRound, UserRoundPlus, ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck, UsersRound } from 'lucide-react'
-import { authApi, organizationApi, session } from './services/api.js'
+import { authApi, session } from './services/api.js'
 import './login-modern.css'
 import LoginAttendance from './LoginAttendance.jsx'
 
@@ -71,8 +71,7 @@ export default function Login({ onAuthenticated }) {
   const [challenge,setChallenge]=useState(null),[otp,setOtp]=useState(''),[view,setView]=useState('login')
   const [forgotEmail,setForgotEmail]=useState(''),[resetChallenge,setResetChallenge]=useState(null),[resetCode,setResetCode]=useState('')
   const [newPassword,setNewPassword]=useState(''),[confirmPassword,setConfirmPassword]=useState(''),[showNewPassword,setShowNewPassword]=useState(false)
-  const [supportContacts,setSupportContacts]=useState([]),[secondsLeft,setSecondsLeft]=useState(0),[resendWait,setResendWait]=useState(0)
-  useEffect(()=>{organizationApi.publicContacts().then(contacts=>{setSupportContacts(contacts||[])}).catch(()=>{})},[])
+  const [secondsLeft,setSecondsLeft]=useState(0),[resendWait,setResendWait]=useState(0)
   useEffect(()=>{if(!secondsLeft&&!resendWait)return;const timer=setInterval(()=>{setSecondsLeft(value=>Math.max(0,value-1));setResendWait(value=>Math.max(0,value-1))},1000);return()=>clearInterval(timer)},[secondsLeft,resendWait])
   const maskEmail=email=>{const [name,domain]=String(email||'').split('@');return name&&domain?`${name[0]}${'*'.repeat(Math.max(4,name.length-1))}@${domain}`:email}
   const countdown=value=>`${String(Math.floor(value/60)).padStart(2,'0')}:${String(value%60).padStart(2,'0')}`
@@ -161,9 +160,12 @@ export default function Login({ onAuthenticated }) {
     </form>
   </>
 
-  const support=supportContacts[0]
   return <main className="login-page reference-login">
-    <header className="reference-header"><a className="reference-logo" href="/" aria-label="AT Connect home"><span>AT</span> Connect</a><div>Need help? <a href={`mailto:${support?.officialEmail || 'it_support@ananttattva.com'}`}>Contact support</a></div></header>
+    <header className="reference-header">
+      <a className="reference-logo" href="/" aria-label="Anant Tattva home">
+        <img src="/assets/ananttattva-logo.png?v=20261029" alt="Anant Tattva"/>
+      </a>
+    </header>
     <div className="login-card">
       <aside className="reference-story">
         <h1>Your team.<br/>Simply <strong>connected.</strong></h1>
@@ -175,7 +177,12 @@ export default function Login({ onAuthenticated }) {
         </div>
         <footer>© {new Date().getFullYear()} AT Connect. All rights reserved.</footer>
       </aside>
-      <section className="login-panel"><div className={`login-form-wrap ${challenge||view==='reset'?'otp-step':''}`}>{content}<p className="reference-legal">Secure access. A simpler workday.</p></div></section>
+      <section className="login-panel">
+        <div className={`login-form-wrap ${challenge||view==='reset'?'otp-step':''}`}>
+          {content}
+          <p className="reference-legal">Secure access. A simpler workday.</p>
+        </div>
+      </section>
     </div>
   </main>
 }
