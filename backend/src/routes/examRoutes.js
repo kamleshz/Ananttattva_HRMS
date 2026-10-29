@@ -12,7 +12,9 @@ const router = Router()
 // below are additionally restricted to HR and administrators.
 router.use(authenticate)
 
-// Every attempt draws a random pair of sections from the full question bank.
+// The assessment runs on a weekly paper: a fixed pair of sections is selected
+// for the week and rotates automatically every Monday (IST). Everyone who takes
+// the exam in the same week answers from the same two sections.
 const SECTIONS_PER_EXAM = 2
 const QUESTIONS_PER_SECTION = 10
 const SECONDS_PER_QUESTION = 30
@@ -40,6 +42,66 @@ const shuffle = (items) => {
     copy[j] = swap
   }
   return copy
+}
+
+/* ---------- Weekly section rotation ---------- */
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// Day index (in IST wall clock) of the Monday that starts the week containing `now`.
+const weekStartDay = (now = new Date()) => {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS)
+  const mondayOffset = (ist.getUTCDay() + 6) % 7 // Monday = 0, Sunday = 6
+  return Math.floor(ist.getTime() / DAY_MS) - mondayOffset
+}
+
+// Deterministic PRNG (mulberry32) so the same week always resolves to the same
+// pair on every server instance, with nothing to store.
+const seededRandom = (seed) => {
+  let state = (seed + 0x6d2b79f5) >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+const seededShuffle = (items, random) => {
+  const copy = [...items]
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1))
+    const swap = copy[i]
+    copy[i] = copy[j]
+    copy[j] = swap
+  }
+  return copy
+}
+
+// One random ordering of the bank, derived from a fixed seed so every instance
+// agrees. Each week slides a two-section window further along this order: the
+// stride (3) shares no factor with the section count (10), so the window always
+// moves on and never repeats the previous week's pair.
+const SECTION_ORDER = seededShuffle(SECTION_POOL, seededRandom(20260126))
+const WEEK_STRIDE = 3
+
+const sectionsForWeek = (weekNumber) => {
+  const size = SECTION_ORDER.length
+  const start = ((weekNumber * WEEK_STRIDE) % size + size) % size
+  return Array.from({ length: SECTIONS_PER_EXAM }, (_unused, offset) => SECTION_ORDER[(start + offset) % size])
+}
+
+// Resolves the current week's pair plus the Monday it started on.
+const resolveWeek = (now = new Date()) => {
+  const startDay = weekStartDay(now)
+  const weekNumber = Math.floor(startDay / 7)
+  return {
+    sections: sectionsForWeek(weekNumber),
+    // ISO date of the Monday (IST) this paper belongs to.
+    weekStart: new Date(startDay * DAY_MS).toISOString().slice(0, 10),
+  }
 }
 
 const loadOwnAttempt = async (attemptId, userId) => {
@@ -80,6 +142,7 @@ const attemptToRow = (attempt) => {
 }
 
 router.get('/meta', asyncHandler(async (_req, res) => {
+  const week = resolveWeek()
   res.json({
     success: true,
     data: {
@@ -91,21 +154,23 @@ router.get('/meta', asyncHandler(async (_req, res) => {
       secondsPerQuestion: SECONDS_PER_QUESTION,
       passPercent: PASS_PERCENT,
       sections: SECTION_POOL,
+      // The pair in force this week, plus the Monday it started on.
+      weekSections: week.sections,
+      weekStart: week.weekStart,
     },
   })
 }))
 
-// Starts a new attempt. Two sections are drawn at random from the bank and ten
-// questions are taken from each, so two candidates rarely face the same paper.
-// The question order and option order are reshuffled every time and the answer
-// key stays on the server. The attempt row records what was asked so the report
-// can be rebuilt without trusting the client.
+// Starts a new attempt from this week's sections. Ten questions are taken from
+// each chosen section and reshuffled on every attempt, so two candidates in the
+// same week share the sections but not the questions. The answer key stays on
+// the server and the attempt row records what was asked so the report can be
+// rebuilt without trusting the client.
 router.get('/questions', asyncHandler(async (req, res) => {
   const requested = Number.parseInt(req.query.perSection, 10)
   const perSection = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : QUESTIONS_PER_SECTION
-  const chosenSections = shuffle(SECTION_POOL).slice(0, SECTIONS_PER_EXAM)
   const picked = []
-  for (const section of chosenSections) {
+  for (const section of resolveWeek().sections) {
     const pool = QUESTIONS_BY_SECTION.get(section.id) || []
     picked.push(...shuffle(pool).slice(0, perSection))
   }

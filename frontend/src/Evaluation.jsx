@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  CalendarDays,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
@@ -236,6 +237,18 @@ export default function EvaluationPage() {
     const perSection = meta?.perSection || QUESTIONS_PER_SECTION;
     const sectionCount = meta?.sectionCount || 0;
     const totalQuestions = meta?.questionsPerExam || perSection * (sectionCount || DEFAULT_SECTION_COUNT);
+    // Sections are fixed for the week and rotate every Monday.
+    const weekSections = Array.isArray(meta?.weekSections) ? meta.weekSections : [];
+    const weekSectionIds = weekSections.map((section) => section.id);
+    const weekLabel = weekSectionIds.length
+      ? weekSectionIds.map((id) => `Section ${id}`).join(" & ")
+      : `${sectionCount || DEFAULT_SECTION_COUNT} sections`;
+    const weekDate = meta?.weekStart
+      ? new Date(`${meta.weekStart}T00:00:00+05:30`).toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short",
+        })
+      : "";
     return (
       <div className="evaluation-page">
         {notice && (
@@ -260,20 +273,18 @@ export default function EvaluationPage() {
           </span>
           <h2>Ready to begin?</h2>
           <p>
-            Every attempt randomly picks{" "}
-            <strong>{sectionCount || DEFAULT_SECTION_COUNT} sections</strong> out of{" "}
-            <strong>{meta?.sectionPoolSize || DEFAULT_SECTION_COUNT}</strong>, then draws{" "}
-            <strong>{perSection} random questions from each</strong> — <strong>{totalQuestions} questions</strong> in
-            total — all taken from a bank of <strong>{meta?.bankSize || 500}</strong>. You get{" "}
-            <strong>{SECONDS_PER_QUESTION} seconds per question</strong> and the timer starts as soon as you press Start
-            Exam. Answers lock once you select an option, and the correct answer is revealed immediately.
+            This week&apos;s paper covers <strong>{weekLabel}</strong> — <strong>{perSection} random questions from
+            each</strong>, <strong>{totalQuestions} questions</strong> in total, drawn from a bank of{" "}
+            <strong>{meta?.bankSize || 500}</strong>. The sections rotate <strong>every Monday</strong>, so the paper
+            changes weekly. You get <strong>{SECONDS_PER_QUESTION} seconds per question</strong> and the timer starts
+            as soon as you press Start Exam. Answers lock once you select an option, and the correct answer is revealed
+            immediately.
           </p>
           <p>
-            The sections, the questions inside them, and the answer options are all randomised per attempt, so no two
-            papers are the same — two people who happen to draw the same sections still get different questions. Once
-            the exam starts, <strong>navigation is locked</strong> — you cannot open another screen, use the back
-            button, or switch tabs until all questions are finished. Copying, right-click and Print Screen are also
-            monitored.
+            The questions inside the chosen sections and the answer options are reshuffled on every attempt, so two
+            people sitting the same week still get different questions. Once the exam starts,{" "}
+            <strong>navigation is locked</strong> — you cannot open another screen, use the back button, or switch tabs
+            until all questions are finished. Copying, right-click and Print Screen are also monitored.
           </p>
           <div className="evaluation-meta">
             <div className="evaluation-meta-item">
@@ -285,6 +296,11 @@ export default function EvaluationPage() {
               <ClipboardList size={17} />
               <span>Sections per paper</span>
               <strong>{sectionCount || DEFAULT_SECTION_COUNT}</strong>
+            </div>
+            <div className="evaluation-meta-item">
+              <CalendarDays size={17} />
+              <span>This week</span>
+              <strong>{weekDate || weekLabel}</strong>
             </div>
             <div className="evaluation-meta-item">
               <Target size={17} />
@@ -300,16 +316,19 @@ export default function EvaluationPage() {
           {Array.isArray(meta?.sections) && meta.sections.length > 0 && (
             <>
               <p className="evaluation-section-list-caption">
-                The bank covers all {meta.sections.length} sections.{" "}
-                {sectionCount || DEFAULT_SECTION_COUNT} are picked at random for your paper.
+                Sections rotate every Monday. This week: {weekLabel}.
               </p>
               <ul className="evaluation-section-list">
-                {meta.sections.map((section) => (
-                  <li key={section.id}>
-                    <span>Section {section.id}</span>
-                    {section.title}
-                  </li>
-                ))}
+                {meta.sections.map((section) => {
+                  const active = weekSectionIds.includes(section.id);
+                  return (
+                    <li key={section.id} className={active ? "is-active" : ""}>
+                      <span>Section {section.id}</span>
+                      {section.title}
+                      {active && <em className="evaluation-section-tag">This week</em>}
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}
