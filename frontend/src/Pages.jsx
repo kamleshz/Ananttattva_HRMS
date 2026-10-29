@@ -974,23 +974,60 @@ export function AttendancePage({ user }) {
           </div>
         </section>
       )}
-      <section className="content-card">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Attendance log</p>
-            <div style={{display:"flex", alignItems:"center", gap:14, flexWrap:"wrap"}}>
-              <h2 style={{margin:0}}>{weeksViewMode === "week" ? "Weekly daily records" : "Daily records"}</h2>
-              {canReviewCorrections && (
-                <div className="segmented-control small" role="tablist" aria-label="Attendance log tabs">
-                  <button type="button" role="tab" aria-selected={attendanceLogTab==="daily"} className={attendanceLogTab==="daily"?"active":""} onClick={()=>setAttendanceLogTab("daily")}>Daily records</button>
-                  <button type="button" role="tab" aria-selected={attendanceLogTab==="missing"} className={attendanceLogTab==="missing"?"active":""} onClick={()=>setAttendanceLogTab("missing")}>
-                    Missing punches{missingPunchRecords.length>0?` (${missingPunchRecords.length})`:""}
-                  </button>
+          <section className="content-card attendance-log-card">
+            <div className="section-heading attendance-log-heading">
+              <div className="attendance-log-heading-main">
+                <p className="eyebrow">Attendance log</p>
+                <div className="attendance-log-toolbar">
+                  <h2>{weeksViewMode === "week" ? "Weekly daily records" : "Daily records"}</h2>
+                  {canReviewCorrections && (
+                    <div className="attendance-log-tabs" role="tablist" aria-label="Attendance log tabs">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={attendanceLogTab==="daily"}
+                        className={attendanceLogTab==="daily"?"active":""}
+                        onClick={()=>setAttendanceLogTab("daily")}
+                      >
+                        <span>Daily records</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={attendanceLogTab==="missing"}
+                        className={attendanceLogTab==="missing"?"active":""}
+                        onClick={()=>setAttendanceLogTab("missing")}
+                      >
+                        <span>Missing punches</span>
+                        {missingPunchRecords.length > 0 && (
+                          <strong className="attendance-log-tab-count">{missingPunchRecords.length}</strong>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
+                <p className="attendance-log-subtitle">
+                  {attendanceLogTab === "daily"
+                    ? "Review punch timings, proof photos, attendance status, and correction actions in one place."
+                    : "Review incomplete records quickly and take fill-punch or waive actions without leaving this screen."}
+                </p>
+                <div className="attendance-log-meta">
+                  <span className="attendance-log-meta-pill">
+                    {(attendanceLogTab === "daily" ? visibleRecords.length : missingPunchRecords.length).toLocaleString()}{" "}
+                    {attendanceLogTab === "daily" ? "records" : "records need review"}
+                  </span>
+                  <span className="attendance-log-meta-pill soft">
+                    {weeksViewMode === "week" ? "Week-aligned attendance view" : "Month-aligned attendance view"}
+                  </span>
+                </div>
+              </div>
+              {canViewCompleteRoster && attendanceLogTab==="daily" && (
+                <label className="attendance-employee-filter">
+                  <Search size={15}/>
+                  <input value={employeeFilter} onChange={event=>setEmployeeFilter(event.target.value)} placeholder="Filter by employee name or ID" aria-label="Filter attendance by employee"/>
+                  {employeeFilter&&<button type="button" onClick={()=>setEmployeeFilter("")} aria-label="Clear employee filter"><X size={14}/></button>}
+                </label>
               )}
-            </div>
-          </div>
-          {canViewCompleteRoster && attendanceLogTab==="daily" && <label className="attendance-employee-filter"><Search size={15}/><input value={employeeFilter} onChange={event=>setEmployeeFilter(event.target.value)} placeholder="Filter by employee name or ID" aria-label="Filter attendance by employee"/>{employeeFilter&&<button type="button" onClick={()=>setEmployeeFilter("")} aria-label="Clear employee filter"><X size={14}/></button>}</label>}
         </div>
         {loading ? (
           <StateMessage>Loading attendance…</StateMessage>
@@ -999,8 +1036,8 @@ export function AttendancePage({ user }) {
         ) : (attendanceLogTab==="daily" ? visibleRecords : missingPunchRecords).length === 0 ? (
           <StateMessage>{attendanceLogTab==="daily" ? (employeeFilter ? "No employees match this filter." : "No attendance records for this month.") : "🎉 All punches present! No missing checkin/checkout records for the current filter."}</StateMessage>
         ) : attendanceLogTab === "daily" ? (
-          <div className="data-table-wrap">
-            <table className="data-table">
+              <div className="data-table-wrap attendance-table-wrap">
+                <table className="data-table attendance-log-table">
               <thead>
                 <tr>
                   {canViewAllAttendance && <th>Employee</th>}
@@ -1077,12 +1114,12 @@ export function AttendancePage({ user }) {
                           <button className="correction-button" onClick={() => openCorrection(item)}>Correct checkout</button>
                         )}
                         {shouldShowViewRequestLink(item) && (
-                          <button className="correction-button" style={{ opacity: 0.6, background: "#f5f7f9", borderColor: "#dfe4e7", color: "#6b7585" }} disabled>
+                              <button className="correction-button correction-button-muted" disabled>
                             View request
                           </button>
                         )}
                         {canReviewCorrections && shouldHideEmployeeButton(item) && item.status === "missing_checkout" && (
-                          <button className="correction-button" style={{ background: "#fff5f5", borderColor: "#f5b6b6", color: "#991b1b" }}>
+                              <button className="correction-button correction-button-danger">
                             Override deadline
                           </button>
                         )}
@@ -1097,8 +1134,8 @@ export function AttendancePage({ user }) {
           </div>
         ) : (
           /* ==================== Missing Punches Tab ==================== */
-          <div className="data-table-wrap">
-            <table className="data-table">
+              <div className="data-table-wrap attendance-table-wrap">
+                <table className="data-table attendance-log-table">
               <thead>
                 <tr>
                   {canViewAllAttendance && <th>Employee</th>}
@@ -1129,9 +1166,9 @@ export function AttendancePage({ user }) {
                     <td>{Math.floor(item.workingMinutes/60)}h {item.workingMinutes%60}m</td>
                     <td>{renderAttendanceStatus(item)}</td>
                     <td>
-                      <div className="attendance-row-actions" style={{gap:8}}>
-                        <button className="correction-button" style={{background:"#ecfdf5",borderColor:"#a7f3d0",color:"#065f46"}} onClick={() => openFillPunch(item)}>⚡ Fill punch</button>
-                        <button className="table-action" onClick={() => waiveMissingPunch(item)} title="Waive: excuse 0h completed, no leave deduction" style={{color:"#991b1b",borderColor:"#fecaca",background:"#fef2f2"}}>Waive · 0h</button>
+                          <div className="attendance-row-actions attendance-row-actions-tight">
+                            <button className="correction-button correction-button-fill" onClick={() => openFillPunch(item)}>Fill punch</button>
+                            <button className="table-action table-action-danger" onClick={() => waiveMissingPunch(item)} title="Waive: excuse 0h completed, no leave deduction">Waive · 0h</button>
                         <button className="table-action" onClick={() => setSelected(item)}>View</button>
                       </div>
                     </td>
