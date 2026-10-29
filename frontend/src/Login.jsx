@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, BriefcaseBusiness, Check, CheckCircle2, Eye, EyeOff, KeyRound, LockKeyhole, Mail, Phone, ShieldCheck, Sparkles, UsersRound } from 'lucide-react'
+import { CalendarCheck, Crown, UserRound, UserRoundPlus, ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck, UsersRound } from 'lucide-react'
 import { authApi, organizationApi, session } from './services/api.js'
 import './login-modern.css'
-
-const PRODUCT_NAME = 'AT Connect'
 
 function VerificationCodeInput({ value, onChange, label, autoFocus = false }) {
   const inputRefs = useRef([])
@@ -72,8 +70,8 @@ export default function Login({ onAuthenticated }) {
   const [challenge,setChallenge]=useState(null),[otp,setOtp]=useState(''),[view,setView]=useState('login')
   const [forgotEmail,setForgotEmail]=useState(''),[resetChallenge,setResetChallenge]=useState(null),[resetCode,setResetCode]=useState('')
   const [newPassword,setNewPassword]=useState(''),[confirmPassword,setConfirmPassword]=useState(''),[showNewPassword,setShowNewPassword]=useState(false)
-  const [organization,setOrganization]=useState(null),[supportContacts,setSupportContacts]=useState([]),[secondsLeft,setSecondsLeft]=useState(0),[resendWait,setResendWait]=useState(0)
-  useEffect(()=>{Promise.all([organizationApi.publicProfile(),organizationApi.publicContacts()]).then(([profile,contacts])=>{setOrganization(profile);setSupportContacts(contacts||[])}).catch(()=>{})},[])
+  const [supportContacts,setSupportContacts]=useState([]),[secondsLeft,setSecondsLeft]=useState(0),[resendWait,setResendWait]=useState(0)
+  useEffect(()=>{organizationApi.publicContacts().then(contacts=>{setSupportContacts(contacts||[])}).catch(()=>{})},[])
   useEffect(()=>{if(!secondsLeft&&!resendWait)return;const timer=setInterval(()=>{setSecondsLeft(value=>Math.max(0,value-1));setResendWait(value=>Math.max(0,value-1))},1000);return()=>clearInterval(timer)},[secondsLeft,resendWait])
   const maskEmail=email=>{const [name,domain]=String(email||'').split('@');return name&&domain?`${name[0]}${'*'.repeat(Math.max(4,name.length-1))}@${domain}`:email}
   const countdown=value=>`${String(Math.floor(value/60)).padStart(2,'0')}:${String(value%60).padStart(2,'0')}`
@@ -111,7 +109,6 @@ export default function Login({ onAuthenticated }) {
   function backToLogin(){setChallenge(null);setOtp('');setView('login');setError('');setSuccess('')}
   function openForgot(){setForgotEmail(form.email);setView('forgot');setChallenge(null);setError('');setSuccess('')}
   function selectLoginType(loginType){setForm(current=>({...current,loginType}));setError('')}
-  const loginLabel=form.loginType==='admin'?'Admin':'User'
 
   let content
   if (view === 'forgot') content = <>
@@ -151,19 +148,33 @@ export default function Login({ onAuthenticated }) {
     <p className="login-help">Didn&apos;t receive the email? <button type="button" disabled={Boolean(resendWait)} onClick={resendOtp}>{resendWait?`Resend in ${resendWait}s`:'Resend Code'}</button> · <button type="button" onClick={backToLogin}>Change Email</button></p>
   </>
   else content = <>
-    <div className="login-type-badge"><ShieldCheck size={15}/>{loginLabel} login</div>
-    <div className="form-heading"><h2>Welcome back</h2><p>Sign in to access your AT Connect account.</p></div>
+    <div className="form-heading"><h2>Welcome back</h2></div>
     <form onSubmit={submit}>
-      <fieldset className="login-type-field"><legend>Login type</legend><div className="login-type-options"><button type="button" className={form.loginType==='admin'?'active':''} onClick={()=>selectLoginType('admin')}><strong>Admin Login</strong><span>All administrative accounts</span></button><button type="button" className={form.loginType==='user'?'active':''} onClick={()=>selectLoginType('user')}><strong>User Login</strong><span>All non-admin team users</span></button></div></fieldset>
+      <fieldset className="login-type-field"><legend>Login type</legend><div className="login-type-options"><button type="button" aria-pressed={form.loginType==='admin'} className={form.loginType==='admin'?'active':''} onClick={()=>selectLoginType('admin')}><Crown size={30}/><strong>Admin Login</strong></button><button type="button" aria-pressed={form.loginType==='user'} className={form.loginType==='user'?'active':''} onClick={()=>selectLoginType('user')}><UserRound size={30}/><strong>User Login</strong></button></div></fieldset>
       <label>Work email<div className="input-wrap"><Mail size={18}/><input type="email" value={form.email} onChange={event=>setForm({...form,email:event.target.value})} placeholder="you@ananttattva.com" autoComplete="email" required/></div></label>
       <label>Password<div className="input-wrap"><LockKeyhole size={18}/><input type={showPassword?'text':'password'} value={form.password} onChange={event=>setForm({...form,password:event.target.value})} placeholder="Enter your password" autoComplete="current-password" required minLength={8}/><button type="button" aria-label={showPassword?'Hide password':'Show password'} onClick={()=>setShowPassword(!showPassword)}>{showPassword?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></label>
       <div className="login-form-meta"><label className="remember-option"><input type="checkbox" checked={form.rememberMe} onChange={event=>setForm({...form,rememberMe:event.target.checked})}/>Remember me</label><button type="button" onClick={openForgot}>Forgot password?</button></div>
       {success&&<p className="login-success" role="status"><CheckCircle2 size={16}/>{success}</p>}{error&&<p className="login-error" role="alert">{error}</p>}
-      <button className="login-submit" disabled={loading}><span>{loading?'Sending secure code…':'Continue Securely'}</span><ArrowRight size={18}/></button>
-      <p className="secure-login-copy"><ShieldCheck size={15}/>For your security, we&apos;ll verify this login using a one-time code.</p>
+      <button className="login-submit" disabled={loading}><span>{loading?'Sending secure code…':'Sign in'}</span><ArrowRight size={18}/></button>
+      <p className="secure-login-copy"><ShieldCheck size={15}/>Your account is protected with one-time verification.</p>
     </form>
   </>
 
   const support=supportContacts[0]
-  return <main className="login-page"><section className="login-card"><aside className="login-brand-panel"><div className="login-brand-lockup"><span><Sparkles size={21}/></span><strong>{PRODUCT_NAME}</strong></div><div className="login-brand-copy"><p>Secure HRMS Portal</p><h1>Welcome to AT Connect</h1><span>Your unified workspace for attendance, allowances, recruitment and employee services.</span><ul><li><ShieldCheck size={17}/>Secure attendance and identity verification</li><li><UsersRound size={17}/>Employee self-service and communication</li><li><BriefcaseBusiness size={17}/>Recruitment, onboarding and approvals</li></ul></div><footer><strong>{organization?.companyName||'Ananttattva Private Limited'}</strong><span>{organization?.description||'People, attendance and recruitment in one secure workspace.'}</span></footer></aside><section className="login-panel"><div className={`login-form-wrap ${challenge||view==='reset'?'otp-step':''}`}>{content}<div className="login-support"><span>Need help signing in?</span><strong>Contact IT Support</strong>{support&&<div>{support.officialEmail&&<a href={`mailto:${support.officialEmail}`}><Mail size={13}/>{support.officialEmail}</a>}{support.officialPhone&&<a href={`tel:${support.officialPhone}`}><Phone size={13}/>{support.officialPhone}</a>}</div>}{!support&&<small>IT support contact is not configured.</small>}</div></div><p className="login-legal"><ShieldCheck size={13}/> {PRODUCT_NAME} · Secure authentication</p></section></section></main>
+  return <main className="login-page reference-login">
+    <header className="reference-header"><a className="reference-logo" href="/" aria-label="AT Connect home"><span>AT</span> Connect</a><div>Need help? <a href={`mailto:${support?.officialEmail || 'it_support@ananttattva.com'}`}>Contact support</a></div></header>
+    <div className="login-card">
+      <aside className="reference-story">
+        <h1>Your team.<br/>Simply <strong>connected.</strong></h1>
+        <div className="reference-art" role="img" aria-label="Attendance overview showing 96% attendance, team members and a woman working on her laptop"/>
+        <div className="reference-features">
+          <div><span><CalendarCheck/></span><p>Attendance<small>Mark, track and manage</small></p></div>
+          <div><span><UsersRound/></span><p>Employee services<small>Self-service and communication</small></p></div>
+          <div><span><UserRoundPlus/></span><p>Recruitment<small>Hiring, onboarding and approvals</small></p></div>
+        </div>
+        <footer>© {new Date().getFullYear()} AT Connect. All rights reserved.</footer>
+      </aside>
+      <section className="login-panel"><div className={`login-form-wrap ${challenge||view==='reset'?'otp-step':''}`}>{content}<p className="reference-legal">Secure access. A simpler workday.</p></div></section>
+    </div>
+  </main>
 }
