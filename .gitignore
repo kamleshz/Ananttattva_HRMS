@@ -21,3 +21,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Local tooling / one-off scripts
+.vercel/
+backend/delete_employees_temp.mjs
