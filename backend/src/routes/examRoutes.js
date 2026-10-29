@@ -8,8 +8,9 @@ import { PWM_QUESTIONS, PWM_SECTIONS, PWM_TOTAL } from '../data/pwmQuestionBank.
 
 const router = Router()
 
-// The assessment is restricted to HR and administrators.
-router.use(authenticate, authorize('super_admin', 'admin', 'hr_admin'))
+// The assessment is available to every signed-in user. The report endpoints
+// below are additionally restricted to HR and administrators.
+router.use(authenticate)
 
 // Only these sections are included in the assessment paper.
 const ACTIVE_SECTION_IDS = [6, 8]
@@ -229,8 +230,9 @@ router.post('/submit', asyncHandler(async (req, res) => {
   })
 }))
 
-// Full question-by-question review for a submitted attempt.
-router.get('/reports/:attemptId', asyncHandler(async (req, res) => {
+// Full question-by-question review for a submitted attempt. Restricted to HR
+// and administrators because it exposes other employees' answers.
+router.get('/reports/:attemptId', authorize('super_admin', 'admin', 'hr_admin'), asyncHandler(async (req, res) => {
   const parsed = z.object({
     attemptId: z.string().trim().regex(OBJECT_ID, 'Invalid exam attempt'),
   }).parse(req.params)
@@ -265,8 +267,8 @@ router.get('/reports/:attemptId', asyncHandler(async (req, res) => {
   res.json({ success: true, data: detail })
 }))
 
-// Report of every submitted attempt, for HR and administrators.
-router.get('/reports', asyncHandler(async (_req, res) => {
+// Report of every submitted attempt, restricted to HR and administrators.
+router.get('/reports', authorize('super_admin', 'admin', 'hr_admin'), asyncHandler(async (_req, res) => {
   const attempts = await ExamAttempt.find({ status: 'submitted' })
     .allowDiskUse(true)
     .populate('user', 'firstName lastName email role')

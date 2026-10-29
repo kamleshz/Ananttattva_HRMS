@@ -86,14 +86,15 @@ const teamNavigation = [
   ["Reports", FileText, "/reports"],
   ["Holidays", CalendarDays, "/holidays"],
 ];
-const employeeAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances", "/offboarding"]);
+const employeeAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances", "/offboarding", "/evaluation"]);
 // Manager role (even when auto-promoted) sees only primary navigation (per spec).
 // Team / Lifecycle / Recruitment / Help sections are reserved for HR/Admin/IT/Finance.
 const elevatedNavigationRoles = new Set(["super_admin", "admin", "hr_admin", "it_admin", "finance_admin"]);
 const isElevatedNavRole = (role) => elevatedNavigationRoles.has(role);
 // Manager allowed paths: same as primary navigation (no direct URL escape).
-const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances"]);
-// Evaluation / assessment is restricted to HR and administrators only.
+const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", "/requests", "/allowances", "/evaluation"]);
+// Evaluation / assessment is available to every signed-in role; the reports
+// screen (all employees' scores) stays restricted to HR and administrators.
 const evaluationRoles = new Set(["super_admin", "admin", "hr_admin"]);
 const recruitmentNavigation = {
   hr_admin: [
@@ -187,20 +188,20 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
               {label === "Requests" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
             </button>
           ))}
+          <button
+            title={collapsed?'Evaluation':undefined}
+            aria-label="Evaluation"
+            onClick={() => {
+              navigate("/evaluation");
+              close();
+            }}
+            className={`nav-item ${path === "/evaluation" ? "active" : ""}`}
+          >
+            <GraduationCap size={18} />
+            <span>Evaluation</span>
+          </button>
           {evaluationRoles.has(user.role) && (
             <>
-              <button
-                title={collapsed?'Evaluation':undefined}
-                aria-label="Evaluation"
-                onClick={() => {
-                  navigate("/evaluation");
-                  close();
-                }}
-                className={`nav-item ${path === "/evaluation" ? "active" : ""}`}
-              >
-                <GraduationCap size={18} />
-                <span>Evaluation</span>
-              </button>
               <button
                 title={collapsed?'Evaluation Reports':undefined}
                 aria-label="Evaluation Reports"
@@ -957,7 +958,7 @@ export default function App() {
   useEffect(() => {
     if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
     if (user?.role === "manager" && !managerAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/public/offers/")) navigate("/");
-    if (user && !evaluationRoles.has(user.role) && location.pathname.startsWith("/evaluation")) navigate("/");
+    if (user && !evaluationRoles.has(user.role) && location.pathname.startsWith("/evaluation/reports")) navigate("/evaluation");
   }, [user, location.pathname, navigate]);
   useEffect(() => {
     if (!user) return;
