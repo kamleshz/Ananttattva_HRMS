@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CalendarCheck, Crown, UserRound, UserRoundPlus, ArrowLeft, ArrowRight, Check, CheckCircle2, Eye, EyeOff, KeyRound, LockKeyhole, Mail, ShieldCheck, UsersRound } from 'lucide-react'
 import { authApi, organizationApi, session } from './services/api.js'
 import './login-modern.css'
+import LoginAttendance from './LoginAttendance.jsx'
 
 function VerificationCodeInput({ value, onChange, label, autoFocus = false }) {
   const inputRefs = useRef([])
@@ -166,7 +167,7 @@ export default function Login({ onAuthenticated }) {
     <div className="login-card">
       <aside className="reference-story">
         <h1>Your team.<br/>Simply <strong>connected.</strong></h1>
-        <div className="reference-art" role="img" aria-label="Attendance overview showing 96% attendance, team members and a woman working on her laptop"/>
+        <LoginAttendance/>
         <div className="reference-features">
           <div><span><CalendarCheck/></span><p>Attendance<small>Mark, track and manage</small></p></div>
           <div><span><UsersRound/></span><p>Employee services<small>Self-service and communication</small></p></div>
