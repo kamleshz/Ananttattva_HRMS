@@ -96,6 +96,15 @@ const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", 
 // Evaluation / assessment is available to every signed-in role; the reports
 // screen (all employees' scores) stays restricted to HR and administrators.
 const evaluationRoles = new Set(["super_admin", "admin", "hr_admin"]);
+// The assessment opens every Monday at 17:45 IST and closes at midnight IST, so
+// it is available on Monday evening only. The server enforces the same window;
+// this only keeps the menu item and route in step with it.
+const EVALUATION_OPEN_MINUTE = 17 * 60 + 45;
+const IST_OFFSET_MINUTES = 330;
+const isEvaluationOpen = (now = new Date()) => {
+  const ist = new Date(now.getTime() + IST_OFFSET_MINUTES * 60 * 1000);
+  return ist.getUTCDay() === 1 && ist.getUTCHours() * 60 + ist.getUTCMinutes() >= EVALUATION_OPEN_MINUTE;
+};
 const recruitmentNavigation = {
   hr_admin: [
     ["Recruitment Dashboard", "/recruitment/dashboard"],
@@ -145,7 +154,7 @@ function MLIntegrationToast({ status }) {
   return <div className={`ml-ready-toast ${ready?'success':'failure'}`} role="status" aria-live="polite">{ready?<CheckCircle2 size={19}/>:<X size={19}/>}<div><strong>{ready?'ML Model integrated successfully':'ML Model integration is not ready'}</strong><span>{ready?'YuNet, SFace and MiniFASNetV2 check-in/check-out are ready.':status?.message||'The biometric backend or one of its models is unavailable.'}</span></div></div>;
 }
 
-function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path, navigate, pendingRequestCount }) {
+function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path, navigate, pendingRequestCount, evaluationOpen }) {
   const [recruitmentOpen,setRecruitmentOpen]=useState(path.startsWith('/recruitment'));
   const recruitmentExpanded=recruitmentOpen||path.startsWith('/recruitment');
   const primaryNavigation = user.role === "employee"
@@ -188,18 +197,20 @@ function Sidebar({ open, close, collapsed, toggleCollapsed, user, employee, path
               {label === "Requests" && pendingRequestCount > 0 && <span className="nav-badge">{pendingRequestCount}</span>}
             </button>
           ))}
-          <button
-            title={collapsed?'Evaluation':undefined}
-            aria-label="Evaluation"
-            onClick={() => {
-              navigate("/evaluation");
-              close();
-            }}
-            className={`nav-item ${path === "/evaluation" ? "active" : ""}`}
-          >
-            <GraduationCap size={18} />
-            <span>Evaluation</span>
-          </button>
+          {evaluationOpen && (
+            <button
+              title={collapsed?'Evaluation':undefined}
+              aria-label="Evaluation"
+              onClick={() => {
+                navigate("/evaluation");
+                close();
+              }}
+              className={`nav-item ${path === "/evaluation" ? "active" : ""}`}
+            >
+              <GraduationCap size={18} />
+              <span>Evaluation</span>
+            </button>
+          )}
           {evaluationRoles.has(user.role) && (
             <>
               <button
@@ -940,6 +951,7 @@ export default function App() {
     [mlReadyToast, setMlReadyToast] = useState(false),
     [mlHealthStatus, setMlHealthStatus] = useState(null),
     [pendingRequestCount, setPendingRequestCount] = useState(0),
+    [evaluationOpen, setEvaluationOpen] = useState(isEvaluationOpen),
     [sidebarCollapsed,setSidebarCollapsed]=useState(()=>localStorage.getItem('at-sidebar-collapsed')==='true');
   const navigate = useNavigate(),
     location = useLocation();
@@ -955,10 +967,19 @@ export default function App() {
       .catch(() => session.clear())
       .finally(() => setLoading(false));
   }, []);
+  // Keeps the menu item in step with the Monday-evening window, including for a
+  // session that is already open when 5:45 PM arrives.
+  useEffect(() => {
+    const timer = setInterval(() => setEvaluationOpen(isEvaluationOpen()), 30 * 1000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
     if (user?.role === "manager" && !managerAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/public/offers/")) navigate("/");
-    if (user && !evaluationRoles.has(user.role) && location.pathname.startsWith("/evaluation/reports")) navigate("/evaluation");
+    if (user && !evaluationRoles.has(user.role) && location.pathname.startsWith("/evaluation/reports")) navigate(isEvaluationOpen() ? "/evaluation" : "/");
+    // Checked on entry rather than on every tick, so an attempt started before
+    // midnight can still be finished without being pulled out of the exam.
+    if (user && location.pathname.startsWith("/evaluation") && !location.pathname.startsWith("/evaluation/reports") && !isEvaluationOpen()) navigate("/");
   }, [user, location.pathname, navigate]);
   useEffect(() => {
     if (!user) return;
@@ -1095,6 +1116,7 @@ export default function App() {
         path={location.pathname}
         navigate={navigate}
         pendingRequestCount={pendingRequestCount}
+        evaluationOpen={evaluationOpen}
       />
       <div className="app-main">
         <Header

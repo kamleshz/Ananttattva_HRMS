@@ -104,6 +104,35 @@ const resolveWeek = (now = new Date()) => {
   }
 }
 
+/* ---------- Availability window ---------- */
+
+// The assessment opens every Monday at 17:45 IST and closes at midnight, so it
+// is available on Monday evening only. Enforced on the server so the window
+// holds even when the page is opened directly by URL.
+const WINDOW_OPEN_MINUTE = 17 * 60 + 45 // 17:45 IST
+const MINUTE_MS = 60 * 1000
+
+const evaluationWindow = (now = new Date()) => {
+  const istMs = now.getTime() + IST_OFFSET_MS
+  const dayIndex = Math.floor(istMs / DAY_MS)
+  const istDay = new Date(istMs).getUTCDay() // 1 = Monday
+  const minuteOfDay = Math.floor((istMs - dayIndex * DAY_MS) / MINUTE_MS)
+  const open = istDay === 1 && minuteOfDay >= WINDOW_OPEN_MINUTE
+  const mondayDay = dayIndex - ((istDay + 6) % 7)
+  const openDay = open ? mondayDay : mondayDay + 7
+  return {
+    open,
+    opensAt: new Date(openDay * DAY_MS + WINDOW_OPEN_MINUTE * MINUTE_MS - IST_OFFSET_MS).toISOString(),
+    // Midnight at the end of the same Monday (IST), i.e. the start of Tuesday.
+    closesAt: new Date((openDay + 1) * DAY_MS - IST_OFFSET_MS).toISOString(),
+  }
+}
+
+const requireWindow = (_req, _res, next) => {
+  if (evaluationWindow().open) return next()
+  next(new HttpError(403, 'The assessment is open only on Monday between 5:45 PM and midnight (IST).'))
+}
+
 const loadOwnAttempt = async (attemptId, userId) => {
   const attempt = await ExamAttempt.findOne({ _id: attemptId, user: userId })
   if (!attempt) throw new HttpError(404, 'Exam attempt not found')
@@ -141,7 +170,7 @@ const attemptToRow = (attempt) => {
   }
 }
 
-router.get('/meta', asyncHandler(async (_req, res) => {
+router.get('/meta', requireWindow, asyncHandler(async (_req, res) => {
   const week = resolveWeek()
   res.json({
     success: true,
@@ -157,6 +186,8 @@ router.get('/meta', asyncHandler(async (_req, res) => {
       // The pair in force this week, plus the Monday it started on.
       weekSections: week.sections,
       weekStart: week.weekStart,
+      // The Monday-evening availability window for this paper.
+      availability: evaluationWindow(),
     },
   })
 }))
@@ -165,8 +196,10 @@ router.get('/meta', asyncHandler(async (_req, res) => {
 // each chosen section and reshuffled on every attempt, so two candidates in the
 // same week share the sections but not the questions. The answer key stays on
 // the server and the attempt row records what was asked so the report can be
-// rebuilt without trusting the client.
-router.get('/questions', asyncHandler(async (req, res) => {
+// rebuilt without trusting the client. Only a start is gated by the window:
+// answering and submitting stay open so an attempt begun on Monday evening can
+// always be finished.
+router.get('/questions', requireWindow, asyncHandler(async (req, res) => {
   const requested = Number.parseInt(req.query.perSection, 10)
   const perSection = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : QUESTIONS_PER_SECTION
   const picked = []

@@ -276,9 +276,10 @@ export default function EvaluationPage() {
             This week&apos;s paper covers <strong>{weekLabel}</strong> — <strong>{perSection} random questions from
             each</strong>, <strong>{totalQuestions} questions</strong> in total, drawn from a bank of{" "}
             <strong>{meta?.bankSize || 500}</strong>. The sections rotate <strong>every Monday</strong>, so the paper
-            changes weekly. You get <strong>{SECONDS_PER_QUESTION} seconds per question</strong> and the timer starts
-            as soon as you press Start Exam. Answers lock once you select an option, and the correct answer is revealed
-            immediately.
+            changes weekly. The assessment opens <strong>Monday at 5:45 PM</strong> and closes at{" "}
+            <strong>midnight (IST)</strong>. You get <strong>{SECONDS_PER_QUESTION} seconds per question</strong> and
+            the timer starts as soon as you press Start Exam. Answers lock once you select an option, and the correct
+            answer is revealed immediately.
           </p>
           <p>
             The questions inside the chosen sections and the answer options are reshuffled on every attempt, so two
