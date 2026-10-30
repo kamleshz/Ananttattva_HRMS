@@ -3,7 +3,7 @@ import { Attendance } from '../models/Attendance.js'
 import { LeaveRequest } from '../models/LeaveRequest.js'
 import { HttpError } from '../utils/httpError.js'
 import { atOrganizationTime, endOfLocalDay, startOfLocalDay } from '../utils/date.js'
-import { evaluateLatePolicy, lateCutoff, reportLateAttendanceEscalation, getAttendancePolicy } from './attendancePolicyService.js'
+import { evaluateLatePolicy, lateCutoff, isLateCheckIn, reportLateAttendanceEscalation, getAttendancePolicy } from './attendancePolicyService.js'
 
 export async function attendanceTarget(employeeId, date) {
   const policy = await getAttendancePolicy()
@@ -27,7 +27,9 @@ export async function checkIn(employee, payload, requestMeta, checkInTime = new 
   const date = startOfLocalDay(checkInTime)
   if (await Attendance.exists({ employee: employee._id, date })) throw new HttpError(409, 'You have already checked in today')
   const now = checkInTime
-  const applicableLatePolicy = payload.attendanceMode !== 'wfh' && now > lateCutoff(now)
+  // Late only once 10:16 has begun; a check-in anywhere inside 10:15 is on time,
+  // so the third-late-arrival half-day rule is not triggered by a 10:15 punch.
+  const applicableLatePolicy = payload.attendanceMode !== 'wfh' && isLateCheckIn(now)
   const lateMinutes = applicableLatePolicy ? Math.max(1, Math.floor((now - lateCutoff(now)) / 60000)) : 0
   const latePolicy = applicableLatePolicy ? await evaluateLatePolicy(employee._id,now) : null
   const target = await attendanceTarget(employee._id, date)

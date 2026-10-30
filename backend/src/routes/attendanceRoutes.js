@@ -774,7 +774,11 @@ router.patch('/corrections/:attendanceId/hr-override', authorize('hr_admin','adm
     const start=new Date(checkInTs)
     start.setHours(sh,sm,0,0)
     lateMinutes=checkInTs>start?Math.max(0,Math.floor((checkInTs-start)/60000)):0
-    const graceMin=shift.gracePeriodMinutes||policy.gracePeriodMinutes||10
+    // Shift grace is 15 minutes by default (10:00 start), so the whole 10:15
+    // minute is on time and 10:16 is the first late minute — matching the
+    // check-in path. The field is graceMinutes; reading gracePeriodMinutes
+    // found nothing and silently dropped the grace to 10 minutes.
+    const graceMin=shift.graceMinutes??policy.gracePeriodMinutes??10
     if(lateMinutes<=graceMin)lateMinutes=0
   }
   attendance.lateMinutes=lateMinutes

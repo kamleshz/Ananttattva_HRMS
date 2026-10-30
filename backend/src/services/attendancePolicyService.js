@@ -71,6 +71,18 @@ export function lateCutoff(date = new Date()) {
   return atOrganizationTime(date,LATE_CUTOFF_HOUR,LATE_CUTOFF_MINUTE)
 }
 
+// The whole 10:15 minute still counts as on time, so the first late arrival is
+// 10:16. This is deliberately separate from lateCutoff(), which stays the point
+// late minutes are measured from — that keeps the recorded minutes for anyone
+// arriving at 10:16 or later exactly as they were before.
+export function lateGraceEnd(date = new Date()) {
+  return atOrganizationTime(date,LATE_CUTOFF_HOUR,LATE_CUTOFF_MINUTE,59,999)
+}
+
+export function isLateCheckIn(now = new Date()) {
+  return now.getTime() > lateGraceEnd(now).getTime()
+}
+
 export function calculateLatePolicy(existingLateCount, existingPolicyHalfDays) {
   const lateOccurrence = existingLateCount + 1
   const becomesHalfDay = lateOccurrence % LATES_PER_HALF_DAY === 0
