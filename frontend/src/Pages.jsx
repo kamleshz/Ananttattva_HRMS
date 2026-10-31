@@ -4669,8 +4669,7 @@ export function AllowancesPage({ user }) {
                   <th>Not acceptable</th>
                   <th>Claim status</th>
                   <th>Special approval</th>
-                  <th>Proof</th>
-                  <th>Download</th>
+                  <th>Documents</th>
                 </tr>
               </thead>
               <tbody>
@@ -4735,17 +4734,17 @@ export function AllowancesPage({ user }) {
                       {claim.specialApproval?.status === "approved" && <StatusBadge status="approved" />}
                     </td>
                     <td>
-                      <button
-                        className="table-proof-button"
-                        onClick={() => viewProof(claim._id)}
-                      >
-                        <FileText size={13} /> View proof
-                      </button>
-                    </td>
-                    <td>
-                      <button className="table-download-button" disabled={downloadingClaim === claim._id} onClick={() => downloadClaimPdf(claim)}>
-                        <Download size={13} /> {downloadingClaim === claim._id ? "Preparing…" : "Download PDF"}
-                      </button>
+                      <div className="allowance-doc-actions">
+                        <button
+                          className="table-proof-button"
+                          onClick={() => viewProof(claim._id)}
+                        >
+                          <FileText size={13} /> View proof
+                        </button>
+                        <button className="table-download-button" disabled={downloadingClaim === claim._id} onClick={() => downloadClaimPdf(claim)}>
+                          <Download size={13} /> {downloadingClaim === claim._id ? "Preparing…" : "Download PDF"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
