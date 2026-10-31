@@ -292,7 +292,7 @@ export const allowanceApi = {
   exportExcel: () => downloadApi("/allowances/export"),
   monthlyUsage: (date) =>
     api(`/allowances/monthly-usage?date=${encodeURIComponent(date)}`),
-  proof: (id) => api(`/allowances/${id}/proof`),
+  proof: (id) => downloadApi(`/allowances/${id}/proof`),
   pdf: (id) => downloadApi(`/allowances/${id}/pdf`),
   requestSpecialApproval: (id, data) =>
     api(`/allowances/${id}/special-approval`, {
@@ -300,7 +300,7 @@ export const allowanceApi = {
       body: JSON.stringify(data),
     }),
   specialApprovalProof: (id) =>
-    api(`/allowances/${id}/special-approval/proof`),
+    downloadApi(`/allowances/${id}/special-approval/proof`),
   reviewSpecialApproval: (id, decision, reviewNote = "") =>
     api(`/allowances/${id}/special-approval/${decision}`, {
       method: "PATCH",

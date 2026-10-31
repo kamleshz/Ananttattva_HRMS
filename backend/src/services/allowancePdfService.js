@@ -17,7 +17,7 @@ const money = (value) => `Rs. ${new Intl.NumberFormat('en-IN', {
 
 const personName = (person) => [person?.firstName, person?.lastName].filter(Boolean).join(' ') || '—'
 
-function proofBuffer(proof) {
+export function proofBuffer(proof) {
   const raw = String(proof?.data || '')
   const comma = raw.indexOf(',')
   if (comma < 0) return Buffer.from(raw, 'base64')

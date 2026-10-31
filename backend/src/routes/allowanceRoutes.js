@@ -11,11 +11,25 @@ import writeXlsxFile from 'write-excel-file/node'
 import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
 import { sendAllowanceDecision } from '../services/mailService.js'
 import { OrganizationProfile } from '../models/Organization.js'
-import { generateAllowancePdf } from '../services/allowancePdfService.js'
+import { generateAllowancePdf, proofBuffer } from '../services/allowancePdfService.js'
 
 const router=Router()
 router.use(authenticate)
 const proofSchema=z.object({fileName:z.string().min(1).max(150),mimeType:z.enum(['image/jpeg','image/png','image/webp','application/pdf']),data:z.string().min(20).max(4_000_000)})
+const sanitizeFileName = (value, fallback = 'proof') => {
+  const safe = String(value || fallback).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120)
+  return safe || fallback
+}
+function sendInlineProof(res, proof, fallbackName = 'proof') {
+  if (!proof?.data) throw new HttpError(404, 'Proof not found')
+  res
+    .set({
+      'Content-Type': proof.mimeType || 'application/octet-stream',
+      'Content-Disposition': `inline; filename="${sanitizeFileName(proof.fileName, fallbackName)}"`,
+      'Cache-Control': 'private, no-store',
+    })
+    .send(proofBuffer(proof))
+}
 const claimSchema=z.object({
   travelDate:z.coerce.date(),
   travelLocation:z.string().trim().min(2,'Enter at least 2 characters for travel location').max(200),
@@ -74,7 +88,7 @@ router.get('/:id/proof', asyncHandler(async (req,res) => {
   if(!claim)throw new HttpError(404,'Allowance claim not found')
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(!elevated&&String(claim.employee)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot view this proof')
-  res.json({success:true,data:claim.proof})
+  sendInlineProof(res, claim.proof, `allowance-proof-${claim._id}`)
 }))
 router.get('/:id/pdf', asyncHandler(async (req,res) => {
   const claim=await AllowanceClaim.findById(req.params.id)
@@ -115,7 +129,7 @@ router.get('/:id/special-approval/proof', asyncHandler(async (req,res) => {
   const elevated=['super_admin','admin','hr_admin'].includes(req.user.role)
   if(!elevated&&String(claim.employee)!==String(req.user.employee?._id))throw new HttpError(403,'You cannot view this proof')
   if(!claim.specialApproval?.proof?.data)throw new HttpError(404,'Special approval proof not found')
-  res.json({success:true,data:claim.specialApproval.proof})
+  sendInlineProof(res, claim.specialApproval.proof, `allowance-special-proof-${claim._id}`)
 }))
 router.patch('/:id/special-approval/:decision', authorize('super_admin','admin','hr_admin'), asyncHandler(async (req,res) => {
   if(!['approve','reject'].includes(req.params.decision))throw new HttpError(400,'Invalid special approval decision')

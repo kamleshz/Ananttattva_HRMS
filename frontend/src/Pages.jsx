@@ -4356,27 +4356,6 @@ function readProof(file) {
   });
 }
 
-function ProofViewer({ proof, close }) {
-  return (
-    <div className="proof-viewer">
-      <button className="photo-lightbox-backdrop" onClick={close} />
-      <div className="proof-viewer-content">
-        <div>
-          <span>{proof.fileName}</span>
-          <button onClick={close}>
-            <X size={20} />
-          </button>
-        </div>
-        {proof.mimeType === "application/pdf" ? (
-          <iframe title={proof.fileName} src={proof.data} />
-        ) : (
-          <img src={proof.data} alt="Allowance proof" />
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function AllowancesPage({ user }) {
   const canViewAll = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const [claims, setClaims] = useState([]),
@@ -4384,7 +4363,6 @@ export function AllowancesPage({ user }) {
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [proof, setProof] = useState(null),
     [downloadingClaim, setDownloadingClaim] = useState(""),
     [selectedClaim, setSelectedClaim] = useState(null),
     [claimPage, setClaimPage] = useState(1),
@@ -4427,6 +4405,20 @@ export function AllowancesPage({ user }) {
       active = false;
     };
   }, [form.travelDate]);
+  function openProofInSystem(url, fileName) {
+    const popup = window.open(url, "_blank", "noopener,noreferrer");
+    if (popup) {
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName || "proof";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
@@ -4458,8 +4450,10 @@ export function AllowancesPage({ user }) {
     }
   }
   async function viewProof(id) {
+    setError("");
     try {
-      setProof(await allowanceApi.proof(id));
+      const { blob, fileName } = await allowanceApi.proof(id);
+      openProofInSystem(URL.createObjectURL(blob), fileName || "allowance-proof");
     } catch (e) {
       setError(e.message);
     }
@@ -4528,8 +4522,10 @@ export function AllowancesPage({ user }) {
     }
   }
   async function viewSpecialProof(id) {
+    setError("");
     try {
-      setProof(await allowanceApi.specialApprovalProof(id));
+      const { blob, fileName } = await allowanceApi.specialApprovalProof(id);
+      openProofInSystem(URL.createObjectURL(blob), fileName || "allowance-special-proof");
     } catch (e) {
       setError(e.message);
     }
@@ -4922,7 +4918,6 @@ export function AllowancesPage({ user }) {
           </aside>
         </div>
       )}
-      {proof && <ProofViewer proof={proof} close={() => setProof(null)} />}
     </>
   );
 }
