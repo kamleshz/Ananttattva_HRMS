@@ -412,8 +412,8 @@ const reviewSchema = z.object({
   hrCompensationDecision: z.enum(['paid_deduction', 'unpaid', 'waived_no_deduction']).optional(),
 })
 
-router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'manager', 'employee'), asyncHandler(async (req, res) => {
-  if (!['approve', 'reject'].includes(req.params.decision)) throw new HttpError(400, 'Invalid decision')
+router.patch('/:id/:decision', authorize('super_admin', 'admin', 'hr_admin', 'manager', 'employee'), asyncHandler(async (req, res, next) => {
+  if (!['approve', 'reject'].includes(req.params.decision)) return next()
   const input = reviewSchema.parse(req.body)
   const request = await LeaveRequest.findById(req.params.id)
     .populate('employee', 'firstName lastName employeeCode officialEmail manager')
