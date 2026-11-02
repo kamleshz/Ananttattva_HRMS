@@ -209,12 +209,15 @@ export default function EvaluationPage() {
     setSubmitting(true);
     try {
       const data = await examApi.submit(attemptId, { tabSwitches, screenshotAttempts });
-      if (data) setSummary(data);
+      if (data) {
+        setSummary(data);
+        setPhase("finished");
+      }
     } catch (error) {
       setNotice(error?.message || "Your score could not be saved to the report.");
+      setPhase("active");
     } finally {
       setSubmitting(false);
-      setPhase("finished");
     }
   };
 
@@ -589,7 +592,7 @@ export default function EvaluationPage() {
             {answering ? "Checking your answer..." : resultLocked ? "" : "Select an option to continue"}
           </span>
           <button type="button" className="primary-button" disabled={!resultLocked || submitting} onClick={goNext}>
-            {index < total - 1 ? "Next Question" : submitting ? "Saving…" : "See Results"} <ChevronRight size={16} />
+            {index < total - 1 ? "Next Question" : submitting ? "Saving…" : "Save Results"} <ChevronRight size={16} />
           </button>
         </div>
       </section>

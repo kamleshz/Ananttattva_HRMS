@@ -139,6 +139,52 @@ const loadOwnAttempt = async (attemptId, userId) => {
   return attempt
 }
 
+const isRecoverableAttempt = (attempt) => {
+  const questions = Array.isArray(attempt?.questions) ? attempt.questions : []
+  return attempt?.status === 'in_progress' && questions.length > 0 && questions.every((entry) => entry?.answered)
+}
+
+const summarizeAttempt = (attempt) => {
+  const total = attempt.questions.length
+  const score = attempt.questions.filter((entry) => entry.correct).length
+  const percent = total ? Math.round((score / total) * 100) : 0
+  const grouped = new Map()
+  for (const entry of attempt.questions) {
+    if (!grouped.has(entry.section)) {
+      grouped.set(entry.section, {
+        section: entry.section,
+        title: SECTION_TITLES.get(entry.section) || '',
+        correct: 0,
+        total: 0,
+      })
+    }
+    const bucket = grouped.get(entry.section)
+    bucket.total += 1
+    if (entry.correct) bucket.correct += 1
+  }
+  return {
+    total,
+    score,
+    percent,
+    passed: percent >= PASS_PERCENT,
+    sectionScores: [...grouped.values()].sort((a, b) => a.section - b.section),
+  }
+}
+
+const finalizeAttempt = async (attempt, submittedAt = new Date()) => {
+  const summary = summarizeAttempt(attempt)
+  attempt.score = summary.score
+  attempt.total = summary.total
+  attempt.percent = summary.percent
+  attempt.passed = summary.passed
+  attempt.sectionScores = summary.sectionScores
+  attempt.status = 'submitted'
+  attempt.submittedAt = submittedAt
+  attempt.durationSeconds = Math.max(0, Math.round((new Date(submittedAt).getTime() - new Date(attempt.startedAt).getTime()) / 1000))
+  await attempt.save()
+  return attempt
+}
+
 const attemptToRow = (attempt) => {
   const user = attempt.user || {}
   const employee = attempt.employee || {}
@@ -286,45 +332,18 @@ router.post('/submit', asyncHandler(async (req, res) => {
   const parsed = submitSchema.parse(req.body)
   const attempt = await loadOwnAttempt(parsed.attemptId, req.user._id)
   if (attempt.status === 'submitted') throw new HttpError(409, 'This exam has already been submitted.')
-
-  const total = attempt.questions.length
-  const score = attempt.questions.filter((entry) => entry.correct).length
-  const percent = total ? Math.round((score / total) * 100) : 0
-
-  const grouped = new Map()
-  for (const entry of attempt.questions) {
-    if (!grouped.has(entry.section)) {
-      grouped.set(entry.section, {
-        section: entry.section,
-        title: SECTION_TITLES.get(entry.section) || '',
-        correct: 0,
-        total: 0,
-      })
-    }
-    const bucket = grouped.get(entry.section)
-    bucket.total += 1
-    if (entry.correct) bucket.correct += 1
-  }
-
-  attempt.score = score
-  attempt.total = total
-  attempt.percent = percent
-  attempt.passed = percent >= PASS_PERCENT
-  attempt.sectionScores = [...grouped.values()].sort((a, b) => a.section - b.section)
-  attempt.status = 'submitted'
-  attempt.submittedAt = new Date()
-  attempt.durationSeconds = Math.max(0, Math.round((Date.now() - new Date(attempt.startedAt).getTime()) / 1000))
+  const submittedAt = new Date()
   attempt.tabSwitches = parsed.tabSwitches ?? 0
   attempt.screenshotAttempts = parsed.screenshotAttempts ?? 0
-  await attempt.save()
+  await finalizeAttempt(attempt, submittedAt)
 
   res.json({
     success: true,
     data: {
       attemptId: attempt._id,
-      score,
-      total,
-      percent,
+      score: attempt.score,
+      total: attempt.total,
+      percent: attempt.percent,
       passed: attempt.passed,
       passPercent: PASS_PERCENT,
       submittedAt: attempt.submittedAt,
@@ -341,16 +360,21 @@ router.get('/reports/:attemptId', authorize('super_admin', 'admin', 'hr_admin'),
     attemptId: z.string().trim().regex(OBJECT_ID, 'Invalid exam attempt'),
   }).parse(req.params)
 
-  const attempt = await ExamAttempt.findOne({ _id: parsed.attemptId, status: 'submitted' })
+  const attempt = await ExamAttempt.findById(parsed.attemptId)
     .populate('user', 'firstName lastName email role')
     .populate('employee', 'firstName lastName employeeCode department')
-    .lean()
-
+ 
   if (!attempt) throw new HttpError(404, 'Exam attempt not found')
+  if (attempt.status !== 'submitted') {
+    if (!isRecoverableAttempt(attempt)) throw new HttpError(404, 'Exam attempt not found')
+    await finalizeAttempt(attempt, attempt.updatedAt || new Date())
+  }
+
+  const detailAttempt = attempt.toObject()
 
   const detail = {
-    ...attemptToRow(attempt),
-    questions: (attempt.questions || []).map((entry) => {
+    ...attemptToRow(detailAttempt),
+    questions: (detailAttempt.questions || []).map((entry) => {
       const source = QUESTIONS_BY_ID.get(entry.questionId)
       const options = source?.o || []
       return {
@@ -381,7 +405,7 @@ router.get('/reports', authorize('super_admin', 'admin', 'hr_admin'), asyncHandl
     { path: 'employee', select: 'firstName lastName employeeCode department' },
   ]
 
-  const [completed, inProgress] = await Promise.all([
+  const [completed, inProgressDocs] = await Promise.all([
     ExamAttempt.find({ status: 'submitted' })
       .allowDiskUse(true)
       .populate(populateFields)
@@ -392,12 +416,23 @@ router.get('/reports', authorize('super_admin', 'admin', 'hr_admin'), asyncHandl
       .allowDiskUse(true)
       .populate(populateFields)
       .sort({ startedAt: -1, _id: -1 })
-      .limit(500)
-      .lean(),
+      .limit(500),
   ])
 
-  const rows = completed.map(attemptToRow)
-  const currentRows = inProgress.map(attemptToRow)
+  const healedCompleted = []
+  const currentRows = []
+  for (const attempt of inProgressDocs) {
+    if (isRecoverableAttempt(attempt)) {
+      await finalizeAttempt(attempt, attempt.updatedAt || new Date())
+      healedCompleted.push(attempt.toObject())
+    } else {
+      currentRows.push(attemptToRow(attempt.toObject()))
+    }
+  }
+
+  const rows = [...completed, ...healedCompleted]
+    .map(attemptToRow)
+    .sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime())
 
   const passedCount = rows.filter((row) => row.passed).length
   const summary = {
