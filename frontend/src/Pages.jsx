@@ -2705,6 +2705,8 @@ export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) 
     : "mine";
   const [scope, setScope] = useState(initialScope);
   const [requests, setRequests] = useState([]),
+    [cancelOpen, setCancelOpen] = useState(false),
+    [cancelRequest, setCancelRequest] = useState(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
   useEffect(() => {
@@ -2775,6 +2777,26 @@ export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) 
       throw e;
     }
   }
+  function handleOpenCancel(item) {
+    setCancelRequest(item);
+    setCancelOpen(true);
+  }
+  async function handleCancelled(id) {
+    setCancelOpen(false);
+    setCancelRequest(null);
+    setRequests((value) =>
+      value.map((item) => (item._id === id ? { ...item, status: "cancelled" } : item)),
+    );
+    try {
+      const targetScope = scope;
+      const list = await leaveApi.list(targetScope);
+      const refreshed = Array.isArray(list?.items) ? list.items : Array.isArray(list) ? list : [];
+      setRequests(refreshed);
+      onPendingCountChange?.(refreshed.filter((item) => item.status === "pending").length);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
   return (
     <>
       <PageHeader
@@ -2802,11 +2824,19 @@ export function RequestsPage({ user, currentEmployeeId, onPendingCountChange }) 
                 item={item}
                 currentUser={{ ...user, employeeId: currentEmployeeId }}
                 onReview={review}
+                onCancelLeave={handleOpenCancel}
               />
             ))}
           </div>
         )}
       </section>
+      {cancelOpen && (
+        <CancelLeaveModal
+          request={cancelRequest}
+          onClose={() => { setCancelOpen(false); setCancelRequest(null); }}
+          onCancelled={handleCancelled}
+        />
+      )}
     </>
   );
 }
