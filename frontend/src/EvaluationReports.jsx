@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ClipboardList,
+  Clock,
   Download,
   Eye,
   Loader2,
@@ -202,6 +203,42 @@ const buildAttemptPdf = async (attempt, sections) => {
   doc.save(`evaluation-report-${safeFileName(attempt.name)}.pdf`);
 };
 
+// One PDF listing the attempts that are still in progress (started but not yet
+// submitted), so the report also covers people who have not finished the test.
+const buildCurrentPdf = async ({ attempts, sections }) => {
+  const { jsPDF, autoTable } = await loadPdfLibs();
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  pdfHeader(
+    doc,
+    "Evaluation Report - In Progress",
+    `${attempts.length} in-progress attempt${attempts.length === 1 ? "" : "s"} - sections ${sections.map((section) => `S${section.id}`).join(", ") || "-"}`
+  );
+
+  autoTable(doc, {
+    ...TABLE_STYLE,
+    startY: 82,
+    head: [["Employee", "Email / Code", "Department", "Role", "Started", "Answered", "Status"]],
+    body: attempts.map((attempt) => [
+      attempt.name,
+      attempt.email || attempt.employeeCode || "-",
+      attempt.department || "-",
+      ROLE_LABELS[attempt.role] || attempt.role || "-",
+      formatDateTime(attempt.startedAt),
+      `${attempt.answeredCount ?? 0} / ${attempt.total ?? 0}`,
+      "In progress",
+    ]),
+    columnStyles: { 5: { halign: "center" }, 6: { halign: "center", fontStyle: "bold" } },
+    didParseCell: (data) => {
+      if (data.section === "body" && data.column.index === 6) {
+        data.cell.styles.textColor = [180, 83, 9];
+      }
+    },
+  });
+
+  pdfFooter(doc);
+  doc.save(`evaluation-report-in-progress-${safeFileName(pdfStamp())}.pdf`);
+};
+
 const ROLE_LABELS = {
   super_admin: "Super Admin",
   admin: "Admin",
@@ -242,10 +279,13 @@ export default function EvaluationReportsPage() {
   const [error, setError] = useState("");
   const [summary, setSummary] = useState(null);
   const [attempts, setAttempts] = useState([]);
+  const [currentAttempts, setCurrentAttempts] = useState([]);
   const [sections, setSections] = useState([]);
+  const [viewMode, setViewMode] = useState("completed");
   const [query, setQuery] = useState("");
   const [resultFilter, setResultFilter] = useState("all");
   const [pdfBusy, setPdfBusy] = useState("");
+  const [downloadPrompt, setDownloadPrompt] = useState(false);
   const [reviewId, setReviewId] = useState("");
   const [reviewLoadingId, setReviewLoadingId] = useState("");
   const [reviewDetail, setReviewDetail] = useState(null);
@@ -257,6 +297,7 @@ export default function EvaluationReportsPage() {
       const data = await examApi.reports();
       setSummary(data?.summary || null);
       setAttempts(Array.isArray(data?.attempts) ? data.attempts : []);
+      setCurrentAttempts(Array.isArray(data?.currentAttempts) ? data.currentAttempts : []);
       setSections(Array.isArray(data?.sections) ? data.sections : []);
     } catch (loadError) {
       setError(loadError?.message || "Could not load the evaluation reports.");
@@ -269,17 +310,21 @@ export default function EvaluationReportsPage() {
     load();
   }, [load]);
 
+  const rowsForView = viewMode === "current" ? currentAttempts : attempts;
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return attempts.filter((attempt) => {
-      if (resultFilter === "passed" && !attempt.passed) return false;
-      if (resultFilter === "failed" && attempt.passed) return false;
+    return rowsForView.filter((attempt) => {
+      if (viewMode === "completed") {
+        if (resultFilter === "passed" && !attempt.passed) return false;
+        if (resultFilter === "failed" && attempt.passed) return false;
+      }
       if (!needle) return true;
       return [attempt.name, attempt.email, attempt.department, attempt.employeeCode]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
     });
-  }, [attempts, query, resultFilter]);
+  }, [rowsForView, query, resultFilter, viewMode]);
 
   const sectionScoreFor = (attempt, sectionId) =>
     (attempt.sectionScores || []).find((item) => item.section === sectionId) || null;
@@ -295,6 +340,16 @@ export default function EvaluationReportsPage() {
     } finally {
       setPdfBusy("");
     }
+  };
+
+  const downloadCompleted = () => {
+    setDownloadPrompt(false);
+    downloadPdf("completed", () => buildSummaryPdf({ attempts, sections, summary }));
+  };
+
+  const downloadCurrent = () => {
+    setDownloadPrompt(false);
+    downloadPdf("current", () => buildCurrentPdf({ attempts: currentAttempts, sections }));
   };
 
   const viewResult = async (attempt) => {
@@ -336,12 +391,13 @@ export default function EvaluationReportsPage() {
           <button
             type="button"
             className="primary-button"
-            disabled={loading || !filtered.length || Boolean(pdfBusy)}
-            onClick={() =>
-              downloadPdf("all", () => buildSummaryPdf({ attempts: filtered, sections, summary }))
-            }
+            disabled={loading || (!attempts.length && !currentAttempts.length) || Boolean(pdfBusy)}
+            onClick={() => {
+              setError("");
+              setDownloadPrompt(true);
+            }}
           >
-            {pdfBusy === "all" ? (
+            {(pdfBusy === "completed" || pdfBusy === "current") ? (
               <>
                 <Loader2 size={15} className="evaluation-spin" /> Preparing PDF…
               </>
@@ -404,6 +460,13 @@ export default function EvaluationReportsPage() {
           <p>Best score</p>
           <strong>{summary?.bestPercent ?? 0}%</strong>
         </div>
+        <div className="card evaluation-kpi">
+          <span className="evaluation-kpi-icon amber">
+            <Clock size={17} />
+          </span>
+          <p>In progress</p>
+          <strong>{summary?.inProgress ?? currentAttempts.length}</strong>
+        </div>
       </section>
 
       <section className="card evaluation-report-card">
@@ -418,21 +481,41 @@ export default function EvaluationReportsPage() {
               aria-label="Search reports"
             />
           </div>
-          <div className="evaluation-filter-group" role="group" aria-label="Filter by result">
-            {[
-              ["all", "All"],
-              ["passed", "Passed"],
-              ["failed", "Failed"],
-            ].map(([value, label]) => (
+          <div className="evaluation-report-filters">
+            <div className="evaluation-filter-group" role="group" aria-label="Completed or current tests">
               <button
-                key={value}
                 type="button"
-                className={`evaluation-filter ${resultFilter === value ? "active" : ""}`}
-                onClick={() => setResultFilter(value)}
+                className={`evaluation-filter ${viewMode === "completed" ? "active" : ""}`}
+                onClick={() => setViewMode("completed")}
               >
-                {label}
+                Completed <em className="evaluation-filter-count">{attempts.length}</em>
               </button>
-            ))}
+              <button
+                type="button"
+                className={`evaluation-filter ${viewMode === "current" ? "active" : ""}`}
+                onClick={() => setViewMode("current")}
+              >
+                Current <em className="evaluation-filter-count">{currentAttempts.length}</em>
+              </button>
+            </div>
+            {viewMode === "completed" && (
+              <div className="evaluation-filter-group" role="group" aria-label="Filter by result">
+                {[
+                  ["all", "All"],
+                  ["passed", "Passed"],
+                  ["failed", "Failed"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`evaluation-filter ${resultFilter === value ? "active" : ""}`}
+                    onClick={() => setResultFilter(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -441,11 +524,19 @@ export default function EvaluationReportsPage() {
             <Loader2 size={20} className="evaluation-spin" />
             <p>Loading evaluation reports…</p>
           </div>
-        ) : !attempts.length ? (
+        ) : !rowsForView.length ? (
           <div className="evaluation-report-empty">
-            <ClipboardList size={22} />
-            <p>No assessment has been submitted yet.</p>
-            <span>Scores appear here as soon as a user finishes the Evaluation test.</span>
+            {viewMode === "current" ? <Clock size={22} /> : <ClipboardList size={22} />}
+            <p>
+              {viewMode === "current"
+                ? "No test is currently in progress."
+                : "No assessment has been submitted yet."}
+            </p>
+            <span>
+              {viewMode === "current"
+                ? "Users who have started the Evaluation test but not submitted it yet appear here."
+                : "Scores appear here as soon as a user finishes the Evaluation test."}
+            </span>
           </div>
         ) : !filtered.length ? (
           <div className="evaluation-report-empty">
@@ -459,10 +550,10 @@ export default function EvaluationReportsPage() {
                 <tr>
                   <th>Employee</th>
                   <th>Role</th>
-                  <th>Submitted</th>
-                  <th className="num">Score</th>
+                  <th>{viewMode === "current" ? "Started" : "Submitted"}</th>
+                  <th className="num">{viewMode === "current" ? "Answered" : "Score"}</th>
                   <th className="num">Percent</th>
-                  <th>Result</th>
+                  <th>{viewMode === "current" ? "Status" : "Result"}</th>
                   {sections.map((section) => (
                     <th key={section.id} className="num">
                       S{section.id}
@@ -473,73 +564,88 @@ export default function EvaluationReportsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((attempt) => (
-                  <tr key={attempt.id}>
-                    <td>
-                      <div className="evaluation-report-person">
-                        <strong>{attempt.name}</strong>
-                        <span>{attempt.email || attempt.employeeCode || "—"}</span>
-                        {attempt.department && <em>{attempt.department}</em>}
-                      </div>
-                    </td>
-                    <td>{ROLE_LABELS[attempt.role] || attempt.role || "—"}</td>
-                    <td>{formatDateTime(attempt.submittedAt)}</td>
-                    <td className="num">
-                      <strong>
-                        {attempt.score} / {attempt.total}
-                      </strong>
-                    </td>
-                    <td className="num">{attempt.percent}%</td>
-                    <td>
-                      <span className={`evaluation-badge ${attempt.passed ? "passed" : "failed"}`}>
-                        {attempt.passed ? "Pass" : "Fail"}
-                      </span>
-                    </td>
-                    {sections.map((section) => {
-                      const score = sectionScoreFor(attempt, section.id);
-                      return (
-                        <td key={section.id} className="num">
-                          {score ? `${score.correct} / ${score.total}` : "—"}
-                        </td>
-                      );
-                    })}
-                    <td className="num">{formatDuration(attempt.durationSeconds)}</td>
-                    <td>
-                      <div className="evaluation-report-actions">
-                        <button
-                          type="button"
-                          className={`evaluation-report-view ${reviewId === attempt.id ? "active" : ""}`}
-                          disabled={Boolean(reviewLoadingId)}
-                          onClick={() => viewResult(attempt)}
-                        >
-                          {reviewLoadingId === attempt.id ? (
-                            <>
-                              <Loader2 size={14} className="evaluation-spin" /> Loading…
-                            </>
+                {filtered.map((attempt) => {
+                  const isCurrent = viewMode === "current";
+                  return (
+                    <tr key={attempt.id}>
+                      <td>
+                        <div className="evaluation-report-person">
+                          <strong>{attempt.name}</strong>
+                          <span>{attempt.email || attempt.employeeCode || "—"}</span>
+                          {attempt.department && <em>{attempt.department}</em>}
+                        </div>
+                      </td>
+                      <td>{ROLE_LABELS[attempt.role] || attempt.role || "—"}</td>
+                      <td>{formatDateTime(isCurrent ? attempt.startedAt : attempt.submittedAt)}</td>
+                      <td className="num">
+                        <strong>
+                          {isCurrent
+                            ? `${attempt.answeredCount ?? 0} / ${attempt.total ?? 0}`
+                            : `${attempt.score} / ${attempt.total}`}
+                        </strong>
+                      </td>
+                      <td className="num">{isCurrent ? "—" : `${attempt.percent}%`}</td>
+                      <td>
+                        {isCurrent ? (
+                          <span className="evaluation-badge progress">In progress</span>
+                        ) : (
+                          <span className={`evaluation-badge ${attempt.passed ? "passed" : "failed"}`}>
+                            {attempt.passed ? "Pass" : "Fail"}
+                          </span>
+                        )}
+                      </td>
+                      {sections.map((section) => {
+                        const score = sectionScoreFor(attempt, section.id);
+                        return (
+                          <td key={section.id} className="num">
+                            {score ? `${score.correct} / ${score.total}` : "—"}
+                          </td>
+                        );
+                      })}
+                      <td className="num">{isCurrent ? "—" : formatDuration(attempt.durationSeconds)}</td>
+                      <td>
+                        <div className="evaluation-report-actions">
+                          {isCurrent ? (
+                            <span className="evaluation-report-pending">Not submitted</span>
                           ) : (
                             <>
-                              <Eye size={14} /> {reviewId === attempt.id ? "Hide" : "View Result"}
+                              <button
+                                type="button"
+                                className={`evaluation-report-view ${reviewId === attempt.id ? "active" : ""}`}
+                                disabled={Boolean(reviewLoadingId)}
+                                onClick={() => viewResult(attempt)}
+                              >
+                                {reviewLoadingId === attempt.id ? (
+                                  <>
+                                    <Loader2 size={14} className="evaluation-spin" /> Loading…
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye size={14} /> {reviewId === attempt.id ? "Hide" : "View Result"}
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                className="evaluation-report-download"
+                                title={`Download ${attempt.name}'s report as PDF`}
+                                aria-label={`Download ${attempt.name}'s report as PDF`}
+                                disabled={Boolean(pdfBusy)}
+                                onClick={() => downloadPdf(attempt.id, () => buildAttemptPdf(attempt, sections))}
+                              >
+                                {pdfBusy === attempt.id ? (
+                                  <Loader2 size={15} className="evaluation-spin" />
+                                ) : (
+                                  <Download size={15} />
+                                )}
+                              </button>
                             </>
                           )}
-                        </button>
-                        <button
-                          type="button"
-                          className="evaluation-report-download"
-                          title={`Download ${attempt.name}'s report as PDF`}
-                          aria-label={`Download ${attempt.name}'s report as PDF`}
-                          disabled={Boolean(pdfBusy)}
-                          onClick={() => downloadPdf(attempt.id, () => buildAttemptPdf(attempt, sections))}
-                        >
-                          {pdfBusy === attempt.id ? (
-                            <Loader2 size={15} className="evaluation-spin" />
-                          ) : (
-                            <Download size={15} />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -547,12 +653,14 @@ export default function EvaluationReportsPage() {
 
         {!loading && filtered.length > 0 && (
           <p className="evaluation-report-foot">
-            Showing {filtered.length} of {attempts.length} submitted attempt{attempts.length === 1 ? "" : "s"}
-            {summary?.passPercent ? ` · pass mark ${summary.passPercent}%` : ""}
+            Showing {filtered.length} of {rowsForView.length}{" "}
+            {viewMode === "current" ? "in-progress" : "submitted"} attempt
+            {rowsForView.length === 1 ? "" : "s"}
+            {viewMode === "completed" && summary?.passPercent ? ` · pass mark ${summary.passPercent}%` : ""}
           </p>
         )}
 
-        {reviewId && (
+        {reviewId && viewMode === "completed" && (
           <section className="evaluation-report-review-card">
             {reviewLoadingId === reviewId ? (
               <div className="evaluation-report-empty">
@@ -640,6 +748,36 @@ export default function EvaluationReportsPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {downloadPrompt && (
+        <div className="evaluation-download-modal">
+          <button
+            type="button"
+            className="evaluation-download-backdrop"
+            aria-label="Close download options"
+            onClick={() => setDownloadPrompt(false)}
+          />
+          <div className="evaluation-download-dialog" role="dialog" aria-modal="true" aria-label="Download report">
+            <h3>Download report</h3>
+            <p>Which test results do you want to download?</p>
+            <div className="evaluation-download-options">
+              <button type="button" onClick={downloadCompleted} disabled={!attempts.length}>
+                <CheckCircle2 size={18} />
+                <span>Completed tests</span>
+                <em>{attempts.length}</em>
+              </button>
+              <button type="button" onClick={downloadCurrent} disabled={!currentAttempts.length}>
+                <Clock size={18} />
+                <span>Current tests</span>
+                <em>{currentAttempts.length}</em>
+              </button>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setDownloadPrompt(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

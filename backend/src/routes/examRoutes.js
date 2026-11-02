@@ -157,6 +157,9 @@ const attemptToRow = (attempt) => {
     total: attempt.total,
     percent: attempt.percent,
     passed: Boolean(attempt.passed),
+    status: attempt.status || 'submitted',
+    startedAt: attempt.startedAt,
+    answeredCount: (attempt.questions || []).filter((entry) => entry.answered).length,
     submittedAt: attempt.submittedAt,
     durationSeconds: attempt.durationSeconds,
     tabSwitches: attempt.tabSwitches,
@@ -368,17 +371,33 @@ router.get('/reports/:attemptId', authorize('super_admin', 'admin', 'hr_admin'),
   res.json({ success: true, data: detail })
 }))
 
-// Report of every submitted attempt, restricted to HR and administrators.
+// Report of every attempt, restricted to HR and administrators. Submitted
+// attempts carry scores and feed the summary; attempts still in progress are
+// returned separately so the report also shows people who started the test but
+// have not submitted it yet.
 router.get('/reports', authorize('super_admin', 'admin', 'hr_admin'), asyncHandler(async (_req, res) => {
-  const attempts = await ExamAttempt.find({ status: 'submitted' })
-    .allowDiskUse(true)
-    .populate('user', 'firstName lastName email role')
-    .populate('employee', 'firstName lastName employeeCode department')
-    .sort({ submittedAt: -1, _id: -1 })
-    .limit(500)
-    .lean()
+  const populateFields = [
+    { path: 'user', select: 'firstName lastName email role' },
+    { path: 'employee', select: 'firstName lastName employeeCode department' },
+  ]
 
-  const rows = attempts.map(attemptToRow)
+  const [completed, inProgress] = await Promise.all([
+    ExamAttempt.find({ status: 'submitted' })
+      .allowDiskUse(true)
+      .populate(populateFields)
+      .sort({ submittedAt: -1, _id: -1 })
+      .limit(500)
+      .lean(),
+    ExamAttempt.find({ status: 'in_progress' })
+      .allowDiskUse(true)
+      .populate(populateFields)
+      .sort({ startedAt: -1, _id: -1 })
+      .limit(500)
+      .lean(),
+  ])
+
+  const rows = completed.map(attemptToRow)
+  const currentRows = inProgress.map(attemptToRow)
 
   const passedCount = rows.filter((row) => row.passed).length
   const summary = {
@@ -389,9 +408,10 @@ router.get('/reports', authorize('super_admin', 'admin', 'hr_admin'), asyncHandl
     averagePercent: rows.length ? Math.round(rows.reduce((sum, row) => sum + row.percent, 0) / rows.length) : 0,
     bestPercent: rows.reduce((best, row) => Math.max(best, row.percent), 0),
     passPercent: PASS_PERCENT,
+    inProgress: currentRows.length,
   }
 
-  res.json({ success: true, data: { summary, attempts: rows, sections: SECTION_POOL } })
+  res.json({ success: true, data: { summary, attempts: rows, currentAttempts: currentRows, sections: SECTION_POOL } })
 }))
 
 export default router

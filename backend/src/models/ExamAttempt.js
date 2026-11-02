@@ -34,5 +34,6 @@ const examAttemptSchema = new mongoose.Schema({
 
 examAttemptSchema.index({ createdAt: -1, _id: -1 })
 examAttemptSchema.index({ status: 1, submittedAt: -1, _id: -1 })
+examAttemptSchema.index({ status: 1, startedAt: -1, _id: -1 })
 examAttemptSchema.index({ user: 1, createdAt: -1, _id: -1 })
 export const ExamAttempt = mongoose.models.ExamAttempt || mongoose.model('ExamAttempt', examAttemptSchema)
