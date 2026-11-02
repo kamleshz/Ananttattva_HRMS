@@ -87,10 +87,14 @@ const TABLE_STYLE = {
 };
 
 // One PDF covering every attempt currently shown on the page.
-const buildSummaryPdf = async ({ attempts, sections, summary }) => {
+const buildSummaryPdf = async ({ attempts, sections, summary, reportDate }) => {
   const { jsPDF, autoTable } = await loadPdfLibs();
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-  pdfHeader(doc, "Evaluation Report", `Pass mark ${summary?.passPercent ?? 60}% - ${attempts.length} attempt${attempts.length === 1 ? "" : "s"}`);
+  pdfHeader(
+    doc,
+    "Evaluation Report",
+    `${reportDate ? `Date ${reportDate} - ` : ""}Pass mark ${summary?.passPercent ?? 60}% - ${attempts.length} attempt${attempts.length === 1 ? "" : "s"}`
+  );
 
   const stats = [
     ["Attempts", summary?.attempts ?? 0],
@@ -205,13 +209,13 @@ const buildAttemptPdf = async (attempt, sections) => {
 
 // One PDF listing the attempts that are still in progress (started but not yet
 // submitted), so the report also covers people who have not finished the test.
-const buildCurrentPdf = async ({ attempts, sections }) => {
+const buildCurrentPdf = async ({ attempts, sections, reportDate }) => {
   const { jsPDF, autoTable } = await loadPdfLibs();
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   pdfHeader(
     doc,
     "Evaluation Report - In Progress",
-    `${attempts.length} in-progress attempt${attempts.length === 1 ? "" : "s"} - sections ${sections.map((section) => `S${section.id}`).join(", ") || "-"}`
+    `${reportDate ? `Date ${reportDate} - ` : ""}${attempts.length} in-progress attempt${attempts.length === 1 ? "" : "s"} - sections ${sections.map((section) => `S${section.id}`).join(", ") || "-"}`
   );
 
   autoTable(doc, {
@@ -249,6 +253,34 @@ const ROLE_LABELS = {
   employee: "Employee",
 };
 
+const REPORT_TIME_ZONE = "Asia/Kolkata";
+
+const datePartsInIst = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: REPORT_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  if (!lookup.year || !lookup.month || !lookup.day) return null;
+  return { year: lookup.year, month: lookup.month, day: lookup.day };
+};
+
+const dateKeyInIst = (value) => {
+  const parts = datePartsInIst(value);
+  return parts ? `${parts.year}-${parts.month}-${parts.day}` : "";
+};
+
+const todayDateKey = () => dateKeyInIst(new Date());
+
+const matchesDateFilter = (value, dateFilter) => {
+  if (!dateFilter) return true;
+  return dateKeyInIst(value) === dateFilter;
+};
+
 const formatDateTime = (value) => {
   if (!value) return "—";
   const date = new Date(value);
@@ -282,6 +314,7 @@ export default function EvaluationReportsPage() {
   const [currentAttempts, setCurrentAttempts] = useState([]);
   const [sections, setSections] = useState([]);
   const [viewMode, setViewMode] = useState("completed");
+  const [dateFilter, setDateFilter] = useState(todayDateKey);
   const [query, setQuery] = useState("");
   const [resultFilter, setResultFilter] = useState("all");
   const [pdfBusy, setPdfBusy] = useState("");
@@ -310,7 +343,35 @@ export default function EvaluationReportsPage() {
     load();
   }, [load]);
 
-  const rowsForView = viewMode === "current" ? currentAttempts : attempts;
+  const completedForDate = useMemo(
+    () => attempts.filter((attempt) => matchesDateFilter(attempt.submittedAt, dateFilter)),
+    [attempts, dateFilter]
+  );
+
+  const currentForDate = useMemo(
+    () => currentAttempts.filter((attempt) => matchesDateFilter(attempt.startedAt, dateFilter)),
+    [currentAttempts, dateFilter]
+  );
+
+  const rowsForView = viewMode === "current" ? currentForDate : completedForDate;
+
+  const visibleSummary = useMemo(() => {
+    const passedCount = completedForDate.filter((attempt) => attempt.passed).length;
+    const averagePercent = completedForDate.length
+      ? Math.round(completedForDate.reduce((sum, attempt) => sum + Number(attempt.percent || 0), 0) / completedForDate.length)
+      : 0;
+    const bestPercent = completedForDate.reduce((best, attempt) => Math.max(best, Number(attempt.percent || 0)), 0);
+    return {
+      attempts: completedForDate.length,
+      passed: passedCount,
+      failed: completedForDate.length - passedCount,
+      passRate: completedForDate.length ? Math.round((passedCount / completedForDate.length) * 100) : 0,
+      averagePercent,
+      bestPercent,
+      passPercent: summary?.passPercent ?? 60,
+      inProgress: currentForDate.length,
+    };
+  }, [completedForDate, currentForDate.length, summary?.passPercent]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -344,12 +405,12 @@ export default function EvaluationReportsPage() {
 
   const downloadCompleted = () => {
     setDownloadPrompt(false);
-    downloadPdf("completed", () => buildSummaryPdf({ attempts, sections, summary }));
+    downloadPdf("completed", () => buildSummaryPdf({ attempts: completedForDate, sections, summary: visibleSummary, reportDate: dateFilter }));
   };
 
   const downloadCurrent = () => {
     setDownloadPrompt(false);
-    downloadPdf("current", () => buildCurrentPdf({ attempts: currentAttempts, sections }));
+    downloadPdf("current", () => buildCurrentPdf({ attempts: currentForDate, sections, reportDate: dateFilter }));
   };
 
   const viewResult = async (attempt) => {
@@ -382,7 +443,7 @@ export default function EvaluationReportsPage() {
           </p>
           <p className="eyebrow">Assessment</p>
           <h1>Evaluation Reports</h1>
-          <p>Scores for every submitted assessment attempt.</p>
+          <p>Scores for the selected report date, with today's exam results shown by default.</p>
         </div>
         <div className="evaluation-page-actions">
           <button type="button" className="secondary-button" onClick={load} disabled={loading}>
@@ -391,7 +452,7 @@ export default function EvaluationReportsPage() {
           <button
             type="button"
             className="primary-button"
-            disabled={loading || (!attempts.length && !currentAttempts.length) || Boolean(pdfBusy)}
+            disabled={loading || (!completedForDate.length && !currentForDate.length) || Boolean(pdfBusy)}
             onClick={() => {
               setError("");
               setDownloadPrompt(true);
@@ -423,49 +484,49 @@ export default function EvaluationReportsPage() {
             <Users size={17} />
           </span>
           <p>Attempts submitted</p>
-          <strong>{summary?.attempts ?? 0}</strong>
+          <strong>{visibleSummary.attempts}</strong>
         </div>
         <div className="card evaluation-kpi">
           <span className="evaluation-kpi-icon emerald">
             <CheckCircle2 size={17} />
           </span>
           <p>Passed</p>
-          <strong>{summary?.passed ?? 0}</strong>
+          <strong>{visibleSummary.passed}</strong>
         </div>
         <div className="card evaluation-kpi">
           <span className="evaluation-kpi-icon rose">
             <XCircle size={17} />
           </span>
           <p>Failed</p>
-          <strong>{summary?.failed ?? 0}</strong>
+          <strong>{visibleSummary.failed}</strong>
         </div>
         <div className="card evaluation-kpi">
           <span className="evaluation-kpi-icon amber">
             <Target size={17} />
           </span>
           <p>Pass rate</p>
-          <strong>{summary?.passRate ?? 0}%</strong>
+          <strong>{visibleSummary.passRate}%</strong>
         </div>
         <div className="card evaluation-kpi">
           <span className="evaluation-kpi-icon indigo">
             <ClipboardList size={17} />
           </span>
           <p>Average score</p>
-          <strong>{summary?.averagePercent ?? 0}%</strong>
+          <strong>{visibleSummary.averagePercent}%</strong>
         </div>
         <div className="card evaluation-kpi">
           <span className="evaluation-kpi-icon emerald">
             <Trophy size={17} />
           </span>
           <p>Best score</p>
-          <strong>{summary?.bestPercent ?? 0}%</strong>
+          <strong>{visibleSummary.bestPercent}%</strong>
         </div>
         <div className="card evaluation-kpi">
           <span className="evaluation-kpi-icon amber">
             <Clock size={17} />
           </span>
           <p>In progress</p>
-          <strong>{summary?.inProgress ?? currentAttempts.length}</strong>
+          <strong>{visibleSummary.inProgress}</strong>
         </div>
       </section>
 
@@ -481,6 +542,31 @@ export default function EvaluationReportsPage() {
               aria-label="Search reports"
             />
           </div>
+          <div className="evaluation-date-tools">
+            <label className="evaluation-date-filter">
+              <span>Report date</span>
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={(event) => setDateFilter(event.target.value)}
+                aria-label="Filter reports by date"
+              />
+            </label>
+            <button
+              type="button"
+              className={`evaluation-filter ${!dateFilter ? "active" : ""}`}
+              onClick={() => setDateFilter("")}
+            >
+              All dates
+            </button>
+            <button
+              type="button"
+              className={`evaluation-filter ${dateFilter === todayDateKey() ? "active" : ""}`}
+              onClick={() => setDateFilter(todayDateKey())}
+            >
+              Today
+            </button>
+          </div>
           <div className="evaluation-report-filters">
             <div className="evaluation-filter-group" role="group" aria-label="Completed or current tests">
               <button
@@ -488,14 +574,14 @@ export default function EvaluationReportsPage() {
                 className={`evaluation-filter ${viewMode === "completed" ? "active" : ""}`}
                 onClick={() => setViewMode("completed")}
               >
-                Completed <em className="evaluation-filter-count">{attempts.length}</em>
+                Completed <em className="evaluation-filter-count">{completedForDate.length}</em>
               </button>
               <button
                 type="button"
                 className={`evaluation-filter ${viewMode === "current" ? "active" : ""}`}
                 onClick={() => setViewMode("current")}
               >
-                Current <em className="evaluation-filter-count">{currentAttempts.length}</em>
+                Current <em className="evaluation-filter-count">{currentForDate.length}</em>
               </button>
             </div>
             {viewMode === "completed" && (
@@ -535,7 +621,7 @@ export default function EvaluationReportsPage() {
             <span>
               {viewMode === "current"
                 ? "Users who have started the Evaluation test but not submitted it yet appear here."
-                : "Scores appear here as soon as a user finishes the Evaluation test."}
+                : "Scores appear here as soon as a user finishes the Evaluation test on the selected date."}
             </span>
           </div>
         ) : !filtered.length ? (
@@ -656,7 +742,8 @@ export default function EvaluationReportsPage() {
             Showing {filtered.length} of {rowsForView.length}{" "}
             {viewMode === "current" ? "in-progress" : "submitted"} attempt
             {rowsForView.length === 1 ? "" : "s"}
-            {viewMode === "completed" && summary?.passPercent ? ` · pass mark ${summary.passPercent}%` : ""}
+            {dateFilter ? ` · report date ${dateFilter}` : " · all dates"}
+            {viewMode === "completed" && visibleSummary.passPercent ? ` · pass mark ${visibleSummary.passPercent}%` : ""}
           </p>
         )}
 
@@ -760,17 +847,17 @@ export default function EvaluationReportsPage() {
           />
           <div className="evaluation-download-dialog" role="dialog" aria-modal="true" aria-label="Download report">
             <h3>Download report</h3>
-            <p>Which test results do you want to download?</p>
+            <p>Which test results do you want to download{dateFilter ? ` for ${dateFilter}` : ""}?</p>
             <div className="evaluation-download-options">
-              <button type="button" onClick={downloadCompleted} disabled={!attempts.length}>
+              <button type="button" onClick={downloadCompleted} disabled={!completedForDate.length}>
                 <CheckCircle2 size={18} />
                 <span>Completed tests</span>
-                <em>{attempts.length}</em>
+                <em>{completedForDate.length}</em>
               </button>
-              <button type="button" onClick={downloadCurrent} disabled={!currentAttempts.length}>
+              <button type="button" onClick={downloadCurrent} disabled={!currentForDate.length}>
                 <Clock size={18} />
                 <span>Current tests</span>
-                <em>{currentAttempts.length}</em>
+                <em>{currentForDate.length}</em>
               </button>
             </div>
             <button type="button" className="secondary-button" onClick={() => setDownloadPrompt(false)}>
