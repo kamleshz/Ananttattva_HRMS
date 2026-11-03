@@ -387,8 +387,8 @@ export function AttendancePage({ user }) {
     [auditBusy, setAuditBusy] = useState(false);
   const [recordsPage, setRecordsPage] = useState(1);
   const [manualPage, setManualPage] = useState(1);
-  const canExport = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
-  const canViewAllAttendance = canExport;
+  const canExport = true;
+  const canViewAllAttendance = ["super_admin", "admin", "hr_admin", "finance_admin", "it_admin"].includes(user.role);
   const canViewCompleteRoster = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const canReviewCorrections = ["super_admin", "admin", "hr_admin"].includes(user.role);
   const canReviewFaceRequests = ["super_admin", "admin", "hr_admin", "manager"].includes(user.role);

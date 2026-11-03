@@ -364,25 +364,40 @@ router.get('/corrections', asyncHandler(async (req,res)=>{
   const requests=await AttendanceCorrectionRequest.find(filter).allowDiskUse(true).populate('employee','firstName lastName employeeCode department').populate('attendance','date checkIn checkOut status autoCheckout workingMinutes exceptionStatus missingCheckout').sort({createdAt:-1}).limit(100)
   res.json({success:true,data:requests})
 }))
-router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin','it_admin'), asyncHandler(async (req,res) => {
+router.get('/export', asyncHandler(async (req,res) => {
   const input=z.object({month:z.coerce.number().int().min(1).max(12),year:z.coerce.number().int().min(2020).max(2100)}).parse(req.query)
   const {start,end}=organizationMonthBoundsFor(input.year,input.month)
-  let records=await Attendance.find({date:{$gte:start,$lt:end}}).allowDiskUse(true).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:1,employee:1})
-  if(['super_admin','admin','hr_admin'].includes(req.user.role)){
+  const elevatedExportRoles = ['super_admin','admin','hr_admin','finance_admin','it_admin']
+  const canExportAll = elevatedExportRoles.includes(req.user.role)
+  let records
+  if (canExportAll) {
+    records=await Attendance.find({date:{$gte:start,$lt:end}}).allowDiskUse(true).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:1,employee:1})
     const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
     const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
-    const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').allowDiskUse(true).sort({firstName:1,lastName:1}).lean()
-    records=buildAttendanceRoster({employees,records,start,end:rosterEnd}).sort((left,right)=>new Date(left.date)-new Date(right.date)||`${left.employee?.firstName||''} ${left.employee?.lastName||''}`.localeCompare(`${right.employee?.firstName||''} ${right.employee?.lastName||''}`))
+    if(['super_admin','admin','hr_admin'].includes(req.user.role)){
+      const employees=await Employee.find({employeeStatus:{$in:['active','notice_period']},$or:[{joiningDate:{$lt:rosterEnd}},{joiningDate:null},{joiningDate:{$exists:false}}]}).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').allowDiskUse(true).sort({firstName:1,lastName:1}).lean()
+      records=buildAttendanceRoster({employees,records,start,end:rosterEnd}).sort((left,right)=>new Date(left.date)-new Date(right.date)||`${left.employee?.firstName||''} ${left.employee?.lastName||''}`.localeCompare(`${right.employee?.firstName||''} ${right.employee?.lastName||''}`))
+    }
+  } else {
+    if (!req.user.employee?._id) throw new HttpError(409,'No employee profile is linked to this account')
+    const today=startOfLocalDay(),tomorrow=new Date(today.getTime()+24*60*60*1000)
+    const rosterEnd=start>=tomorrow?start:end<tomorrow?end:tomorrow
+    const [employee, ownRecords] = await Promise.all([
+      Employee.findById(req.user.employee._id).select('employeeCode firstName lastName officialEmail department designation shift joiningDate').lean(),
+      Attendance.find({employee:req.user.employee._id,date:{$gte:start,$lt:end}}).allowDiskUse(true).populate('employee','employeeCode firstName lastName officialEmail department designation shift joiningDate').sort({date:1,employee:1}),
+    ])
+    if (!employee) throw new HttpError(404,'Employee profile not found')
+    records=buildAttendanceRoster({employees:[employee],records:ownRecords,start,end:rosterEnd}).sort((left,right)=>new Date(left.date)-new Date(right.date))
   }
   const reportMonth=new Intl.DateTimeFormat('en-IN',{month:'long',year:'numeric',timeZone:'Asia/Kolkata'}).format(start)
-  const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Working Hours','Late Minutes','Half-day Reason','Original Target (min)','Adjusted Target (min)','Full-day Leave','Half-day Leave','Location','Location Verified','Face Match %','Liveness %']
+  const headers=['Employee ID','Employee Name','Department','Designation','Date','Day','Attendance Mode','Status','First Check In','Check Out','Missing Check-in','Missing Check-out','Working Hours','Late Minutes','Half-day Reason','Original Target (min)','Adjusted Target (min)','Full-day Leave','Half-day Leave','Location','Location Verified','Face Match %','Liveness %']
   const emptyRow=Array(headers.length).fill(null)
   const theme=ATTENDANCE_REPORT_THEME
   const sheetData=[
     [{value:`AT Connect – Attendance Report – ${reportMonth}`,columnSpan:headers.length,fontWeight:'bold',fontSize:18,textColor:'#FFFFFF',backgroundColor:theme.title,height:34,alignVertical:'center'},...emptyRow.slice(1)],
     [{value:`Generated ${new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date())} · ${records.length} records · Times shown in IST`,columnSpan:headers.length,fontStyle:'italic',fontSize:10,textColor:theme.subtitleText,backgroundColor:theme.subtitle,height:24,alignVertical:'center'},...emptyRow.slice(1)],
-    reportSectionRow([{label:'EMPLOYEE DETAILS',span:4},{label:'ATTENDANCE & WORK HOURS',span:10},{label:'LEAVE & ADJUSTMENTS',span:4},{label:'VERIFICATION',span:3}],theme),
-    reportHeaderRow(headers,[4,10,4,3],theme),
+    reportSectionRow([{label:'EMPLOYEE DETAILS',span:4},{label:'ATTENDANCE & WORK HOURS',span:12},{label:'LEAVE & ADJUSTMENTS',span:4},{label:'VERIFICATION',span:3}],theme),
+    reportHeaderRow(headers,[4,12,4,3],theme),
   ]
   const policy = await getAttendancePolicy()
   const FULL_DAY_MINUTES = policy.fullDayWorkingMinutes
@@ -413,15 +428,17 @@ router.get('/export', authorize('super_admin','admin','hr_admin','finance_admin'
     const leavesForDate = allLeavesByEmployee.get(empIdKey)?.get(dateKey) || { fullDayLeaves: [], halfDayLeaves: [] }
     const fullDayLeave = Array.isArray(leavesForDate.fullDayLeaves) && leavesForDate.fullDayLeaves.length > 0 ? 'Yes' : 'No'
     const halfDayLeave = fullDayLeave === 'Yes' ? 'No' : (Array.isArray(leavesForDate.halfDayLeaves) && leavesForDate.halfDayLeaves.length > 0 ? 'Yes' : 'No')
+    const missingCheckIn = record.missedCheckIn ? 'Yes' : 'No'
+    const missingCheckOut = (record.missedCheckOut || record.status === 'missing_checkout') ? 'Yes' : 'No'
     sheetData.push([
       cell(employee.employeeCode||'',{fontWeight:'bold',textColor:theme.accent}),cell(`${employee.firstName||''} ${employee.lastName||''}`.trim(),{fontWeight:'bold'}),cell(employee.department||''),cell(employee.designation||''),cell(organizationExcelDate(record.date),{type:Date,format:'dd-mmm-yyyy',align:'center'}),
       cell(new Intl.DateTimeFormat('en-IN',{weekday:'long',timeZone:'Asia/Kolkata'}).format(record.date),{align:'center'}),cell(modeLabel,{backgroundColor:'#E8F1FA',textColor:'#315F91',fontWeight:'bold',align:'center'}),cell(statusLabel,statusCellStyle(record.status)),
-      record.checkIn?.time?cell(organizationExcelDate(record.checkIn.time),{type:Date,format:'hh:mm AM/PM',align:'center',fontWeight:'bold'}):cell('',{align:'center'}),record.checkOut?.time?cell(organizationExcelDate(record.checkOut.time),{type:Date,format:'hh:mm AM/PM',align:'center'}):cell('',{align:'center'}),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00',align:'right',fontWeight:'bold'}),cell(record.lateMinutes||0,{type:Number,align:'right',...(record.lateMinutes?{backgroundColor:'#FFF0CC',textColor:'#865D13',fontWeight:'bold'}:{})}),cell(record.halfDayReason||''),
+      record.checkIn?.time?cell(organizationExcelDate(record.checkIn.time),{type:Date,format:'hh:mm AM/PM',align:'center',fontWeight:'bold'}):cell('',{align:'center'}),record.checkOut?.time?cell(organizationExcelDate(record.checkOut.time),{type:Date,format:'hh:mm AM/PM',align:'center'}):cell('',{align:'center'}),cell(missingCheckIn,{align:'center',...(missingCheckIn==='Yes'?{backgroundColor:'#FBE1E5',textColor:'#96394B',fontWeight:'bold'}:{})}),cell(missingCheckOut,{align:'center',...(missingCheckOut==='Yes'?{backgroundColor:'#FFF0CC',textColor:'#865D13',fontWeight:'bold'}:{})}),cell(Number(((record.workingMinutes||0)/60).toFixed(2)),{type:Number,format:'0.00',align:'right',fontWeight:'bold'}),cell(record.lateMinutes||0,{type:Number,align:'right',...(record.lateMinutes?{backgroundColor:'#FFF0CC',textColor:'#865D13',fontWeight:'bold'}:{})}),cell(record.halfDayReason||''),
       cell(originalTarget,{type:Number,align:'right'}),cell(adjustedTarget,{type:Number,align:'right'}),cell(fullDayLeave,{align:'center',...(fullDayLeave==='Yes'?{backgroundColor:'#E8F5E9',textColor:'#2E7D32',fontWeight:'bold'}:{})}),cell(halfDayLeave,{align:'center',...(halfDayLeave==='Yes'?{backgroundColor:'#FFF3E0',textColor:'#E65100',fontWeight:'bold'}:{})}),
       cell(record.checkIn?.address||''),cell(record.locationVerified?'Yes':'No',{...(statusCellStyle(record.locationVerified?'verified':'rejected')),align:'center'}),record.biometricVerification?.faceMatchScore==null?cell('',{align:'right'}):cell(record.biometricVerification.faceMatchScore,{type:Number,format:'0.0%',align:'right'}),record.biometricVerification?.livenessScore==null?cell('',{align:'right'}):cell(record.biometricVerification.livenessScore,{type:Number,format:'0.0%',align:'right'}),
     ])
   })
-  const columns=[14,22,18,20,14,13,18,16,14,14,15,13,24,16,16,14,14,30,18,15,15].map(width=>({width}))
+  const columns=[14,22,18,20,14,13,18,16,14,14,14,14,15,13,24,16,16,14,14,30,18,15,15].map(width=>({width}))
   const buffer=await writeXlsxFile(sheetData,{sheet:'Attendance Report',columns,stickyRowsCount:4,stickyColumnsCount:2,showGridLines:false,zoomScale:.82},{fontFamily:'Calibri',fontSize:10}).toBuffer()
   const fileName=`AT_Connect_Attendance_${input.year}_${String(input.month).padStart(2,'0')}.xlsx`
   res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
