@@ -6,7 +6,7 @@ import { Notification } from '../models/Recruitment.js'
 import { User } from '../models/User.js'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { HttpError } from '../utils/httpError.js'
-import { allocateMonthlyAllowance, allowanceMonthKey, allowanceMonthRange, allowanceSubmissionDeadline, currency } from '../services/allowancePolicyService.js'
+import { allocateMonthlyAllowance, allowanceMonthKey, allowanceMonthRange, currency } from '../services/allowancePolicyService.js'
 import writeXlsxFile from 'write-excel-file/node'
 import { ATTENDANCE_REPORT_THEME, reportCell, reportHeaderRow, reportSectionRow, statusCellStyle } from '../utils/excelReportStyle.js'
 import { sendAllowanceDecision } from '../services/mailService.js'
@@ -74,8 +74,6 @@ router.get('/export', authorize('super_admin','admin','hr_admin'), asyncHandler(
 router.post('/', asyncHandler(async (req,res) => {
   if(!req.user.employee)throw new HttpError(409,'No employee profile is linked to this account')
   const input=claimSchema.parse(req.body)
-  const deadline=allowanceSubmissionDeadline(input.travelDate)
-  if(new Date()>deadline)throw new HttpError(422,`The submission deadline for this allowance month was ${deadline.toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'long',year:'numeric'})}`)
   const totalAmount=currency(input.travelAllowance+input.extraAllowance)
   const monthlyUsed=await getMonthlyUsage(input.travelDate,req.user.employee._id)
   const allocation=allocateMonthlyAllowance(monthlyUsed,input.travelAllowance,input.extraAllowance)
