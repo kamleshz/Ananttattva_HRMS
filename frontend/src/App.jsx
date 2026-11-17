@@ -96,14 +96,18 @@ const managerAllowedPaths = new Set(["/", "/my-space", "/attendance", "/leave", 
 // Evaluation / assessment is available to every signed-in role; the reports
 // screen (all employees' scores) stays restricted to HR and administrators.
 const evaluationRoles = new Set(["super_admin", "admin", "hr_admin"]);
-// The assessment opens every Monday at 17:45 IST and closes at midnight IST, so
-// it is available on Monday evening only. The server enforces the same window;
-// this only keeps the menu item and route in step with it.
+// The assessment opens every Monday at 17:45 IST and stays open for three days,
+// closing at midnight at the end of Wednesday IST. The server enforces the same
+// window; this only keeps the menu item and route in step with it.
 const EVALUATION_OPEN_MINUTE = 17 * 60 + 45;
+const EVALUATION_WINDOW_DAYS = 3;
 const IST_OFFSET_MINUTES = 330;
 const isEvaluationOpen = (now = new Date()) => {
   const ist = new Date(now.getTime() + IST_OFFSET_MINUTES * 60 * 1000);
-  return ist.getUTCDay() === 1 && ist.getUTCHours() * 60 + ist.getUTCMinutes() >= EVALUATION_OPEN_MINUTE;
+  const daysSinceMonday = (ist.getUTCDay() + 6) % 7; // Monday = 0 ... Sunday = 6
+  if (daysSinceMonday >= EVALUATION_WINDOW_DAYS) return false;
+  // Monday only opens once 17:45 IST has passed; Tuesday and Wednesday are open.
+  return daysSinceMonday > 0 || ist.getUTCHours() * 60 + ist.getUTCMinutes() >= EVALUATION_OPEN_MINUTE;
 };
 const recruitmentNavigation = {
   hr_admin: [
@@ -967,7 +971,7 @@ export default function App() {
       .catch(() => session.clear())
       .finally(() => setLoading(false));
   }, []);
-  // Keeps the menu item in step with the Monday-evening window, including for a
+  // Keeps the menu item in step with the three-day window, including for a
   // session that is already open when 5:45 PM arrives.
   useEffect(() => {
     const timer = setInterval(() => setEvaluationOpen(isEvaluationOpen()), 30 * 1000);
@@ -977,8 +981,8 @@ export default function App() {
     if (user?.role === "employee" && !employeeAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/offboarding/") && !location.pathname.startsWith("/public/offers/")) navigate("/");
     if (user?.role === "manager" && !managerAllowedPaths.has(location.pathname) && !location.pathname.startsWith("/public/offers/")) navigate("/");
     if (user && !evaluationRoles.has(user.role) && location.pathname.startsWith("/evaluation/reports")) navigate(isEvaluationOpen() ? "/evaluation" : "/");
-    // Checked on entry rather than on every tick, so an attempt started before
-    // midnight can still be finished without being pulled out of the exam.
+    // Checked on entry rather than on every tick, so an attempt started inside
+    // the window can still be finished without being pulled out of the exam.
     if (user && location.pathname.startsWith("/evaluation") && !location.pathname.startsWith("/evaluation/reports") && !isEvaluationOpen()) navigate("/");
   }, [user, location.pathname, navigate]);
   useEffect(() => {
